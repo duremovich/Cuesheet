@@ -1,4 +1,5 @@
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-pool-workers";
+import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 import { sqlText } from "./vite.sql-text.ts";
 
@@ -11,6 +12,16 @@ export default defineConfig({
           name: "unit",
           environment: "node",
           include: ["src/**/*.test.ts"],
+        },
+      },
+      {
+        // jsdom: React component tests (`*.test.tsx` next to the code).
+        plugins: [react()],
+        test: {
+          name: "dom",
+          environment: "jsdom",
+          include: ["src/**/*.test.tsx"],
+          setupFiles: ["./src/web/test/setup-dom.ts"],
         },
       },
       {
