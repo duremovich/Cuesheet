@@ -87,7 +87,7 @@ test("change the password from the account menu; an admin's reset link", async (
   // The admin makes a reset link; the user sets a new password with it.
   await admin.goto("/");
   const card = admin.getByRole("form", { name: "Reset a password" });
-  await card.getByLabel("Account email").fill(email);
+  await card.getByLabel("Account to reset").fill(email);
   await card.getByRole("button", { name: "Create reset link" }).click();
   const link = (await admin.getByTestId("reset-link").textContent()) ?? "";
   expect(link).toMatch(/\/reset\/[A-Za-z0-9_-]+$/);

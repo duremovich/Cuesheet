@@ -203,7 +203,7 @@ function ResetLinkForm() {
       </div>
       <form className={styles.inlineForm} onSubmit={onSubmit} aria-label="Reset a password">
         <label style={{ flex: 1 }}>
-          <span>Account email</span>
+          <span>Account to reset</span>
           <input name="email" type="email" required />
         </label>
         <button type="submit">Create reset link</button>

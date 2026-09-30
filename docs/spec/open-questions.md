@@ -136,11 +136,41 @@ Things the first build had to decide; each is easy to change.
 - **Print** is the browser's print dialog / Save as PDF: no server-side PDF. The calling
   script prints the whole script; a page range isn't offered.
 
+## Sharing, security and deploy (M5b decisions to confirm)
+
+- **What a share link sees.** A link shows one table (plus the tables its grid labels
+  links from: a cue link sees scene names and content chips, not notes) or one print
+  layout; files only on rows of its table (a cue list link's content thumbnails don't
+  load). Row-level filtering stays on the client: someone with the link and the API could
+  read the whole table, not just the view's filtered rows. Fine for SM/director links?
+- **Links are shown once.** Only a hash is stored, so only the browser that made a link can
+  copy it again (Show settings → Sharing; "Distribute notes" uses it). Lost it? Revoke and
+  make another. Or should owners be able to see links again (stored encrypted)?
+- **One share cookie per show per browser.** Opening a second link of the same show in
+  one browser replaces the first (its tab keeps working until it reloads). Rare enough?
+- **Owner-only sharing.** Editors can't create links. OK?
+- **Rate limiting** counts only failures (wrong password, bad invite/reset/share token):
+  10 a minute and 50 an hour per email and per IP (sliding windows in D1), so a team
+  behind one office IP signing in all day never trips it. A locked email frees itself as
+  failures age out; an admin reset link also clears it. Tighter?
+- **Password change** signs out the account's other sessions; an admin reset signs out all
+  of them. Password reset links last 24 h (invites 7 days).
+- **Invites to a show**: owners (not only admins) may create invite links that join their
+  show with a role. Should any member be able to?
+- **Transfer ownership** makes the old owner an editor. Should there be co-owners?
+- **Read-only presence**: presence counts read-only sockets (viewers, share links) with an
+  eye; there are still no names in presence (R22's avatars are not built yet).
+- **Plan.** Workers Paid ($5) is recommended: PBKDF2 at 100,000 iterations is more CPU than
+  the Free plan's 10 ms per request, so sign-in may fail on Free (docs/deploy.md).
+- **Backups** are weekly D1 dumps to R2 (13 kept) plus per-show JSON exports on demand;
+  there's no import of an export yet, and no automatic R2 copy. Enough?
+- **Compatibility date** is 2026-08-22, the newest the local test runtime
+  (`@cloudflare/vitest-pool-workers`) supports; bump it together with that package.
+
 ## Infrastructure
 
-- **Sign-in for SM/director.** Do they need accounts, or is a read-only link enough?
-- **Hosting.** Any preference or budget (a small VPS, a managed platform)? Who maintains
-  it once it's running?
+- **Hosting ownership.** Who maintains the Cloudflare account and watches the logs once
+  it's running (docs/deploy.md)?
 - **Offline.** Not v1, but how bad is venue Wi-Fi in practice? If tech regularly happens
   without internet, the architecture should plan for a local-first mode early.
 
@@ -151,6 +181,10 @@ Things the first build had to decide; each is easy to change.
 - A shot list example for the Shot table.
 
 ## Answered
+
+- **Sign-in for SM/director** (M5b): a read-only share link is enough; no account needed
+  (owners make them in Show settings → Sharing). → CLAUDE.md "Share links"
+- **Hosting** (M5b): Cloudflare, deployed by GitHub Actions from `main`. → docs/deploy.md
 
 - **Resolve → Skip** (M4b): leaves the cue unanchored on the new version, per ux.md: a
   guessed (`changed`) anchor is set to `missing` with no position, so the cue shows in

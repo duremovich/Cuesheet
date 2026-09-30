@@ -1,0 +1,112 @@
+name: Deploy
+
+# Production deploy (decision 0005, docs/deploy.md): after CI passes on a push to main
+# (its one job runs `pnpm check` and the e2e suite), build with the production
+# environment, apply D1 migrations, deploy the Worker. Also runnable by hand.
+# Skips with a notice until the repository has the CLOUDFLARE_API_TOKEN and
+# CLOUDFLARE_ACCOUNT_ID secrets (and wrangler.jsonc a real D1 database id).
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+# One deploy at a time, in order; never cancel one half way through its migrations.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  WRANGLER_SEND_METRICS: "false"
+
+jobs:
+  deploy:
+    # CI must have passed, for a push (not a pull request) to main.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Check for Cloudflare credentials
+        id: creds
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::notice title=Deploy skipped::Add the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets to deploy (docs/deploy.md)."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.creds.outputs.skip != 'true'
+        with:
+          # The commit CI tested (workflow_run), else the branch it was dispatched on.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Check the production D1 database id
+        id: config
+        if: steps.creds.outputs.skip != 'true'
+        run: |
+          # The production env's database_id must be the real one (`wrangler d1 create`).
+          if node -e '
+            const src = require("fs").readFileSync("wrangler.jsonc", "utf8");
+            const prod = src.slice(src.indexOf("\"production\""));
+            process.exit(/"database_id":\s*"0{8}-0{4}-0{4}-0{4}-0{12}"/.test(prod) ? 0 : 1);
+          '; then
+            echo "::notice title=Deploy skipped::Put the production D1 database id in wrangler.jsonc (env.production.d1_databases; docs/deploy.md)."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: pnpm/action-setup@v4
+        if: steps.creds.outputs.skip != 'true' && steps.config.outputs.skip != 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.creds.outputs.skip != 'true' && steps.config.outputs.skip != 'true'
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        if: steps.creds.outputs.skip != 'true' && steps.config.outputs.skip != 'true'
+        run: pnpm install --frozen-lockfile
+
+      # The Cloudflare Vite plugin picks the environment at build time: dist/ then holds
+      # the production Worker config (name, vars, bindings), which `wrangler deploy` uses.
+      - name: Build (production)
+        if: steps.creds.outputs.skip != 'true' && steps.config.outputs.skip != 'true'
+        run: pnpm build
+        env:
+          CLOUDFLARE_ENV: production
+
+      # Additive migrations first, so the new code finds its tables; the old code keeps
+      # working on them until the deploy switches over. --config: the source config (the
+      # build redirects wrangler to dist/, which has no migrations directory of its own).
+      - name: Apply D1 migrations
+        if: steps.creds.outputs.skip != 'true' && steps.config.outputs.skip != 'true'
+        run: pnpm exec wrangler d1 migrations apply DB --remote --env production --config wrangler.jsonc
+
+      - name: Deploy
+        if: steps.creds.outputs.skip != 'true' && steps.config.outputs.skip != 'true'
+        run: pnpm exec wrangler deploy
+
+      # Optional: set the repository variable PRODUCTION_URL (https://cuesheet.example.com)
+      # to check /api/health (D1 + a Durable Object) after every deploy.
+      - name: Health check
+        if: steps.creds.outputs.skip != 'true' && steps.config.outputs.skip != 'true' && vars.PRODUCTION_URL != ''
+        run: |
+          for i in 1 2 3 4 5 6; do
+            if curl -fsS "${{ vars.PRODUCTION_URL }}/api/health"; then exit 0; fi
+            sleep 10
+          done
+          echo "::error::${{ vars.PRODUCTION_URL }}/api/health failed after the deploy (roll back: docs/deploy.md)"
+          exit 1

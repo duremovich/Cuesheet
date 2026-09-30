@@ -9,7 +9,9 @@ attachments in R2 with thumbnails, the gallery layout), M3b (surfaces, measureme
 pixel-size / formula fields with unit conversion, the surface calculator), M4a (the script
 data model, text extraction and the anchoring engine; see "Script") and M4b (the script
 reader UI, the calling-script print and the generic Print view; see "Script view" and
-"Print layouts") are built. The stack is decided in
+"Print layouts") and M5b (read-only share links, roles polish, login rate limiting,
+sliding sessions, password change/reset, print presets, production deploy; see "Share
+links", "Account security", "Print layouts" and "Deploy and security headers") are built. The stack is decided in
 `docs/decisions/0005-cloudflare-platform.md`; don't relitigate it without a
 new decision record. Build milestone by milestone; don't pull later-milestone features
 (e.g. the cue grid) into an earlier one.
@@ -54,9 +56,11 @@ Before finishing any task: `pnpm check && pnpm e2e`.
 - `src/worker/do/ops-engine.ts`: applies op batches to the ShowDO's SQLite.
   `src/worker/import/airtable.ts`: CSVs → ops.
 - `src/web/lib/show-store.ts` (+ pure `show-state.ts`): the client store for one show.
-- `src/worker/`: `index.ts` (entry; exports DO classes), `app.ts` (Hono app under `/api`),
-  `routes/`, `auth/`, `do/ShowDO.ts`, `db/d1/` (D1 schema + migrations), `db/do/` (ShowDO
-  schema + migrations).
+- `src/worker/`: `index.ts` (entry: `/api/*` → the Hono app, every other path → the
+  assets with security headers via `security.ts`; the weekly `scheduled` backup; exports
+  DO classes), `app.ts` (Hono app under `/api`), `routes/`, `auth/`, `do/ShowDO.ts`,
+  `share-filter.ts` (what a share link's viewer receives), `db/d1/` (D1 schema +
+  migrations), `db/do/` (ShowDO schema + migrations).
 - `src/web/`: `main.tsx` (router), `pages/`, `features/` (see "Table views"), `components/`,
   `lib/` (api client, auth, theme, `useShowSocket`, show store + `show-selectors.ts`),
   `styles/` (`theme.css`, `global.css`). CSS modules per component.
@@ -88,7 +92,7 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   raise `DEFAULT_ITERATIONS` unless Cloudflare lifts the cap. Verify reads the parameters from
   the stored string, and login re-hashes any hash where `needsRehash()` is true, so raising
   the default later upgrades users as they sign in.
-- **Rate limiting** of login is deferred to M5 (TODO in `routes/auth.ts`).
+- **Rate limiting** (R24): see "Account security".
 - **DO code.** `src/worker/do/ShowDO.ts`. Expose operations as RPC methods on the class
   (the Worker calls `env.SHOW.get(env.SHOW.idFromName(showId)).method()`); only WebSockets
   go through `fetch`. The Worker checks auth + membership before calling the DO; the DO
@@ -194,7 +198,14 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   `ops-engine.ts`) from the role the Worker read on that request, so `/mutate` lets viewers
   through and the engine answers 403 for anything but their own views. Members: `GET/POST /api/shows/:id/members`,
   `PATCH/DELETE .../members/:userId` (owner only; the user must already have an account;
-  the owner can't be changed or removed). Removal calls
+  the owner can't be changed or removed), `POST .../transfer {userId}` (owner: that member
+  becomes the owner, you an editor; both get `{type:"role"}`), `POST .../leave` (anyone
+  but the owner; closes their sockets). Show settings → Members
+  (`show/ShareSettingsMembers.tsx`) has the role descriptions, "Make owner" (confirm),
+  "Leave this show", and, when an added email has no account, "Create invite link" (an
+  invite that joins this show with the chosen role). Presence counts read-only sockets
+  (viewers and share links: `readOnly` in `hello`/`presence`, an eye in the indicator;
+  the Worker passes the role in `X-Cuesheet-Role`, `notifyRole` updates it). Removal calls
   `ShowDO.disconnectUser(userId)`, which sends `{type:"revoked"}` to that user's sockets
   and closes them with code 4003; `useShowSocket` treats `revoked` as terminal (status
   `unauthorized`, "No access") and doesn't reconnect. Logout does the same only to the
@@ -270,6 +281,10 @@ for a second trace, but `failOnFlakyTests` still fails the run.
   CPU throttling makes render races show up: `(await page.context().newCDPSession(page))
   .send("Emulation.setCPUThrottlingRate", {rate: 6})`. Fix the app when the race is in
   the app.
+- **Rate limits are shared.** Failed logins and bad invite/reset/share tokens count toward
+  per-IP limits (10 a minute), and every test's IP is the same locally. Keep deliberate
+  failures to one or two per test; a test that needs more (or a worker test) sends its own
+  `CF-Connecting-IP` header. Never fail logins for the shared admin's email.
 - **Parallel runs.** Each run wipes and uses `.wrangler/e2e-state-<port>`. Another run
   (another checkout) holding :4317? Use `E2E_ORIGIN=http://localhost:4391 pnpm e2e`.
   Only one run per checkout at a time: runs share `dist/`.
@@ -1041,8 +1056,135 @@ views" below).
   SM call / trigger (`smCall`: the SM call, else the trigger badge plus a Line / Visual
   cue's text), LX, description; every cue by scene (not the view's filter); big type.
   From the cue list's **Cue sheet** link, the print page's "SM cue sheet instead", or ⌘K
-  "Print SM cue sheet". New built-in layouts (notes by person…) should reuse
-  `PrintShell` + `PrintTable`.
+  "Print SM cue sheet".
+- **Presets** (`print/presets/`, M5b), `/shows/:id/print/<tab>?preset=` (dispatched by
+  `TablePrintRoute`; `printPresetUrl` knows every layout, the older two included):
+  **Notes by person** (`notes?preset=by-person&session=&person=&breaks=1`: a group per
+  assignee by name, a note under each of its assignees, Unassigned last; open first, then
+  cue order, then oldest; a tick box column; type chips as text; `breaks=1` a page per
+  person) and **Notes by cue** (`preset=by-cue`: cue headings in show order, a note under
+  each of its cues, "No cue" last); `session` absent = all sessions (pure logic in
+  `presets/notes.ts`). **Distribute notes** (by person): per assignee a `mailto:` (their
+  People email; subject "<show> notes – <session>"; the notes as text, capped at 1,500
+  characters; plus `<share link>?person=<id>` when this browser knows a live by-person
+  share link for that session, else the owner can create one there) and "Print only
+  theirs". **Content list** (`content?preset=content`: small thumbnail, name, current
+  version, status, scene, cues, surfaces; by scene) and **Surface sheet**
+  (`surfaces?preset=surfaces`: a card per surface with its image, size in m and ft-in,
+  pixels, PPI, aspect, regions). ⌘K: "Print notes by person/cue (<current session>)",
+  "Print content list", "Print surface sheet".
+- **Running header/footer**: `PrintShell` emits `@page` margin boxes (`pageRule`): top
+  left the layout title, bottom left show · session · date, bottom right `"Page "
+  counter(page) " of " counter(pages)` (Chromium ≥ 131 draws them; `running={false}` for
+  layouts with their own header, like the calling script). `e2e/print-presets.spec.ts`
+  checks them in a real PDF (`page.pdf()` + pdf.js). At ≤ 600 px screen previews wrap
+  instead of scrolling sideways.
+
+## Share links (M5b, R23)
+
+- **Model.** D1 `share_links` (migration `0005_share_links_auth`; M5a has `0004`): `id`,
+  `show_id`, `token_hash` (SHA-256; the token itself is shown once), `kind` (`view`: the
+  live table; `print`: a print layout), `table`, `view_id` (a *shared* view of that table;
+  a view link without one is given the table's shared default at creation), `preset`
+  (`SHARE_PRESETS` in `src/shared/share.ts`: calling-script, cuesheet, by-person, by-cue,
+  content, surfaces), `options` JSON (`{session, orient}`), `label`, `created_by`,
+  `created_at`, `expires_at`, `revoked_at`, `last_used_at`. Owner only:
+  `GET/POST /api/shows/:id/share-links`, `DELETE …/:linkId` (revoke: sets `revoked_at`,
+  `ShowDO.disconnectShare(linkId)` sends `revoked` and closes its sockets with 4003).
+- **How a viewer gets in** (`routes/share.ts`, `auth/share-auth.ts`). `/s/<token>` (the
+  SPA, `features/share/SharePage.tsx`) calls `GET /api/share/:token` (no auth;
+  rate-limited on failures per IP; 404 unknown, 410 revoked/expired; `X-Robots-Tag:
+  noindex`), which returns the show and the link's target and sets an HttpOnly cookie
+  `cs_share=<token>; Path=/api/shows/<showId>`. On `/api/shows/*`,
+  `requireAuthOrShare` (replaces `requireAuth` there) admits that cookie as a **share
+  principal** on exactly these GET routes: the show, `/snapshot`, `/ws`,
+  `/attachments/:aid(/thumb)`, `/script/versions/:vid/text` (`SHARE_ROUTES`); any other
+  route of that show is 403 ("Share links are read-only"), other shows 401.
+  `requireMembership` then sets role `viewer` and `c.var.share` (a `ShareScope`) and a
+  stand-in `c.var.user` (`share:<linkId>`). A member's own session wins over a share
+  cookie; a signed-in non-member with one is a share viewer. `shareResourceGuard` 404s
+  files not on rows of the link's table and script text for non-calling-script links.
+- **Scope** (`shareScope` in `src/shared/share.ts`, applied by `src/worker/share-filter.ts`
+  in the ShowDO): the link's table plus the tables its grid labels links from (`RELATED`:
+  cues → scenes, content, content_versions, persons; never notes unless the link is for
+  notes), `views` (only the one view), `attachments` (only on the table's rows); presets
+  have their own table lists (`PRESET_TABLES`). `snapshotForShare(scope)` empties every
+  other table (unknown/new tables too), drops joins between tables out of scope and their
+  select options. A share socket (`X-Cuesheet-Share` header with the scope; tagged
+  `share:<linkId>`, attachment `share`) gets each batch through `filterOps` (no personal
+  views; out-of-scope ops dropped; possibly an empty `ops` message so versions stay
+  gap-free). **Adding a table:** decide whether share links of which tables may see it
+  (`RELATED` / `PRESET_TABLES`); by default they don't.
+- **The page** renders the target on a normal `ShowStoreProvider` (the share cookie makes
+  the snapshot/socket/file URLs work unchanged), with a viewer `Workspace` and
+  `ShareContext` (`features/share/context.ts`): a `view` link is the tab's component in
+  print mode (`PrintTable`) keeping the viewer's theme, with "Live", the theme toggle and a
+  read-only row expand (`share-open-row` → `share-row-details`); a `print` link is the
+  layout (light). No Back link, tabs, panels or presence names. The target's URL
+  parameters (`view`, `layout`, `preset`, `session`) are put in the URL first; the
+  viewer's own (e.g. `?person=` from a "Distribute notes" email) are kept. When the socket
+  is refused/revoked the page re-resolves and shows the 404/410 page (`share-gone`).
+- **Show settings → Sharing** (`show/ShareSettings.tsx`, owner): pick a shared view (live
+  or "as a print layout") or a print layout, session (notes presets), expiry, label →
+  the link once. This browser remembers the links it made (`ShareSettingsTokens.ts`,
+  `cuesheet.shareLinks.<showId>`) to copy again and for "Distribute notes"; revoking
+  forgets it. Also the owner's JSON export link.
+
+## Account security (M5b, R24)
+
+- **Rate limiting** (`auth/rate-limit.ts`): a sliding-window log in D1
+  `rate_limit_events(key, at)`; **failures only** are counted (wrong password, unknown
+  email, bad invite / reset / share token), 10 a minute and 50 an hour per key
+  (`DEFAULT_WINDOWS`). Keys: `login:email:<email>` and `login:ip:<ip>` (both checked before
+  the password; a success clears the email key), `invite:ip:`, `reset:ip:`, `share:ip:`,
+  `password:user:<id>`. Over a limit: 429 + `Retry-After` (seconds until the window has
+  room) and a message that says nothing about the account. The IP is
+  `CF-Connecting-IP` ("unknown" locally, so tests set it). Every function takes `now`, so
+  tests move time by passing it (or by aging rows).
+- **Sessions** slide: 30 days (`SESSION_TTL_MS`), and a session used more than a day after
+  its last extension gets 30 fresh days and a re-sent cookie (`sessionOf` in
+  `auth/middleware.ts`, `maybeExtendSession`). `POST /api/auth/logout-all` deletes every
+  session of the user and `disconnectUser`s them in all their shows ("Sign out
+  everywhere" in the header's ⋯ menu, `components/AccountMenu.tsx`).
+- **Password change** `POST /api/auth/password {currentPassword, newPassword}` (≥ 10;
+  wrong current → 400, rate-limited): keeps this session, deletes the others and closes
+  their sockets (`disconnectSession` per session id). **Admin reset links**:
+  `POST /api/admin/password-resets {email}` → `/reset/<token>` (24 h, stored in `invites`
+  with `kind` "reset" and `user_id`; plain invites have kind "signup" and can't be used as
+  resets or vice versa), `GET/POST /api/password-resets/:token` (sets the password, signs
+  out everywhere, signs in, clears the login lock). Page: `pages/ResetPasswordPage.tsx`;
+  the form is on the Shows page for admins.
+- **Invites** carry an optional `show_id` + `role` (`POST /api/invites {email, showId?,
+  role?}`: admins anyone; a show's owner only to their show). Accepting joins that show;
+  `GET /api/invites/:token` returns `showName`/`role` for the page.
+- **Secure cookies**: `isHttps(c)` is also true whenever `ENVIRONMENT` is "production".
+
+## Deploy and security headers (M5b; docs/deploy.md)
+
+- `wrangler.jsonc`: top level = local dev/tests (`ENVIRONMENT` "development"); `env.production`
+  repeats every binding (they aren't inherited) with a placeholder `database_id`, the R2
+  bucket `cuesheet-files`, the weekly cron, observability; `migrations` (DO classes) are
+  inherited. Build a production bundle with `CLOUDFLARE_ENV=production pnpm build` (the
+  Vite plugin bakes the environment into `dist/`); `wrangler deploy` then uses it.
+  `.github/workflows/deploy.yml` does build → `d1 migrations apply --remote --env production
+  --config wrangler.jsonc` → deploy after CI passes on `main`, and skips with a notice
+  without the `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID` secrets or with the placeholder
+  database id. `compatibility_date` is the newest the local test runtime supports.
+- **Security headers** (`src/worker/security.ts`): pages go through the Worker
+  (`assets.run_worker_first: ["/*", "!/assets/*"]`, binding `ASSETS`), which adds a CSP
+  built from the page's inline scripts (sha256 of index.html's theme script; `'self'`,
+  `'wasm-unsafe-eval'`, `worker-src 'self' blob:` for pdf.js, `img-src/media-src 'self'
+  data: blob:`, `connect-src 'self' ws(s)://host`, `frame-ancestors 'none'`), plus
+  `X-Frame-Options`, HSTS (https), `Referrer-Policy`, `Permissions-Policy`, `nosniff`,
+  `X-Robots-Tag: noindex` (API responses get all but the CSP; `public/robots.txt`
+  disallows all). The CSP is off under `vite dev` only (`import.meta.env.DEV`), so **the
+  e2e build runs with it**: a new inline script, eval, or a third-party origin will show up
+  as a failing test (`e2e/security.spec.ts` collects `securitypolicyviolation` events).
+  pdf.js runs under it (its worker is a same-origin chunk).
+- `GET /api/health` → `{ok, d1, do}` (a `SELECT 1` and `ping()` on a fixed `__health__`
+  ShowDO); 503 when either fails. `GET /api/shows/:id/export.json` (owner): the whole
+  show as JSON (`routes/backup.ts`); the `scheduled` handler dumps D1 to R2 weekly
+  (`backupD1`, 13 kept) and prunes sessions/invites/rate-limit rows.
 
 ## Theme and colors
 
