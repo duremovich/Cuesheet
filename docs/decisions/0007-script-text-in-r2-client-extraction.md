@@ -15,12 +15,12 @@ have tight CPU limits; the file may also be large.
 ## Decision
 
 - **Extraction runs in the browser** (`src/web/features/script/extract/`): pdf.js
-  (`pdfjs-dist`, loaded lazily with its worker) for PDFs, JSZip + a small XML tokenizer for
+  (`pdfjs-dist`'s legacy build, loaded lazily with its worker) for PDFs, JSZip (lazy) + a small XML tokenizer for
   DOCX, plain parsing for TXT/Markdown. The result is a `ScriptText` (blocks with page and
   kind, printed page labels, source, confidence), posted to
   `POST /api/shows/:id/script/versions`. Scanned PDFs (no text layer) are refused with
   guidance; OCR (e.g. tesseract.js) isn't built in.
-- **The text is stored gzipped in R2** at `shows/<showId>/script/<versionId>.json.gz` and
+- **The text is stored gzipped in R2** at `shows/<showId>/script/<versionId>-<nonce>.json.gz` (a random nonce per import, so a purge never hits a live text; a used version id is never reused) and
   served by `GET …/versions/:vid/text`. It's immutable per version. The DO stores only the
   `script_versions` row: counts, source, confidence, the R2 key and a compact `page_map`
   (`[{startBlock, page, label}]`) so it can derive an anchor's page (and `Cue.page`) from

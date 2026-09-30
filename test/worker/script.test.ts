@@ -7,11 +7,10 @@ import type { UploadUrlResponse } from "../../src/shared/api";
 import { DOCX_TYPE } from "../../src/shared/attachments";
 import { newId } from "../../src/shared/ids";
 import type { MutateResponse, Op, SnapshotResponse } from "../../src/shared/ops";
-import {
-  type CreateScriptVersionResponse,
-  type ReanchorResponse,
-  type ScriptText,
-  scriptTextKey,
+import type {
+  CreateScriptVersionResponse,
+  ReanchorResponse,
+  ScriptText,
 } from "../../src/shared/script";
 import { makeAnchor } from "../../src/shared/script-anchor";
 import { api, createShow, loginAdmin, newUser, post } from "./helpers";
@@ -135,7 +134,9 @@ describe("script versions", () => {
       confidence: 1,
       block_count: 12,
       page_count: 3,
-      text_key: scriptTextKey(showId, versionId),
+      text_key: expect.stringMatching(
+        new RegExp(`^shows/${showId}/script/${versionId}-[0-9a-f]{12}\\.json\\.gz$`),
+      ),
       attachment_id: null,
       page_map: [
         { startBlock: 0, page: 1, label: "1" },
@@ -145,7 +146,7 @@ describe("script versions", () => {
     });
     expect(v?.imported_at).toBeGreaterThan(0);
     // Stored gzipped in R2, counted in the show's storage.
-    const obj = await env.FILES.get(scriptTextKey(showId, versionId));
+    const obj = await env.FILES.get(v?.text_key as string);
     const raw = new Uint8Array((await obj?.arrayBuffer()) ?? new ArrayBuffer(0));
     expect([raw[0], raw[1]]).toEqual([0x1f, 0x8b]);
     expect(v?.text_bytes).toBe(raw.length);
@@ -305,6 +306,7 @@ describe("script versions", () => {
     const body = (await res.json()) as ReanchorResponse;
     expect(body.results.map((r) => r.cueId)).toEqual([b]);
     expect(body.stats.matched + body.stats.moved).toBe(1);
+    expect(body.stats.manual).toBe(1); // cue a's hand-placed anchor, kept
     snap = await snapshot(showId, admin);
     const onV2 = snap.tables.cue_anchors.filter((x) => x.script_version_id === v2);
     expect(onV2).toHaveLength(2);
@@ -494,6 +496,9 @@ describe("cascades", () => {
     snap = await snapshot(showId, admin);
     expect(snap.tables.cue_anchors.map((x) => x.cue_id)).toEqual([b, b]);
 
+    const v2Key = snap.tables.script_versions.find((v) => v.id === v2)?.text_key as string;
+    const v1Key = snap.tables.script_versions.find((v) => v.id === v1)?.text_key as string;
+    expect(v2Key).not.toBe(v1Key);
     const delVersion = await mutate(showId, admin, [
       { op: "delete", table: "script_versions", id: v2 },
     ]);
@@ -504,7 +509,14 @@ describe("cascades", () => {
     expect(snap.tables.cue_anchors.map((x) => x.script_version_id)).toEqual([v1]);
     expect(snap.tables.cues.find((c) => c.id === b)?.page).toBe("3"); // v1: 4 per page → page 3
     // Its text waits a day in R2, then goes (and its bytes come back).
-    expect(await env.FILES.get(scriptTextKey(showId, v2))).not.toBeNull();
+    expect(await env.FILES.get(v2Key)).not.toBeNull();
+    // The id can't be reused (its history remains, its text is queued for purge).
+    const reuse = await importVersion(showId, admin, {
+      label: "again",
+      text: scriptText(LINES),
+      versionId: v2,
+    });
+    expect(reuse.status).toBe(409);
     const stub = env.SHOW.get(env.SHOW.idFromName(showId));
     const usedBytes = async () =>
       (
@@ -515,8 +527,15 @@ describe("cascades", () => {
     const v1Bytes = snap.tables.script_versions[0]?.text_bytes as number;
     expect(await usedBytes()).toBeGreaterThan(v1Bytes);
     expect(await stub.purgeDeletedFiles(Date.now() + 25 * 60 * 60 * 1000)).toBe(1);
-    expect(await env.FILES.get(scriptTextKey(showId, v2))).toBeNull();
+    expect(await env.FILES.get(v2Key)).toBeNull();
     expect(await usedBytes()).toBe(v1Bytes); // only v1's text is left
+    expect(await env.FILES.get(v1Key)).not.toBeNull();
+    const again = await importVersion(showId, admin, {
+      label: "again",
+      text: scriptText(LINES),
+      versionId: v2,
+    });
+    expect(again.status).toBe(409); // still refused after the purge (history remains)
 
     // Deleting the script deletes everything under it.
     const del = await mutate(showId, admin, [

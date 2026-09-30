@@ -33,15 +33,20 @@ export const SCRIPT_ACCEPT = `.pdf,.docx,.txt,.md,application/pdf,${DOCX_TYPE},t
 
 let pdfjsPromise: Promise<Pdfjs> | null = null;
 
-/** pdfjs-dist with its worker (a separate chunk each; loaded on the first PDF). */
+/**
+ * pdfjs-dist with its worker (a separate chunk each; loaded on the first PDF). The
+ * *legacy* build: the modern one failed in the M4a review's in-browser run, and the legacy
+ * one supports a wider range of browsers. e2e/script-extract.spec.ts runs this path in
+ * Chromium.
+ */
 function loadPdfjs(): Promise<Pdfjs> {
   pdfjsPromise ??= (async () => {
     const [pdfjs, worker] = await Promise.all([
-      import("pdfjs-dist"),
-      import("pdfjs-dist/build/pdf.worker.min.mjs?url"),
+      import("pdfjs-dist/legacy/build/pdf.mjs"),
+      import("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url"),
     ]);
     pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
-    return pdfjs;
+    return pdfjs as unknown as Pdfjs;
   })();
   return pdfjsPromise;
 }

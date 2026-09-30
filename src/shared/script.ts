@@ -262,9 +262,12 @@ export function sanitizeScriptText(v: unknown): { text: ScriptText } | { error: 
 
 // ---- storage and HTTP ----
 
-/** R2 key of a version's gzipped ScriptText JSON. */
-export function scriptTextKey(showId: string, versionId: string): string {
-  return `shows/${showId}/script/${versionId}.json.gz`;
+/**
+ * R2 key of a version's gzipped ScriptText JSON. `nonce` (random, per import) makes every
+ * stored text's key unique, so purging a deleted version's text can never hit a live one.
+ */
+export function scriptTextKey(showId: string, versionId: string, nonce: string): string {
+  return `shows/${showId}/script/${versionId}-${nonce}.json.gz`;
 }
 
 export function scriptTextUrl(showId: string, versionId: string): string {

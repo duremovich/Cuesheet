@@ -11,6 +11,7 @@ import {
   extractPdf,
   extractPlainText,
   extractScript,
+  layoutPdf,
   ScriptExtractError,
   scriptFileKind,
 } from ".";
@@ -80,10 +81,28 @@ async function scriptPdf(): Promise<Uint8Array> {
 
 describe("classify helpers", () => {
   it("recognises headings, character names and page labels", () => {
-    for (const h of ["ACT ONE", "Scene 3.", "SCENE 12", "PROLOGUE", "No. 4 - VAMP", "#12 Finale"]) {
+    for (const h of [
+      "ACT ONE",
+      "Scene 3.",
+      "SCENE 12",
+      "SCENE 3: THE TRAIN PLATFORM",
+      "PROLOGUE",
+      "No. 4 - VAMP",
+      "#12 FINALE",
+    ]) {
       expect(isHeading(h), h).toBe(true);
     }
-    expect(isHeading("Actually, no.")).toBe(false);
+    // The whole line must read as a heading: no lowercase words after the keyword.
+    for (const h of [
+      "Actually, no.",
+      "Act one more time and I'll scream.",
+      "No 2 ways about it, Joe.",
+      "Number 9 is my lucky number.",
+      "Scene two was a disaster!",
+      "#12 Finale",
+    ]) {
+      expect(isHeading(h), h).toBe(false);
+    }
     for (const c of ["JOE", "SWEET SUE", "JERRY (as Daphne)", "OSGOOD (O.S.)", "MRS. FIELDING"]) {
       expect(isCharacterCue(c), c).toBe(true);
     }
@@ -134,6 +153,37 @@ describe("PDF", () => {
     ]);
     // What the server stores is what was extracted.
     expect(sanitizeScriptText(text)).toEqual({ text });
+  });
+
+  it("only the first page-number-looking margin line is the label; later ones stay text", () => {
+    const it = (str: string, x: number, y: number) => ({
+      str,
+      x,
+      y,
+      w: str.length * 7.2,
+      size: 12,
+      italic: false,
+    });
+    const pages = [0, 1, 2].map((p) => {
+      const items = [it(`${p + 14}.`, 520, 752)];
+      let y = 700;
+      for (const s of ["JOE", "How many do we need?", "JERRY", "Then count them."]) {
+        items.push(it(s, s === s.toUpperCase() ? 260 : 150, y));
+        y -= 14;
+      }
+      while (y > 80) {
+        items.push(it("Filler line of dialogue text here.", 150, y));
+        y -= 14;
+      }
+      // Speech running into the bottom margin: "I" and "3" are dialogue, not labels.
+      items.push(it("JERRY", 260, 68));
+      items.push(it(p === 1 ? "I" : "3", 150, 54));
+      return { width: 612, height: 792, items };
+    });
+    const t = layoutPdf(pages);
+    expect(t.pages.map((p) => p.label)).toEqual(["14", "15", "16"]);
+    const tail = t.blocks.filter((b) => b.page === 2).slice(-2);
+    expect(tail.map((b) => `${b.kind}: ${b.text}`)).toEqual(["character: JERRY", "dialogue: I"]);
   });
 
   it("a PDF without a text layer is refused with a reason", async () => {
@@ -228,6 +278,36 @@ describe("DOCX", () => {
     expect(none.confidence).toBeLessThan(0.9);
   });
 
+  it("a page break at the end of a paragraph starts the next page", async () => {
+    const end = (t: string) =>
+      `<w:p><w:r><w:t>${t}</w:t></w:r><w:r><w:br w:type="page"/></w:r></w:p>`;
+    const text = await extractDocx(
+      await docx([end("One."), para("Two."), end("Three."), para("Four.")]),
+    );
+    expect(text.blocks.map((b) => `${b.page} ${b.text}`)).toEqual([
+      "1 One.",
+      "2 Two.",
+      "2 Three.",
+      "3 Four.",
+    ]);
+  });
+
+  it("text boxes (nested paragraphs, with their VML fallback) are left out", async () => {
+    const box = (t: string) =>
+      `<w:txbxContent><w:p><w:r><w:t>${t}</w:t></w:r></w:p></w:txbxContent>`;
+    const withBox =
+      `<w:p><w:r><w:t xml:space="preserve">Before the box. </w:t></w:r><w:r><mc:AlternateContent>` +
+      `<mc:Choice Requires="wps"><w:drawing>${box(`Outer ${box("Inner")} box`)}</w:drawing></mc:Choice>` +
+      `<mc:Fallback><w:pict>${box("Fallback copy")}</w:pict></mc:Fallback></mc:AlternateContent></w:r>` +
+      `<w:r><w:t>After the box.</w:t></w:r></w:p>`;
+    const text = await extractDocx(await docx([withBox, para("JOE"), para("Hello.")]));
+    expect(text.blocks.map((b) => b.text)).toEqual([
+      "Before the box. After the box.",
+      "JOE",
+      "Hello.",
+    ]);
+  });
+
   it("decodes XML entities and rejects non-DOCX files", async () => {
     expect(decodeXml("&amp;&lt;&#8217;&#x2014;&quot;")).toBe('&<’—"');
     const err = await extractDocx(new TextEncoder().encode("nope")).catch((e: unknown) => e);
@@ -236,6 +316,20 @@ describe("DOCX", () => {
 });
 
 describe("text", () => {
+  it("sung caps lines aren't character names; dialogue that starts like a heading isn't one", () => {
+    const t = extractPlainText(
+      "SUGAR\nI'M RUNNIN' WILD\nLOST CONTROL\n\nOH SUGAR\n\nBOOP-BOOP-BE-DOOP\n\nJOE\nAct one more time and I'll scream.\n",
+    );
+    expect(t.blocks.map((b) => `${b.kind}: ${b.text}`)).toEqual([
+      "character: SUGAR",
+      "lyric: I'M RUNNIN' WILD LOST CONTROL",
+      "lyric: OH SUGAR",
+      "lyric: BOOP-BOOP-BE-DOOP",
+      "character: JOE",
+      "dialogue: Act one more time and I'll scream.",
+    ]);
+  });
+
   it("paragraphs, character names, page markers", () => {
     const text = extractPlainText(
       [

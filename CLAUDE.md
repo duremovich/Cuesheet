@@ -61,7 +61,7 @@ Before finishing any task: `pnpm check && pnpm e2e`.
 - Unit tests sit next to the code as `*.test.ts` and run in plain Node. React component
   tests are `*.test.tsx` and run in jsdom (the `dom` project; helpers in `src/web/test/dom.ts`,
   no testing-library).
-- `src/web/pages/dev/`: developer-only pages (`/dev/grid`). Registered via `devRoutes` in
+- `src/web/pages/dev/`: developer-only pages (`/dev/grid`, `/dev/script-extract`). Registered via `devRoutes` in
   `main.tsx`; present in `pnpm dev` and in builds with `VITE_DEV_PAGES=1` (the e2e build sets
   it), and compiled out of production builds along with the example data they embed.
 
@@ -764,8 +764,9 @@ views" below).
 - **Where the text lives.** The extracted text of a version (`ScriptText`: `blocks`
   `{i, page, kind, text}` with 1-based physical pages, `pages` `{page, label}`, `source`,
   `confidence`, optional `warnings`) is gzipped JSON in R2 at
-  `shows/<showId>/script/<versionId>.json.gz` (`scriptTextKey`), **never in SQLite** (rows
-  are capped at 512 KiB; snapshots stay small). `GET /api/shows/:id/script/versions/:vid/text`
+  `shows/<showId>/script/<versionId>-<nonce>.json.gz` (`scriptTextKey`; a random nonce per
+  import, so purging a deleted version's text can never hit a live one), **never in
+  SQLite** (rows are capped at 512 KiB; snapshots stay small). `GET /api/shows/:id/script/versions/:vid/text`
   serves it as plain JSON (immutable, ETag). Its bytes count toward `shows.storage_bytes`;
   deleting a version queues the text in `pending_r2_deletes` (purged after 24 h, never
   restorable; `pendingFile` ignores those entries).
@@ -778,8 +779,11 @@ views" below).
   it **current at once**, and creates one anchor per anchor of the base version (default:
   the previous current) from re-anchoring, including `missing` ones (position null, the old
   quote/context kept) → `{scriptId, versionId, baseVersionId, results, stats}` (201).
+  A `versionId` that exists, or was ever a version (history, or text awaiting purge:
+  `ShowDO.scriptVersionIdUsed`), gets 409.
   `POST /script/versions/:vid/reanchor {baseVersionId}` re-runs it: anchors in state
-  `manual` on the target stay, others are updated or created, `stats` is rewritten. The
+  `manual` on the target stay, others are updated or created, `stats` is rewritten
+  (its `manual` count includes the kept ones). The
   original file: the client uploads it after the POST (`upload-url` with `{table:
   "script_versions", recordId: versionId, field: "source_file"}`; DOCX, PDF, text and
   Markdown are allowed types) and sends `update script_versions {attachment_id}` (the
@@ -806,44 +810,68 @@ views" below).
   `suggestSlot(text, {before, after})` (a block for a positional cue from its show-order
   neighbours' anchors), `diffPages(old, new)` (page statuses same/changed/new, removed
   pages, blocks inserted/deleted), `reanchor(old, new, [{cueId, anchor}])`, `anchorStats`.
-  **Re-anchoring**: the old block's position is predicted in the new text through a
-  patience diff of block texts (`mapBlocks`), interpolated between unchanged blocks; then
-  1. prefix + quote + suffix exact → `matched` (same printed page label and ≤ 3 blocks
-  from the prediction, `NEAR_BLOCKS`) or `moved`, confidence 1; 2. quote alone → `moved`,
-  0.9 (occurrences keeping one side of the context preferred, then the nearest);
-  3. fuzzy: bigram Dice ≥ **0.8** (`FUZZY_THRESHOLD`) within ±15% (`WINDOW`) of the
-  prediction, then the whole text → `changed`, confidence = the score (3 decimals), top-3
-  `candidates`; 4. context only (trimmed prefix or suffix ≥ 8 chars found) → `changed`,
-  0.5, placed between them, except that prefix and suffix now touching means the line was
-  cut → `missing`; 5. `missing` (`to: null`, fuzzy candidates even below 0.8). An anchor
-  with no position (block < 0) searches without a prediction. `normalizeText` (NFKC, curly
+  **Re-anchoring** (header comment of `reanchor.ts`): the old block's position is
+  predicted in the new text through a patience diff of block texts (`mapBlocks`),
+  interpolated between unchanged blocks; then 1. prefix + quote + suffix exact →
+  `matched` (same printed page label and ≤ 3 blocks from the prediction, `NEAR_BLOCKS`)
+  or `moved`, confidence 1; 2. **cut check**: the anchor's old blocks all unmapped with
+  their unchanged neighbours now adjacent, or prefix and suffix meeting (or both in one
+  block that no longer holds the quote) → `missing`, unless the quote (≥ 4 words,
+  `MIN_MOVE_WORDS`) occurs exactly once elsewhere (then it moved: matched/moved, 0.9);
+  3. quote alone, accepted (matched/moved by place, 0.9) only with one side of the
+  context, or within `NEAR_BLOCKS` of the prediction, or as the sole occurrence of a ≥ 4
+  word quote with no fuzzy match ≥ 0.8 near the prediction (an edited original beats a
+  far exact copy); otherwise `changed` 0.6 (`CONFIDENCE_AMBIGUOUS`) with the occurrences
+  as candidates; 4. prefix and suffix both found around a plausible span → that span,
+  `changed`, confidence = its bigram Dice when ≥ 0.8, else 0.5; 5. fuzzy: bigram Dice
+  within ±15% (`WINDOW`) of the prediction, then everywhere, ranked by score × (1 −
+  0.1·min(1, distance/window)), accepted at ≥ **0.8** (`FUZZY_THRESHOLD`) → `changed`,
+  confidence = the raw score, top-3 `candidates`; 6. one side of the context (≥ 8 chars,
+  the side nearer the prediction) → `changed` 0.5; 7. `missing` (`to: null`, fuzzy
+  candidates even below 0.8). **Never someone else's line**: a span only in new blocks the
+  diff pairs with *other* old blocks is never accepted as an exact or fuzzy match (only
+  listed as a candidate). An anchor with no position (block < 0) searches without a
+  prediction. Regression scenarios from the M4a review: `scenarios.test.ts` (fixture
+  `scene.fixture.ts`). `normalizeText` (NFKC, curly
   quotes/primes → straight, all dashes → "-", zero-width/soft hyphens removed, whitespace
   collapsed) is applied to every block at extraction and to quotes when matching.
-  Performance: 1,500 blocks × 150 anchors ≈ 5 ms when lines are unchanged, ~150 ms when
-  every anchor needs the fuzzy search (the test asserts < 300 ms on a mixed edit).
+  Performance: nominal target 1,500 blocks × 150 anchors < 300 ms; measured ≈ 5–10 ms when
+  lines are unchanged, 100–200 ms when every anchor needs the fuzzy search or is cut. The
+  test runs on cold texts (joining and tokenizing included) and asserts < 600 ms with
+  `retry: 2`, so a loaded CI machine doesn't fail it.
 - **Extraction** (`src/web/features/script/extract/`, browser; no UI: M4b's dialog calls
   it). `extractScript(file, {pdfjs?})` → ScriptText, or `ScriptExtractError` with `code`
   `unsupported` / `unreadable` (damaged, password) / `no-text-layer` (a scan: no OCR yet) /
-  `empty`, and a message for the user. **PDF** (`pdf.ts`; `pdfjs-dist` and its worker are
-  lazy chunks, `?url` for the worker; tests pass the Node build): items → lines (same
-  baseline, split at gaps over 4 font sizes) → margin lines (top/bottom 8%) that read as
-  page numbers become labels (`pageLabelOf`: "14", "14a", "- 14 -", "Page 14", "I-3-14",
-  roman), margin lines repeated on half the pages are dropped as running headers → blocks
-  (new block on a gap > 1.45 × median line spacing, an indent change, and around headings,
-  character names and parentheticals) → kinds (`classifyBlocks`: heading ("ACT ONE",
-  "SCENE 3", "No. 4 - VAMP"), character (short ALL-CAPS name, optional "(O.S.)"), direction
-  (parenthesized/bracketed or ≥ 60% italic by font name), dialogue after a name (lyric when
-  ALL CAPS), else other); confidence = share of pages with text. **DOCX** (`docx.ts`,
-  JSZip + regex tokenizer, no DOM): paragraph style names → kinds, Word's
-  `lastRenderedPageBreak`s → pages (else hard page breaks; else 40 blocks a page with a
-  warning, `FALLBACK_BLOCKS_PER_PAGE`). **TXT/MD** (`text.ts`): blank-line paragraphs, a
+  `empty`, and a message for the user. **PDF** (`pdf.ts`; pdf.js's **legacy build**
+  `pdfjs-dist/legacy/build/pdf.mjs` and its worker are lazy chunks, `?url` for the worker;
+  unit tests pass the same build under Node): items → lines (same baseline, split at gaps
+  over 4 font sizes) → the first margin line (top/bottom 8%) on a page that reads as a page
+  number becomes its label (`pageLabelOf`: "14", "14a", "- 14 -", "Page 14", "I-3-14",
+  roman; later ones stay text), margin lines repeated on half the pages are dropped as
+  running headers → blocks (new block on a gap > 1.45 × median line spacing, an indent
+  change, and around headings, character names and parentheticals) → kinds
+  (`classifyBlocks`: heading = the whole line ("ACT ONE", "SCENE 3: THE TRAIN", "No. 4 -
+  VAMP"; no lowercase words after the keyword); character = a short caps name followed by
+  a paragraph that isn't all caps, or by a caps (sung) line when the name itself doesn't
+  look sung (`looksLikeLyric`: apostrophes, hyphens, OH/LA/…); direction = parenthesized /
+  bracketed or ≥ 60% italic by font name; dialogue after a name (lyric when shouty or caps
+  that look sung); caps that look sung elsewhere → lyric; else other); confidence = share
+  of pages with text. **DOCX** (`docx.ts`, JSZip imported lazily + regex tokenizer, no
+  DOM): text boxes (`w:txbxContent`, nested, and `mc:Fallback` copies) are stripped first;
+  paragraph style names → kinds; Word's `lastRenderedPageBreak`s → pages (else hard page
+  breaks, including one at the end of a paragraph; else 40 blocks a page with a warning,
+  `FALLBACK_BLOCKS_PER_PAGE`). **TXT/MD** (`text.ts`): blank-line paragraphs, a
   character name on a paragraph's first line splits off, `--- page 14 ---` markers (label
   after "page") or form feeds, else 40 a page with a warning; Markdown `#` headings and
   `*italic*` lines (directions). Fixtures are generated in `extract.test.ts` (pdf-lib, JSZip).
 - **Tests**: `src/shared/script-anchor/reanchor.test.ts` (engine; synthetic scripts in
-  `testing.ts`), `src/web/features/script/extract/extract.test.ts`,
+  `testing.ts`) and `scenarios.test.ts` (review regressions),
+  `src/web/features/script/extract/extract.test.ts`,
   `src/web/lib/show-state-script.test.ts`, `test/worker/script.test.ts`,
-  `e2e/script-import.spec.ts` (API import of `e2e/fixtures/script.txt`).
+  `e2e/script-import.spec.ts` (API import of `e2e/fixtures/script.txt`) and
+  `e2e/script-extract.spec.ts`: **extraction in Chromium** through the dev page
+  `/dev/script-extract` (`pages/dev/ScriptExtractDevPage.tsx`: pick a file, see the
+  ScriptText as JSON), a generated PDF (pdf.js + worker, running header, labels) and DOCX.
 
 ## Theme and colors
 

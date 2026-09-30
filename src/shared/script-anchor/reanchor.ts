@@ -1,23 +1,37 @@
-// Re-anchoring (decision 0004, ux.md §New script version): each anchor of the old version
-// is looked for in the new one, in this order:
+// Re-anchoring (decision 0004, ux.md §New script version). Each anchor of the old version
+// is looked for in the new one; the old block's place is first *predicted* through a
+// patience diff of the two versions' blocks (./diff.ts), interpolated between unchanged
+// blocks. Then, in order:
 //
-//   1. prefix + quote + suffix found exactly     → matched (same page, ≤ NEAR_BLOCKS from
-//      where the diff predicts it) or moved; confidence 1.
-//   2. quote found exactly (without that context) → moved, confidence 0.9.
-//   3. fuzzy quote: bigram Dice ≥ FUZZY_THRESHOLD, searched within ±WINDOW of the document
-//      around the predicted position first, then everywhere → changed, confidence = score.
-//   4. context only: prefix or suffix found exactly → changed, confidence 0.5, anchored
-//      where the quote would be (between them). If prefix and suffix are now adjacent, the
-//      quote was cut → missing.
-//   5. otherwise missing (to = null).
+//   1. prefix + quote + suffix found exactly → matched (same printed page label and
+//      ≤ NEAR_BLOCKS from the prediction) or moved; confidence 1.
+//   2. Cut check: the anchored text was deleted when its old blocks map to nothing and the
+//      text between their unchanged neighbours is now empty, or when prefix and suffix now
+//      meet at the predicted place (or sit in one block that no longer holds the quote).
+//      → missing, unless the quote (≥ MIN_MOVE_WORDS words) occurs exactly once elsewhere:
+//      then it moved (matched/moved by place, 0.9).
+//   3. Quote alone, exactly: accepted (matched/moved by place, 0.9) when one side of the
+//      context still matches there, or it's within NEAR_BLOCKS of the prediction, or it's
+//      the only occurrence and has ≥ MIN_MOVE_WORDS words (and no fuzzy match ≥ threshold
+//      sits near the prediction: an edited original beats an exact copy far away).
+//      Otherwise → changed, CONFIDENCE_AMBIGUOUS, with the occurrences as candidates.
+//   4. Both prefix and suffix found around a plausible span: that span wins → changed,
+//      confidence = its bigram Dice when ≥ FUZZY_THRESHOLD, else CONFIDENCE_CONTEXT.
+//   5. Fuzzy: bigram Dice, searched ±WINDOW of the document around the prediction, then
+//      everywhere; ranked by score × (1 − 0.1·min(1, distance / window)); accepted when
+//      that is ≥ FUZZY_THRESHOLD → changed, confidence = the raw score.
+//   6. One side of the context found (the one nearer the prediction) → changed,
+//      CONFIDENCE_CONTEXT.
+//   7. missing (to = null; candidates = the best fuzzy spans even below the threshold).
 //
-// Where more than one place qualifies, the one nearest the predicted position wins: the
-// old block's position mapped through a patience diff of the two versions' blocks
-// (./diff.ts), interpolated between unchanged blocks. Pure and deterministic.
-import type { Anchor, AnchorStats, ReanchorResult, ScriptText } from "../script";
+// A span lying only in new blocks that the diff pairs with *other* unchanged old blocks is
+// someone else's line ("foreign"): never accepted as an exact or fuzzy match (it can still
+// be listed as a candidate). Where several places qualify, the one nearest the prediction
+// wins. Pure and deterministic.
+import type { Anchor, AnchorStats, ReanchorCandidate, ReanchorResult, ScriptText } from "../script";
 import { ANCHOR_STATES, normalizeText } from "../script";
 import { mapBlocks } from "./diff";
-import { type FuzzyHit, fuzzyFind } from "./fuzzy";
+import { diceSimilarity, type FuzzyHit, fuzzyFind, overlaps } from "./fuzzy";
 import { anchorAt, anchorStart, blockAt, type Joined, joinBlocks, pageLabel } from "./text";
 
 /** Bigram Dice at or above which a fuzzy match is accepted (`changed`). */
@@ -26,13 +40,19 @@ export const FUZZY_THRESHOLD = 0.8;
 export const WINDOW = 0.15;
 /** An exact match this many blocks or fewer from the prediction (same page) is `matched`. */
 export const NEAR_BLOCKS = 3;
+/** A quote needs this many words for a lone exact occurrence far away to count as a move. */
+export const MIN_MOVE_WORDS = 4;
 export const CONFIDENCE_EXACT = 1;
 export const CONFIDENCE_QUOTE_ONLY = 0.9;
+/** An exact quote found only in places that don't qualify (e.g. "Go." elsewhere). */
+export const CONFIDENCE_AMBIGUOUS = 0.6;
 export const CONFIDENCE_CONTEXT = 0.5;
-/** Context shorter than this (after trimming) isn't trusted on its own (step 4). */
+/** Context shorter than this (after trimming) isn't trusted on its own. */
 const MIN_CONTEXT = 8;
 /** Occurrences of a quote examined at most (a one-word quote in a long script). */
 const MAX_OCCURRENCES = 2000;
+/** Exact occurrences listed as candidates for an ambiguous quote. */
+const MAX_OCCURRENCE_CANDIDATES = 10;
 
 export interface AnchorInput {
   cueId: string;
@@ -46,10 +66,8 @@ export function reanchor(
   newText: ScriptText,
   anchors: readonly AnchorInput[],
 ): ReanchorResult[] {
-  const oj = joinBlocks(oldText);
-  const nj = joinBlocks(newText);
-  const predict = predictor(oj, nj, mapBlocks(oldText, newText));
-  return anchors.map(({ cueId, anchor }) => reanchorOne(oj, nj, predict, cueId, anchor));
+  const d = new DiffInfo(joinBlocks(oldText), joinBlocks(newText), mapBlocks(oldText, newText));
+  return anchors.map(({ cueId, anchor }) => reanchorOne(d, cueId, anchor));
 }
 
 /** Counts by state. */
@@ -59,63 +77,119 @@ export function anchorStats(results: readonly { state: ReanchorResult["state"] }
   return out;
 }
 
-type Predict = (anchor: Anchor) => number | null;
+/** The block mapping between the versions and what's derived from it. */
+class DiffInfo {
+  /** New block → the old block the diff pairs with it, or -1. */
+  readonly owner: Int32Array;
+  private readonly prevMapped: Int32Array;
+  private readonly nextMapped: Int32Array;
 
-/**
- * Old anchor → predicted joined position in the new text: exact through a mapped block,
- * else interpolated between the nearest mapped blocks around it.
- */
-function predictor(oj: Joined, nj: Joined, map: Int32Array): Predict {
-  const n = map.length;
-  const prevMapped = new Int32Array(n);
-  const nextMapped = new Int32Array(n);
-  let last = -1;
-  for (let i = 0; i < n; i++) {
-    if ((map[i] as number) >= 0) last = i;
-    prevMapped[i] = last;
+  constructor(
+    readonly oj: Joined,
+    readonly nj: Joined,
+    readonly map: Int32Array,
+  ) {
+    const n = map.length;
+    this.owner = new Int32Array(nj.starts.length).fill(-1);
+    map.forEach((k, i) => {
+      if (k >= 0) this.owner[k] = i;
+    });
+    this.prevMapped = new Int32Array(n);
+    this.nextMapped = new Int32Array(n);
+    let last = -1;
+    for (let i = 0; i < n; i++) {
+      if ((map[i] as number) >= 0) last = i;
+      this.prevMapped[i] = last;
+    }
+    last = -1;
+    for (let i = n - 1; i >= 0; i--) {
+      if ((map[i] as number) >= 0) last = i;
+      this.nextMapped[i] = last;
+    }
   }
-  last = -1;
-  for (let i = n - 1; i >= 0; i--) {
-    if ((map[i] as number) >= 0) last = i;
-    nextMapped[i] = last;
+
+  /** Old blocks [first, last] an anchor covers, or null when it has no position. */
+  oldBlocks(anchor: Anchor): [number, number] | null {
+    const start = anchorStart(this.oj, anchor);
+    if (start === null) return null;
+    return [anchor.block, blockAt(this.oj, start + Math.max(0, anchor.length - 1))];
   }
-  const oldLen = Math.max(1, oj.text.length);
-  return (anchor) => {
-    const start = anchorStart(oj, anchor);
+
+  /** Old span and new span between the unchanged neighbours of old blocks [b, e]. */
+  private gap(b: number, e: number): { n0: number; n1: number; o0: number; o1: number } {
+    const { oj, nj, map } = this;
+    const p = this.prevMapped[b] as number;
+    const q = this.nextMapped[e] as number;
+    return {
+      o0: p >= 0 ? (oj.ends[p] as number) : 0,
+      o1: q >= 0 ? (oj.starts[q] as number) : oj.text.length,
+      n0: p >= 0 ? (nj.ends[map[p] as number] as number) : 0,
+      n1: q >= 0 ? (nj.starts[map[q] as number] as number) : nj.text.length,
+    };
+  }
+
+  /** Predicted joined position of an old anchor in the new text. */
+  predict(anchor: Anchor): number | null {
+    const start = anchorStart(this.oj, anchor);
     if (start === null) return null;
     const b = anchor.block;
-    const mapped = map[b] as number;
-    if (mapped >= 0) return (nj.starts[mapped] as number) + anchor.offset;
-    const p = prevMapped[b] as number;
-    const q = nextMapped[b] as number;
-    // Old span [o0, o1) between the mapped neighbours ↔ new span [n0, n1).
-    const o0 = p >= 0 ? (oj.ends[p] as number) : 0;
-    const o1 = q >= 0 ? (oj.starts[q] as number) : oj.text.length;
-    const n0 = p >= 0 ? (nj.ends[map[p] as number] as number) : 0;
-    const n1 = q >= 0 ? (nj.starts[map[q] as number] as number) : nj.text.length;
-    if (p < 0 && q < 0) return Math.round((start / oldLen) * nj.text.length);
+    const mapped = this.map[b] as number;
+    if (mapped >= 0) return (this.nj.starts[mapped] as number) + anchor.offset;
+    if ((this.prevMapped[b] as number) < 0 && (this.nextMapped[b] as number) < 0) {
+      return Math.round((start / Math.max(1, this.oj.text.length)) * this.nj.text.length);
+    }
+    const { o0, o1, n0, n1 } = this.gap(b, b);
     const f = o1 > o0 ? (start - o0) / (o1 - o0) : 0;
     return Math.round(n0 + f * (n1 - n0));
-  };
+  }
+
+  /**
+   * The anchor's old blocks all went and nothing replaced them: their unchanged
+   * neighbours are now adjacent in the new text.
+   */
+  deleted(anchor: Anchor): boolean {
+    const blocks = this.oldBlocks(anchor);
+    if (!blocks) return false;
+    const [b, e] = blocks;
+    for (let i = b; i <= e; i++) if ((this.map[i] as number) >= 0) return false;
+    if ((this.prevMapped[b] as number) < 0 && (this.nextMapped[e] as number) < 0) return false;
+    const { n0, n1 } = this.gap(b, e);
+    return n1 - n0 <= 1;
+  }
+
+  /** Joined span [start, end) lies only in new blocks paired with other old blocks. */
+  foreign(start: number, end: number, own: [number, number] | null): boolean {
+    if (!own) return false;
+    const first = blockAt(this.nj, start);
+    const last = blockAt(this.nj, Math.max(start, end - 1));
+    for (let k = first; k <= last; k++) {
+      const o = this.owner[k] as number;
+      if (o < 0 || (o >= own[0] && o <= own[1])) return false;
+    }
+    return true;
+  }
 }
 
-function reanchorOne(
-  oj: Joined,
-  nj: Joined,
-  predict: Predict,
-  cueId: string,
-  from: Anchor,
-): ReanchorResult {
+type Hit = FuzzyHit & { weighted: number };
+
+const wordCount = (s: string) => s.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
+
+function reanchorOne(d: DiffInfo, cueId: string, from: Anchor): ReanchorResult {
+  const nj = d.nj;
   const quote = normalizeText(from.quote);
   const prefix = from.prefix;
   const suffix = from.suffix;
-  const expected = predict(from);
-  const oldStart = anchorStart(oj, from);
-  const oldLabel = oldStart === null ? null : pageLabel(oj, from.block);
+  const expected = d.predict(from);
+  const own = d.oldBlocks(from);
+  const oldLabel = own ? pageLabel(d.oj, from.block) : null;
   const doc = nj.text;
-  /** Of non-empty `positions`, the one nearest the prediction. */
+  const half = Math.ceil(doc.length * WINDOW);
   const nearest = (positions: number[]) => pickNearest(positions, expected) as number;
-  const candidates = (hits: FuzzyHit[]) =>
+  const blockDistance = (pos: number) =>
+    expected === null
+      ? Number.POSITIVE_INFINITY
+      : Math.abs(blockAt(nj, pos) - blockAt(nj, Math.min(expected, doc.length)));
+  const toCandidates = (hits: FuzzyHit[]): ReanchorCandidate[] =>
     hits
       .filter((h) => h.score > 0)
       .map((h) => ({ anchor: anchorAt(nj, h.start, h.end), score: h.score }));
@@ -125,7 +199,7 @@ function reanchorOne(
     to: null,
     state: "missing",
     confidence: 0,
-    candidates: candidates(hits),
+    candidates: toCandidates(hits),
   });
   const result = (
     start: number,
@@ -139,14 +213,36 @@ function reanchorOne(
     to: anchorAt(nj, start, start + length),
     state,
     confidence,
-    candidates: candidates(hits),
+    candidates: toCandidates(hits),
   });
   /** matched when on the same page label and near the prediction, else moved. */
   const placeState = (start: number): "matched" | "moved" => {
     if (expected === null || oldLabel === null) return "moved";
-    const block = blockAt(nj, start);
-    const near = Math.abs(block - blockAt(nj, Math.min(expected, doc.length))) <= NEAR_BLOCKS;
-    return near && pageLabel(nj, block) === oldLabel ? "matched" : "moved";
+    const near = blockDistance(start) <= NEAR_BLOCKS;
+    return near && pageLabel(nj, blockAt(nj, start)) === oldLabel ? "matched" : "moved";
+  };
+  /** Fuzzy spans in [a, b), with their distance-weighted score. */
+  const fuzzy = (a: number, b: number): Hit[] =>
+    fuzzyFind(nj, quote, a, b, expected, 6).map((h) => ({
+      ...h,
+      weighted:
+        expected === null
+          ? h.score
+          : h.score * (1 - 0.1 * Math.min(1, Math.abs(h.start - expected) / Math.max(1, half))),
+    }));
+  const acceptable = (h: FuzzyHit) => !d.foreign(h.start, h.end, own);
+  const nearFuzzy = () =>
+    expected === null ? [] : fuzzy(expected - half, expected + half + quote.length);
+  let cached: Hit[] | null = null;
+  /** Near the prediction, then everywhere unless an acceptable near one is good enough. */
+  const allHits = (): Hit[] => {
+    if (cached) return cached;
+    const near = nearFuzzy();
+    const best = near.find(acceptable);
+    cached = mergeHits(
+      best && best.weighted >= FUZZY_THRESHOLD ? near : [...near, ...fuzzy(0, doc.length)],
+    );
+    return cached;
   };
 
   // 1. The quote with its context.
@@ -156,61 +252,105 @@ function reanchorOne(
     return result(at, quote.length, placeState(at), CONFIDENCE_EXACT);
   }
 
-  if (quote.length > 0) {
-    // 2. The quote alone: prefer places where one side of the context still matches.
-    const bare = occurrences(doc, quote);
-    if (bare.length > 0) {
-      const pre = prefix.trimStart();
-      const suf = suffix.trimEnd();
-      const withContext = bare.filter(
-        (p) =>
-          (pre.length >= MIN_CONTEXT && doc.startsWith(pre, p - pre.length)) ||
-          (suf.length >= MIN_CONTEXT && doc.startsWith(suf, p + quote.length)),
-      );
-      const at = nearest(withContext.length > 0 ? withContext : bare);
-      return result(at, quote.length, "moved", CONFIDENCE_QUOTE_ONLY);
-    }
-
-    // 3. Fuzzy, near the prediction first.
-    let hits: FuzzyHit[] = [];
-    if (expected !== null) {
-      const half = Math.ceil(doc.length * WINDOW);
-      hits = fuzzyFind(nj, quote, expected - half, expected + half + quote.length, expected);
-    }
-    if (!(hits[0] && hits[0].score >= FUZZY_THRESHOLD)) {
-      const everywhere = fuzzyFind(nj, quote, 0, doc.length, expected);
-      hits = mergeHits(hits, everywhere);
-    }
-    const top = hits[0];
-    if (top && top.score >= FUZZY_THRESHOLD) {
-      return result(top.start, top.end - top.start, "changed", top.score, hits);
-    }
-
-    // 4. Context only.
-    const ctx = contextPlace(doc, prefix, suffix, quote.length, expected);
-    if (ctx === "cut") return missing(hits);
-    if (ctx) return result(ctx.start, ctx.length, "changed", CONFIDENCE_CONTEXT, hits);
-    return missing(hits);
+  if (quote.length === 0) {
+    // A positional anchor with no quote: its context is all there is.
+    const ctx = contextPlace(nj, prefix, suffix, "", expected);
+    if (ctx && ctx !== "cut") return result(ctx.start, 0, "changed", CONFIDENCE_CONTEXT);
+    return missing([]);
   }
 
-  // A positional anchor with no quote: its context is all there is.
-  const ctx = contextPlace(doc, prefix, suffix, 0, expected);
-  if (ctx && ctx !== "cut") return result(ctx.start, 0, "changed", CONFIDENCE_CONTEXT);
-  return missing([]);
+  const exact = occurrences(doc, quote).filter((p) => !d.foreign(p, p + quote.length, own));
+  const loneMove = exact.length === 1 && wordCount(quote) >= MIN_MOVE_WORDS;
+  const ctx = contextPlace(nj, prefix, suffix, quote, expected);
+
+  // 2. Cut: the anchored text is gone (unless it moved, whole, somewhere else).
+  if (ctx === "cut" || d.deleted(from)) {
+    if (loneMove) {
+      const at = exact[0] as number;
+      return result(at, quote.length, placeState(at), CONFIDENCE_QUOTE_ONLY);
+    }
+    return missing([...exactHits(exact, quote.length, expected), ...allHits()].slice(0, 3));
+  }
+
+  // 3. The quote alone, where it qualifies.
+  if (exact.length > 0) {
+    const pre = prefix.trimStart();
+    const suf = suffix.trimEnd();
+    const withContext = exact.filter(
+      (p) =>
+        (pre.length >= MIN_CONTEXT && doc.startsWith(pre, p - pre.length)) ||
+        (suf.length >= MIN_CONTEXT && doc.startsWith(suf, p + quote.length)),
+    );
+    const near = exact.filter((p) => blockDistance(p) <= NEAR_BLOCKS);
+    const pick = withContext.length > 0 ? withContext : near;
+    if (pick.length > 0) {
+      const at = nearest(pick);
+      return result(at, quote.length, placeState(at), CONFIDENCE_QUOTE_ONLY);
+    }
+    if (loneMove) {
+      // An edited original near the prediction beats an exact copy far away.
+      const edited = nearFuzzy().find((h) => acceptable(h) && h.weighted >= FUZZY_THRESHOLD);
+      if (!edited) {
+        const at = exact[0] as number;
+        return result(at, quote.length, placeState(at), CONFIDENCE_QUOTE_ONLY);
+      }
+      return result(edited.start, edited.end - edited.start, "changed", edited.score, [
+        edited,
+        ...exactHits(exact, quote.length, expected),
+      ]);
+    }
+    const occ = exactHits(exact, quote.length, expected).slice(0, MAX_OCCURRENCE_CANDIDATES);
+    return result(nearest(exact), quote.length, "changed", CONFIDENCE_AMBIGUOUS, occ);
+  }
+
+  // 4. Between prefix and suffix.
+  if (ctx?.both) {
+    const span = doc.slice(ctx.start, ctx.start + ctx.length);
+    const score = Math.round(diceSimilarity(quote, span) * 1000) / 1000;
+    const confidence = score >= FUZZY_THRESHOLD ? score : CONFIDENCE_CONTEXT;
+    const own0 = { start: ctx.start, end: ctx.start + ctx.length, score };
+    const others = allHits().filter((h) => !overlaps(h, own0));
+    return result(ctx.start, ctx.length, "changed", confidence, [own0, ...others].slice(0, 3));
+  }
+
+  // 5. Fuzzy.
+  const top = allHits().find(acceptable);
+  if (top && top.weighted >= FUZZY_THRESHOLD) {
+    const rest = allHits().filter((h) => h !== top);
+    return result(top.start, top.end - top.start, "changed", top.score, [top, ...rest].slice(0, 3));
+  }
+
+  // 6. One side of the context.
+  if (ctx)
+    return result(ctx.start, ctx.length, "changed", CONFIDENCE_CONTEXT, allHits().slice(0, 3));
+  return missing(allHits().slice(0, 3));
 }
 
+/** Exact occurrences as candidates (score 1), nearest the prediction first. */
+function exactHits(exact: number[], length: number, expected: number | null): FuzzyHit[] {
+  const dist = (p: number) => (expected === null ? 0 : Math.abs(p - expected));
+  return [...exact]
+    .sort((a, b) => dist(a) - dist(b) || a - b)
+    .map((start) => ({ start, end: start + length, score: 1 }));
+}
+
+type Place = { start: number; length: number; both: boolean };
+
 /**
- * Where the quote would be by its context: after the prefix / before the suffix (nearest
- * the prediction). "cut" when the prefix and suffix now meet (the quote was deleted); null
- * when neither is found.
+ * Where the quote would be by its context, nearest the prediction: between prefix and
+ * suffix when both are found a plausible distance apart (`both`), else after the prefix or
+ * before the suffix, whichever is nearer the prediction. "cut" when prefix and suffix now
+ * meet, or sit in one block that no longer holds the quote. null when neither is found.
  */
 function contextPlace(
-  doc: string,
+  nj: Joined,
   prefix: string,
   suffix: string,
-  quoteLength: number,
+  quote: string,
   expected: number | null,
-): { start: number; length: number } | "cut" | null {
+): Place | "cut" | null {
+  const doc = nj.text;
+  const quoteLength = quote.length;
   const pre = prefix.trim();
   const suf = suffix.trim();
   const preAt =
@@ -225,18 +365,39 @@ function contextPlace(
     const slack = Math.max(4 * quoteLength, quoteLength + 200);
     if (gap <= slack) {
       if (quoteLength > 0 && gap <= Math.max(2, Math.floor(quoteLength * 0.25))) return "cut";
-      return { start: preEnd, length: Math.max(0, trimEnd(doc, preEnd, sufAt) - preEnd) };
+      // The prefix's last character and the suffix's first in one block (a quote on part of
+      // a line) that no longer holds the quote: the words were cut from that line.
+      const block = blockAt(nj, (preAt as number) + pre.length - 1);
+      if (
+        quoteLength > 0 &&
+        block === blockAt(nj, sufAt) &&
+        !(nj.blocks[block]?.text ?? "").includes(quote)
+      ) {
+        return "cut";
+      }
+      return {
+        start: preEnd,
+        length: Math.max(0, trimEnd(doc, preEnd, sufAt) - preEnd),
+        both: true,
+      };
     }
   }
-  if (preEnd !== null) {
-    return { start: preEnd, length: Math.min(quoteLength, doc.length - preEnd) };
-  }
+  const afterPrefix: Place | null =
+    preEnd === null
+      ? null
+      : { start: preEnd, length: Math.min(quoteLength, doc.length - preEnd), both: false };
+  let beforeSuffix: Place | null = null;
   if (sufAt !== null) {
     const end = trimEnd(doc, 0, sufAt);
-    const start = Math.max(0, end - quoteLength);
-    return { start: skipSpace(doc, start), length: end - skipSpace(doc, start) };
+    const start = skipSpace(doc, Math.max(0, end - quoteLength));
+    beforeSuffix = { start, length: Math.max(0, end - start), both: false };
   }
-  return null;
+  if (afterPrefix && beforeSuffix && expected !== null) {
+    return Math.abs(beforeSuffix.start - expected) < Math.abs(afterPrefix.start - expected)
+      ? beforeSuffix
+      : afterPrefix;
+  }
+  return afterPrefix ?? beforeSuffix;
 }
 
 function skipSpace(doc: string, pos: number): number {
@@ -272,14 +433,13 @@ function pickNearest(positions: number[], expected: number | null, shift = 0): n
   return best;
 }
 
-/** Hits from two searches, best first, without duplicates / overlaps. */
-function mergeHits(a: FuzzyHit[], b: FuzzyHit[]): FuzzyHit[] {
-  const all = [...a, ...b].sort((x, y) => y.score - x.score || x.start - y.start);
-  const out: FuzzyHit[] = [];
-  for (const h of all) {
-    if (out.length >= 3) break;
-    const inter = (o: FuzzyHit) => Math.min(o.end, h.end) - Math.max(o.start, h.start);
-    if (out.some((o) => inter(o) > 0.5 * Math.min(o.end - o.start, h.end - h.start))) continue;
+/** Fuzzy hits from several searches, best weighted first, without overlaps; at most 6. */
+function mergeHits(all: Hit[]): Hit[] {
+  const sorted = [...all].sort((x, y) => y.weighted - x.weighted || x.start - y.start);
+  const out: Hit[] = [];
+  for (const h of sorted) {
+    if (out.length >= 6) break;
+    if (out.some((o) => overlaps(o, h))) continue;
     out.push(h);
   }
   return out;

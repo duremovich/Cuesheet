@@ -112,7 +112,12 @@ export async function createVersion(c: C): Promise<Response> {
   const text = parsed.text;
 
   const info = await stub(c).scriptInfo();
-  if (info.versions.some((v) => v.id === versionId)) {
+  // An id used before (a deleted version: its text may still await purge, its history
+  // stays) is refused too.
+  if (
+    info.versions.some((v) => v.id === versionId) ||
+    (await stub(c).scriptVersionIdUsed(versionId))
+  ) {
     return c.json({ error: "That version already exists" }, 409);
   }
   const baseId =
@@ -131,7 +136,10 @@ export async function createVersion(c: C): Promise<Response> {
   const stats = anchorStats(results);
 
   const showId = c.var.show.id;
-  const key = scriptTextKey(showId, versionId);
+  const nonce = Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) =>
+    b.toString(16).padStart(2, "0"),
+  ).join("");
+  const key = scriptTextKey(showId, versionId, nonce);
   const bytes = await gzip(JSON.stringify(text));
   if (!(await reserveStorage(c.env, showId, bytes.byteLength))) {
     return c.json({ error: "This show's storage is full" }, 413);
@@ -260,7 +268,9 @@ export async function reanchorVersion(c: C): Promise<Response> {
           fields: { cue_id: res.cueId, script_version_id: vid, ...anchorFields(res) },
         };
   });
+  // The version's report covers the anchors placed by hand that were kept, too.
   const stats: AnchorStats = anchorStats(results);
+  stats.manual += [...existing.values()].filter((a) => a.state === "manual").length;
   ops.push({ op: "update", table: "script_versions", id: vid, fields: { stats } });
   const res = await stub(c).mutateScript(
     { userId: c.var.user.id, role: c.var.role, clientId: null },

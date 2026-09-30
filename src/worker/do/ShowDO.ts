@@ -326,6 +326,24 @@ export class ShowDO extends DurableObject<Env> {
     };
   }
 
+  /**
+   * Was this id ever a script version (deleted now: its history remains, its text may still
+   * wait in `pending_r2_deletes`)? Such ids aren't reused.
+   */
+  async scriptVersionIdUsed(id: string): Promise<boolean> {
+    const sql = this.ctx.storage.sql;
+    return (
+      sql.exec("SELECT 1 FROM pending_r2_deletes WHERE attachment_id = ? LIMIT 1", id).toArray()
+        .length > 0 ||
+      sql
+        .exec(
+          `SELECT 1 FROM changes WHERE "table" = 'script_versions' AND record_id = ? LIMIT 1`,
+          id,
+        )
+        .toArray().length > 0
+    );
+  }
+
   /** A version's anchors (without `custom`, as above). */
   async anchorsOf(versionId: string): Promise<Omit<CueAnchorRow, "custom">[]> {
     return this.ctx.storage.sql

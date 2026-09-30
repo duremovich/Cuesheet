@@ -146,8 +146,10 @@ export function layoutPdf(pages: PdfPageItems[]): ScriptText {
     return ls.filter((l) => {
       if (!inMargin(l, page)) return true;
       const label = pageLabelOf(l.text);
-      if (label !== null && label.length <= 12) {
-        if (!labels.has(i + 1)) labels.set(i + 1, label);
+      // The first page-number-looking margin line is the label; later ones on the same page
+      // are text ("I", "3" as dialogue near the bottom).
+      if (label !== null && label.length <= 12 && !labels.has(i + 1)) {
+        labels.set(i + 1, label);
         return false;
       }
       return !runningHeader(l);

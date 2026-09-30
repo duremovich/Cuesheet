@@ -13,5 +13,12 @@ export const devRoutes: RouteObject[] = ENABLED
         lazy: async () => ({ Component: (await import("./GridDevPage")).GridDevPage }),
         HydrateFallback: () => null,
       },
+      {
+        path: "/dev/script-extract",
+        lazy: async () => ({
+          Component: (await import("./ScriptExtractDevPage")).ScriptExtractDevPage,
+        }),
+        HydrateFallback: () => null,
+      },
     ]
   : [];

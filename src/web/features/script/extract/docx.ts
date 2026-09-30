@@ -5,7 +5,7 @@
 // Word's last rendered page breaks when the file has them (they match what was printed),
 // else from hard page breaks; with neither, FALLBACK_BLOCKS_PER_PAGE blocks per page and
 // a warning.
-import JSZip from "jszip";
+import type JSZip from "jszip";
 import type { BlockKind, ScriptText } from "../../../../shared/script";
 import {
   classifyBlocks,
@@ -67,9 +67,43 @@ interface Para {
   italicChars: number;
 }
 
+/**
+ * The body without text boxes (`w:txbxContent`, possibly nested, and the VML fallback copy
+ * in `mc:Fallback`): their paragraphs sit inside a run of an outer paragraph, which would
+ * break the flat paragraph scan, and they're margin notes or title-page art, not script
+ * text. Matched with a depth counter, so nesting is handled.
+ */
+export function stripTextBoxes(xml: string): string {
+  const noFallback = xml.replace(/<mc:Fallback\b[^>]*>[\s\S]*?<\/mc:Fallback>/g, "");
+  const tag = /<(\/?)w:txbxContent\b[^>]*?(\/?)>/g;
+  let out = "";
+  let depth = 0;
+  let last = 0;
+  for (const m of noFallback.matchAll(tag)) {
+    const at = m.index ?? 0;
+    const closing = m[1] === "/";
+    const selfClosing = m[2] === "/";
+    if (selfClosing) {
+      if (depth === 0) {
+        out += noFallback.slice(last, at);
+        last = at + m[0].length;
+      }
+      continue;
+    }
+    if (!closing) {
+      if (depth === 0) out += noFallback.slice(last, at);
+      depth++;
+    } else if (depth > 0) {
+      depth--;
+      if (depth === 0) last = at + m[0].length;
+    }
+  }
+  return depth === 0 ? out + noFallback.slice(last) : out;
+}
+
 /** Paragraphs of `word/document.xml` with their breaks, style and italic share. */
 export function parseParagraphs(documentXml: string): Para[] {
-  const body = /<w:body>([\s\S]*)<\/w:body>/.exec(documentXml)?.[1] ?? documentXml;
+  const body = stripTextBoxes(/<w:body>([\s\S]*)<\/w:body>/.exec(documentXml)?.[1] ?? documentXml);
   const out: Para[] = [];
   for (const m of body.matchAll(/<w:p\b[^>]*\/>|<w:p\b[^>]*>([\s\S]*?)<\/w:p>/g)) {
     const inner = m[1] ?? "";
@@ -127,15 +161,22 @@ export function docxBlocks(
     const kind = name ? kindForStyle(name) : undefined;
     const letters = p.text.replace(/\s/g, "").length;
     const italic = letters ? p.italicChars / letters : 0;
+    // Each break inside (or at the end of) the paragraph starts a new page after the text
+    // before it.
     let from = 0;
-    for (const cut of [...at, p.text.length]) {
+    for (const cut of at) {
       const piece = p.text.slice(from, cut);
       if (piece.trim()) {
         raw.push({ text: piece, page, italic, ...(kind ? { kind } : {}) });
         any = true;
       }
-      if (cut < p.text.length) page++;
+      page++;
       from = cut;
+    }
+    const rest = p.text.slice(from);
+    if (rest.trim()) {
+      raw.push({ text: rest, page, italic, ...(kind ? { kind } : {}) });
+      any = true;
     }
   }
   return { raw, paged: useRendered || hard };
@@ -144,7 +185,9 @@ export function docxBlocks(
 export async function extractDocx(data: ArrayBuffer | Uint8Array): Promise<ScriptText> {
   let zip: JSZip;
   try {
-    zip = await JSZip.loadAsync(data);
+    // Loaded on demand: only Word imports need it.
+    const { default: Zip } = await import("jszip");
+    zip = await Zip.loadAsync(data);
   } catch {
     throw new ScriptExtractError("unreadable", "That file isn't a readable Word document (.docx).");
   }

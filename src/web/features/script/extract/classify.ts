@@ -1,7 +1,8 @@
 // Block kinds and page labels from text alone, shared by the PDF, DOCX and text extractors.
 // Heuristics for theatre scripts: character names are short ALL-CAPS lines followed by
-// dialogue; directions are parenthesized/bracketed or mostly italic; headings are "ACT
-// ONE", "SCENE 3", "No. 4 – VAMP"; lyrics are ALL-CAPS speech.
+// dialogue (or a sung line, unless the name itself looks sung); directions are
+// parenthesized/bracketed or mostly italic; headings are whole lines like "ACT ONE",
+// "SCENE 3: THE TRAIN", "No. 4 - VAMP" with no lowercase words; lyrics are ALL-CAPS speech.
 import {
   type BlockKind,
   normalizeText,
@@ -9,15 +10,31 @@ import {
   type ScriptPageInfo,
 } from "../../../../shared/script";
 
-/** "ACT ONE", "Scene 3.", "PROLOGUE", "No. 4 - VAMP", "#12 Finale". */
-const HEADING =
-  /^(?:(?:act|scene)\s+(?:[0-9ivx]+|one|two|three|four|five|six|seven|eight|nine|ten)\b|(?:prologue|epilogue|entr'?acte|intermission|overture|finale|curtain call|bows)\b|(?:no\.?|number|#)\s*\d+[a-z]?\b)/i;
+/**
+ * The start of a heading: "ACT ONE", "Scene 3", "PROLOGUE", "No. 4", "#12". Case-insensitive
+ * here; the rest of the line must have no lowercase letters (`isHeading`), so "Act one more
+ * time and I'll scream." and "No 2 ways about it" stay dialogue.
+ */
+const HEADING_START =
+  /^(?:(?:act|scene)(?:\s+(?:[0-9]{1,3}[a-z]?|[ivx]{1,5}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b)?|prologue|epilogue|entr'?acte|intermission|overture|finale|curtain call|bows|(?:no\.?|number|#)\s*\d+[a-z]?)(?![\p{L}])/iu;
 
 /** A character's name line: "JOE", "SWEET SUE", "JERRY (as Daphne)", "OSGOOD (O.S.)". */
 const CHARACTER = /^[A-Z][A-Z0-9.'&\- ]{0,28}[A-Z.)](?:\s*\([^)]{1,30}\))?:?$/;
 
 export function isHeading(text: string): boolean {
-  return text.length <= 80 && HEADING.test(text);
+  const m = HEADING_START.exec(text);
+  return !!m && text.length <= 80 && !/\p{Ll}/u.test(text.slice(m[0].length));
+}
+
+/** Sung-sounding caps: apostrophes/hyphens ("RUNNIN'", "BOOP-BOOP") or vocables ("OH", "LA"). */
+export function looksLikeLyric(text: string): boolean {
+  const t = text.replace(/\s*\([^)]*\)\s*:?$/, "");
+  return /['-]/.test(t) || /\b(?:OH|AH|LA|OOH|OOO|DOO|BOOP|YEAH|HEY|NA|DA|BA|WHOA|WOW)\b/.test(t);
+}
+
+/** Letters, and none of them lowercase. */
+function allCaps(text: string): boolean {
+  return /\p{Lu}/u.test(text) && !/\p{Ll}/u.test(text);
 }
 
 export function isCharacterCue(text: string): boolean {
@@ -62,27 +79,44 @@ export interface RawBlock {
  */
 export function classifyBlocks(raw: readonly RawBlock[]): ScriptBlock[] {
   const out: ScriptBlock[] = [];
+  const texts = raw.map((r) => normalizeText(r.text));
+  /** The next non-empty paragraph after index i. */
+  const nextText = (i: number): string | undefined => {
+    for (let k = i + 1; k < texts.length; k++) if (texts[k]) return texts[k];
+    return undefined;
+  };
   // A speech runs from a character name through the block right after it and the blocks
   // the extractor says continue it (a PDF's dialogue indent).
   let inSpeech = false;
-  for (const r of raw) {
-    const text = normalizeText(r.text);
-    if (!text) continue;
+  raw.forEach((r, i) => {
+    const text = texts[i] as string;
+    if (!text) return;
     const prev: BlockKind | undefined = out.at(-1)?.kind;
     const speaking: boolean = inSpeech && (prev === "character" || !!r.continues);
     let kind: BlockKind;
     if (r.kind) kind = r.kind;
     else if (isHeading(text)) kind = "heading";
-    else if (isCharacterCue(text)) kind = "character";
+    else if (isCharacterName(text, nextText(i))) kind = "character";
     else if (isParenthetical(text) || (r.italic ?? 0) >= 0.6) kind = "direction";
-    else if (speaking) kind = isShouty(text) ? "lyric" : "dialogue";
+    else if (speaking)
+      kind = isShouty(text) || (allCaps(text) && looksLikeLyric(text)) ? "lyric" : "dialogue";
+    else if (allCaps(text) && looksLikeLyric(text)) kind = "lyric";
     else kind = "other";
     inSpeech =
       kind === "character" ||
       (speaking && (kind === "dialogue" || kind === "lyric" || kind === "direction"));
     out.push({ i: out.length, page: r.page, kind, text });
-  }
+  });
   return out;
+}
+
+/**
+ * A character's name: a name-like caps line with something after it, which is either not
+ * all caps (dialogue), or all caps (a sung line) when the name itself doesn't look sung.
+ */
+function isCharacterName(text: string, next: string | undefined): boolean {
+  if (!isCharacterCue(text) || next === undefined) return false;
+  return !allCaps(next) || !looksLikeLyric(text);
 }
 
 /** A printed page number as it appears in a margin: "14", "14a", "- 14 -", "Page 14", "I-3-14", "xii". */
