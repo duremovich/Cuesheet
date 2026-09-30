@@ -147,7 +147,7 @@ export const showRoutes = new Hono<ShowEnv>()
 
   // ---- show data ----
   .get("/shows/:id/snapshot", requireMembership, async (c) => {
-    const snap = await showStub(c.env, c.var.show.id).snapshotJson();
+    const snap = await showStub(c.env, c.var.show.id).snapshotJson(c.var.user.id);
     return c.body(snap, 200, { "Content-Type": "application/json" });
   })
   .post("/shows/:id/mutate", requireMembership, async (c) => {
@@ -189,11 +189,14 @@ export const showRoutes = new Hono<ShowEnv>()
   })
   .get("/shows/:id/history", requireMembership, async (c) => {
     const limit = Number.parseInt(c.req.query("limit") ?? "", 10);
-    const changes = await showStub(c.env, c.var.show.id).history({
-      table: c.req.query("table") || undefined,
-      id: c.req.query("id") || undefined,
-      limit: Number.isFinite(limit) ? limit : undefined,
-    });
+    const changes = await showStub(c.env, c.var.show.id).history(
+      {
+        table: c.req.query("table") || undefined,
+        id: c.req.query("id") || undefined,
+        limit: Number.isFinite(limit) ? limit : undefined,
+      },
+      c.var.user.id,
+    );
     const ids = [...new Set(changes.map((ch) => ch.userId))];
     const users = ids.length
       ? await c.var.db

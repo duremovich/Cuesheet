@@ -10,7 +10,7 @@ import type { ViewRow } from "../../src/shared/tables";
 import { defaultViewConfig, type ViewConfig } from "../../src/shared/views";
 import type { MutationContext } from "../../src/worker/do/ops-engine";
 import type { MutateResult } from "../../src/worker/do/ShowDO";
-import { createShow, loginAdmin, newUser, post } from "./helpers";
+import { api, connectDO, createShow, isType, loginAdmin, newUser, post } from "./helpers";
 
 let seq = 0;
 async function freshShow() {
@@ -290,5 +290,74 @@ describe("views: HTTP", () => {
     expect(denied.status).toBe(403);
     const shared = await mutate([createView(newId(), {})]);
     expect(shared.status).toBe(403);
+
+    // Personal views are private: the admin's snapshot and history don't have it.
+    const adminSnap = (await (
+      await api(`/api/shows/${show.id}/snapshot`, { cookie: admin })
+    ).json()) as SnapshotResponse;
+    expect(adminSnap.tables.views.some((x) => x.id === id)).toBe(false);
+    const mineSnap = (await (
+      await api(`/api/shows/${show.id}/snapshot`, { cookie: v.cookie })
+    ).json()) as SnapshotResponse;
+    expect(mineSnap.tables.views.some((x) => x.id === id)).toBe(true);
+    const hist = (await (
+      await api(`/api/shows/${show.id}/history?table=views`, { cookie: admin })
+    ).json()) as { changes: { recordId: string }[] };
+    expect(hist.changes.some((c) => c.recordId === id)).toBe(false);
+  });
+});
+
+describe("views: personal views are private", () => {
+  it("user B's snapshot and socket never see A's personal view; B's version still advances", async () => {
+    const stub = await freshShow();
+    const a = ctx("viewer", "u-a");
+    const sockA = await connectDO(stub, "u-a");
+    const sockB = await connectDO(stub, "u-b");
+    await sockA.next(isType("version"));
+    await sockB.next(isType("version"));
+
+    const id = newId();
+    const created = ok(await stub.mutate(a, [createView(id, { owner_user_id: "u-a" })]));
+    const toA = await sockA.next(isType("ops"));
+    expect(toA.ops).toMatchObject([{ op: "create", table: "views", id }]);
+    const toB = await sockB.next(isType("ops"));
+    expect(toB).toMatchObject({ prevVersion: created.prevVersion, version: created.version });
+    expect(toB.ops).toEqual([]);
+
+    // A batch mixing shared and private changes: B gets only the shared part.
+    const cueId = newId();
+    ok(
+      await stub.mutate(editor, [
+        { op: "create", table: "cues", id: cueId, fields: { number: "1" } },
+      ]),
+    );
+    await sockA.next(isType("ops"));
+    expect((await sockB.next(isType("ops"))).ops).toMatchObject([{ table: "cues", id: cueId }]);
+    ok(
+      await stub.mutate(a, [
+        { op: "update", table: "views", id, fields: { name: "Secret" } },
+        { op: "delete", table: "views", id },
+      ]),
+    );
+    expect((await sockA.next(isType("ops"))).ops.map((o) => o.op)).toEqual(["update", "delete"]);
+    expect((await sockB.next(isType("ops"))).ops).toEqual([]);
+    for (const m of [...sockB.received]) {
+      expect(JSON.stringify(m)).not.toContain(id);
+    }
+
+    // Snapshots and history per user.
+    const id2 = newId();
+    ok(await stub.mutate(a, [createView(id2, { owner_user_id: "u-a" })]));
+    const forB = JSON.parse(await stub.snapshotJson("u-b")) as SnapshotResponse;
+    const forA = JSON.parse(await stub.snapshotJson("u-a")) as SnapshotResponse;
+    expect(forB.tables.views.some((v) => v.id === id2)).toBe(false);
+    expect(forB.tables.views.filter((v) => v.owner_user_id === null)).toHaveLength(5);
+    expect(forA.tables.views.some((v) => v.id === id2)).toBe(true);
+    expect((await stub.history({ table: "views" }, "u-b")).some((h) => h.recordId === id2)).toBe(
+      false,
+    );
+    expect((await stub.history({ table: "views" }, "u-a")).some((h) => h.recordId === id2)).toBe(
+      true,
+    );
   });
 });

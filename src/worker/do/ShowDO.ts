@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import { type DrizzleSqliteDODatabase, drizzle } from "drizzle-orm/durable-sqlite";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import type { Role, ShowMetaDTO } from "../../shared/api";
-import type { HistoryEntry, MutateResponse, SnapshotResponse } from "../../shared/ops";
+import type { HistoryEntry, MutateResponse, ResolvedOp, SnapshotResponse } from "../../shared/ops";
 import { DATA_TABLES, type FieldOptions } from "../../shared/tables";
 import { PING_FRAME, PONG_FRAME, type ServerMessage } from "../../shared/ws";
 import migrations from "../db/do/migrations/migrations.js";
@@ -96,10 +96,9 @@ export class ShowDO extends DurableObject<Env> {
    */
   async mutate(ctx: MutationContext, ops: unknown): Promise<MutateResult> {
     let result: MutateResponse;
+    const batch = new Batch(this.ctx.storage.sql, ctx);
     try {
-      result = this.ctx.storage.transactionSync(() =>
-        new Batch(this.ctx.storage.sql, ctx).run(ops),
-      );
+      result = this.ctx.storage.transactionSync(() => batch.run(ops));
     } catch (e) {
       if (e instanceof OpError) {
         return {
@@ -111,32 +110,71 @@ export class ShowDO extends DurableObject<Env> {
       }
       throw e;
     }
-    if (result.version !== result.prevVersion) {
+    if (result.version !== result.prevVersion) this.broadcastBatch(result, ctx, batch.viewOwners);
+    return { ok: true, ...result };
+  }
+
+  /**
+   * Broadcast a committed batch. Ops on a personal view go only to its owner's sockets;
+   * everyone else gets the same message without them (possibly with no ops at all), so
+   * their version still advances without a gap.
+   */
+  private broadcastBatch(
+    result: MutateResponse,
+    ctx: MutationContext,
+    viewOwners: ReadonlyMap<string, string>,
+  ): void {
+    const ownerOf = (op: ResolvedOp) => (op.table === "views" ? viewOwners.get(op.id) : undefined);
+    const textFor = (userId: string | undefined): string | null => {
       const msg: ServerMessage = {
         type: "ops",
         prevVersion: result.prevVersion,
         version: result.version,
         clientId: ctx.clientId ?? "",
-        ops: result.ops,
+        ops: result.ops.filter((op) => {
+          const owner = ownerOf(op);
+          return owner === undefined || owner === userId;
+        }),
       };
       const text = JSON.stringify(msg);
-      if (new TextEncoder().encode(text).byteLength <= MAX_BROADCAST_BYTES) {
-        this.broadcastRaw(text);
-      } else this.broadcast({ type: "version", version: result.version });
+      return new TextEncoder().encode(text).byteLength <= MAX_BROADCAST_BYTES ? text : null;
+    };
+    const versionText = JSON.stringify({
+      type: "version",
+      version: result.version,
+    } satisfies ServerMessage);
+    if (!result.ops.some((op) => ownerOf(op) !== undefined)) {
+      this.broadcastRaw(textFor(undefined) ?? versionText);
+      return;
     }
-    return { ok: true, ...result };
+    const cache = new Map<string | undefined, string>();
+    for (const ws of this.openSockets()) {
+      const userId = this.ctx.getTags(ws)[0];
+      let text = cache.get(userId);
+      if (text === undefined) {
+        text = textFor(userId) ?? versionText;
+        cache.set(userId, text);
+      }
+      try {
+        ws.send(text);
+      } catch {
+        // closing; its close handler updates presence
+      }
+    }
   }
 
   /**
-   * The whole show as a JSON string (a SnapshotResponse). Serialised here so the Worker
-   * passes it straight through instead of structured-cloning and re-encoding it.
+   * The show as a JSON string (a SnapshotResponse) as `userId` may see it (shared views
+   * plus their own personal views; all views when omitted, for internal use). Serialised
+   * here so the Worker passes it straight through instead of re-encoding it.
    */
-  async snapshotJson(): Promise<string> {
-    return JSON.stringify(readSnapshot(this.ctx.storage.sql) satisfies SnapshotResponse);
+  async snapshotJson(userId?: string): Promise<string> {
+    return JSON.stringify(readSnapshot(this.ctx.storage.sql, userId) satisfies SnapshotResponse);
   }
 
-  async history(query: HistoryQuery): Promise<HistoryEntry[]> {
-    return readHistory(this.ctx.storage.sql, query);
+  /** Changes, newest first; with `userId`, others' personal views are left out. */
+  async history(query: HistoryQuery, userId?: string): Promise<HistoryEntry[]> {
+    return readHistory(this.ctx.storage.sql, query, userId);
   }
 
   async fieldOptions(): Promise<FieldOptions> {

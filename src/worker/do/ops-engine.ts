@@ -151,6 +151,11 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
  */
 export class Batch {
   private readonly resolved: ResolvedOp[] = [];
+  /**
+   * Personal views this batch touched → their owner. Ops on them are private: the ShowDO
+   * sends them only to that owner's sockets.
+   */
+  readonly viewOwners = new Map<string, string>();
   private options: Map<string, Set<string>> | null = null;
   private opIndex = 0;
   private readonly now: number;
@@ -383,6 +388,12 @@ export class Batch {
     }
   }
 
+  private noteViewOwner(table: TableName, id: string, row: DbRow): void {
+    if (table === "views" && typeof row.owner_user_id === "string") {
+      this.viewOwners.set(id, row.owner_user_id);
+    }
+  }
+
   /** Setting `is_default` on a shared view clears it on the table's other shared views. */
   private afterViewWrite(id: string): void {
     const row = this.getRow("views", id);
@@ -509,7 +520,10 @@ export class Batch {
       fields: rest,
       ...(used ? { placement: used } : {}),
     });
-    if (table === "views") this.afterViewWrite(id);
+    if (table === "views") {
+      if (typeof row.owner_user_id === "string") this.viewOwners.set(id, row.owner_user_id);
+      this.afterViewWrite(id);
+    }
   }
 
   /** The placement a create really gets (neighbours may have been deleted meanwhile). */
@@ -587,6 +601,7 @@ export class Batch {
 
   private update(table: TableName, id: string, fields: FieldValues) {
     const before = this.mustGet(table, id);
+    this.noteViewOwner(table, id, before);
     this.checkRole(table, before);
     const changes: WireRow = {};
     for (const [name, value] of Object.entries(fields)) {
@@ -623,6 +638,7 @@ export class Batch {
   private delete(op: DeleteOp) {
     const { table, id } = op;
     const before = this.mustGet(table, id);
+    this.noteViewOwner(table, id, before);
     this.checkRole(table, before);
     // Cascade, as explicit ops so history and clients see every change.
     for (const spec of Object.values(LINKS) as LinkSpec[]) {
@@ -769,14 +785,22 @@ export function seedDefaultViews(sql: SqlStorage, now = Date.now()): number {
 
 // ---- reads for the snapshot / history endpoints ----
 
-export function readSnapshot(sql: SqlStorage): SnapshotResponse {
+/**
+ * The whole show. With `userId`, `views` holds the shared views and that user's own
+ * personal ones only (personal views are private); without it (internal use), all views.
+ */
+export function readSnapshot(sql: SqlStorage, userId?: string): SnapshotResponse {
   const tables = {} as Record<TableName, WireRow[]>;
   for (const table of TABLE_NAMES) {
     const orderBy = isOrderedTable(table) ? "order_key, id" : "created_at, id";
-    tables[table] = sql
-      .exec<DbRow>(`SELECT * FROM ${q(table)} ORDER BY ${orderBy}`)
-      .toArray()
-      .map((r) => decodeRow(table, r));
+    const rows =
+      table === "views" && userId !== undefined
+        ? sql.exec<DbRow>(
+            `SELECT * FROM views WHERE owner_user_id IS NULL OR owner_user_id = ? ORDER BY ${orderBy}`,
+            userId,
+          )
+        : sql.exec<DbRow>(`SELECT * FROM ${q(table)} ORDER BY ${orderBy}`);
+    tables[table] = rows.toArray().map((r) => decodeRow(table, r));
   }
   const joins = {} as Joins;
   for (const spec of Object.values(LINKS) as LinkSpec[]) {
@@ -808,9 +832,16 @@ export interface HistoryQuery {
 }
 
 /** Newest first. `userName` is filled in by the Worker (D1). */
-export function readHistory(sql: SqlStorage, query: HistoryQuery): HistoryEntry[] {
+export function readHistory(sql: SqlStorage, query: HistoryQuery, userId?: string): HistoryEntry[] {
   const where: string[] = [];
   const args: SqlStorageValue[] = [];
+  if (userId !== undefined) {
+    // Personal views are private: only shared views' and your own views' history.
+    where.push(
+      `NOT ("table" = 'views' AND record_id NOT IN (SELECT id FROM views WHERE owner_user_id IS NULL OR owner_user_id = ?))`,
+    );
+    args.push(userId);
+  }
   if (query.table) {
     where.push('"table" = ?');
     args.push(query.table);

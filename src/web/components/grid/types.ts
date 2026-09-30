@@ -160,6 +160,11 @@ export interface DataGridProps<Row> {
   onOpenRow?: (rowId: string) => void;
   /** Live sort. Rows hold their place while focused (see README "Ordering"). */
   sort?: SortSpec[];
+  /**
+   * Columns that `sort` keys resolve against when some aren't shown (a view sorting by a
+   * hidden field). Default: `columns`.
+   */
+  sortColumns?: Column<Row>[];
   colorRules?: ColorRule<Row>[];
   rowHeight?: RowHeight;
   className?: string;

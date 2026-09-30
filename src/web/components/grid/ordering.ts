@@ -145,6 +145,8 @@ export interface LayoutInput<Row> {
   columns: readonly Column<Row>[];
   rowId: (r: Row) => string;
   sort?: readonly SortSpec[] | undefined;
+  /** Columns sort keys resolve against (default `columns`; may include hidden ones). */
+  sortColumns?: readonly Column<Row>[] | undefined;
   holds?: readonly Hold[] | undefined;
   collapsed?: ReadonlySet<string> | undefined;
   isSection?: ((r: Row) => boolean) | undefined;
@@ -155,7 +157,7 @@ export function buildLayout<Row>(input: LayoutInput<Row>): FlatItem<Row>[] {
   const { columns, rowId, sort, holds = [], collapsed, isSection } = input;
   const byId = new Map<string, { row: Row }>();
   const sorted = (rows: readonly Row[]) =>
-    sort && sort.length > 0 ? sortRows(rows, sort, columns) : [...rows];
+    sort && sort.length > 0 ? sortRows(rows, sort, input.sortColumns ?? columns) : [...rows];
   const lists: OrderedList[] = [];
   const groups = input.groups;
   if (groups) {
