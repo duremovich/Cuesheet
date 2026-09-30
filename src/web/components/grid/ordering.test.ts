@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { applyHolds, buildLayout, compareValues, isEmptyValue, sortRows } from "./ordering";
+import {
+  applyHolds,
+  buildLayout,
+  compareNumericText,
+  compareValues,
+  isEmptyValue,
+  sortRows,
+} from "./ordering";
 import type { Column } from "./types";
 
 interface R {
@@ -166,5 +173,20 @@ describe("buildLayout", () => {
     // b is edited to 9 and sorts to the end; c (held) stays in slot 2.
     const edited = list.map((x) => (x.id === "b" ? { ...x, num: "9" } : x));
     expect(layout(edited)).toEqual(["a", "d", "c", "b"]);
+  });
+});
+
+describe("compareNumericText (cue numbers with suffixes)", () => {
+  it("compares the decimal first, then the suffix", () => {
+    const sorted = ["14.3A", "14.05A", "14.25", "14.3", "14.5", "14.3B", "8.5A", "14.2"].sort(
+      compareValues,
+    );
+    expect(sorted).toEqual(["8.5A", "14.05A", "14.2", "14.25", "14.3", "14.3A", "14.3B", "14.5"]);
+    expect(compareNumericText("14.25", "14.3A")).toBeLessThan(0);
+    expect(compareNumericText("14.05A", "14.5")).toBeLessThan(0);
+    expect(compareNumericText("14.2", "14.20")).toBe(0);
+    expect(compareNumericText("14.3a", "14.3A")).toBe(0);
+    expect(compareNumericText("1.2.3", "1.2")).toBeNull();
+    expect(compareNumericText("Intro", "1")).toBeNull();
   });
 });

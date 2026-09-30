@@ -181,6 +181,11 @@ describe("compileFilters", () => {
 
   it("compareScalar: decimals numerically, else natural order", () => {
     expect(compareScalar("14.2", "14.20")).toBe(0);
+    expect(compareScalar("14.25", "14.3A")).toBeLessThan(0);
+    expect(compareScalar("14.05A", "14.5")).toBeLessThan(0);
+    expect(m(F.number, { op: "lt", value: "14.3A" }, row({ number: "14.25" }))).toBe(true);
+    expect(m(F.number, { op: "gt", value: "14.5" }, row({ number: "14.05A" }))).toBe(false);
+    expect(m(F.number, { op: "is", value: "14.3a" }, row({ number: "14.30A" }))).toBe(true);
     expect(compareScalar("9", "10")).toBeLessThan(0);
     expect(compareScalar("8.5A", "8.5B")).toBeLessThan(0);
   });

@@ -11,7 +11,7 @@ import type {
   ViewConfig,
 } from "../../../shared/views";
 import { type FieldKind, LIST_OPS, OPS_BY_KIND, VALUELESS_OPS } from "../../../shared/views";
-import { isEmptyValue } from "../../components/grid/ordering";
+import { compareNumericText, isEmptyValue } from "../../components/grid/ordering";
 import type { ColorRule, Column, ColumnType, PickerItem } from "../../components/grid/types";
 import { jsonEqual } from "../../lib/show-state";
 
@@ -88,20 +88,18 @@ export function isComplete(f: Filter): boolean {
 
 // ---- Values ----
 
-const DECIMAL = /^\s*-?(\d+\.?\d*|\.\d+)\s*$/;
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 const norm = (s: string) => s.trim().toLocaleLowerCase();
 
 /**
- * Compare two scalars: numbers numerically, strings that are both decimals numerically
- * (cue numbers: 14.2 = 14.20 < 14.25), other strings by natural collation.
+ * Compare two scalars: numbers numerically, cue-number-like strings by the grid's
+ * `compareNumericText` (14.2 = 14.20 < 14.25 < 14.3A), other strings by natural collation.
  */
 export function compareScalar(a: string | number, b: string | number): number {
   if (typeof a === "number" && typeof b === "number") return a - b;
   const sa = String(a);
   const sb = String(b);
-  if (DECIMAL.test(sa) && DECIMAL.test(sb)) return Number.parseFloat(sa) - Number.parseFloat(sb);
-  return collator.compare(sa.trim(), sb.trim());
+  return compareNumericText(sa, sb) ?? collator.compare(sa.trim(), sb.trim());
 }
 
 /** The items of a select/multiselect/link/multilink value as comparable strings. */
@@ -297,8 +295,8 @@ export function matchesFilter<V>(f: FieldDef<V>, row: V, filter: Filter): boolea
 
 function equalScalar(a: string | number, b: string): boolean {
   if (typeof a === "number") return a === Number.parseFloat(b);
-  if (DECIMAL.test(a) && DECIMAL.test(b)) return Number.parseFloat(a) === Number.parseFloat(b);
-  return norm(a) === norm(b);
+  const n = compareNumericText(a, b);
+  return n !== null ? n === 0 : norm(a) === norm(b);
 }
 
 function compareOp(op: FilterOp, c: number): boolean {
