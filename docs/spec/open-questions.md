@@ -110,10 +110,6 @@ Things the first build had to decide; each is easy to change.
 
 ## Script view and print (M4b decisions to confirm)
 
-- **Skip** on the Resolve screen changes nothing: a `missing` cue stays in the reader's
-  **Unplaced** tray, and a `changed` one keeps its best-guess anchor, still flagged (the
-  warning icon and the cue list warning stay). Should Skip remove a `changed` guess
-  instead, so the cue goes to the tray?
 - **Cut** sets the cue's status to a new **Cut** option (red) and deletes its anchor on
   the new version; the cue stays in the list. The option is seeded by a migration.
 - **Marker colors** follow a per-user, per-show choice (Status / Trigger type / none;
@@ -146,6 +142,11 @@ Things the first build had to decide; each is easy to change.
 - A shot list example for the Shot table.
 
 ## Answered
+
+- **Resolve → Skip** (M4b): leaves the cue unanchored on the new version, per ux.md: a
+  guessed (`changed`) anchor is set to `missing` with no position, so the cue shows in
+  the reader's Unplaced tray (and keeps its cue-list warning). **Accept** is the way to
+  keep a guess. → CLAUDE.md "Script view"
 
 - **Platform**: hosted web app. → overview
 - **Team size**: 2–5 editors, simultaneously in tech. → overview, R22

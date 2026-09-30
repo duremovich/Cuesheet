@@ -2,8 +2,8 @@
 // `changed` or `missing` after a new version was imported. For each: the old text with the
 // marker on the left, the new page at the best guess on the right (other guesses as
 // chips). Accept keeps the guess, Place lets you select the new text, Cut sets the cue's
-// status to Cut and leaves it unanchored, Skip leaves it for later (it stays in the
-// reader's Unplaced tray). Accepted / placed anchors become `manual`.
+// status to Cut and leaves it unanchored, Skip leaves it unanchored for later (a guess is
+// dropped: the anchor becomes `missing`; the cue shows in the reader's Unplaced tray). Accepted / placed anchors become `manual`.
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { newId } from "../../../shared/ids";
 import type { Op } from "../../../shared/ops";
@@ -47,6 +47,21 @@ export function placeOp(item: ResolveItem, versionId: string, a: Anchor): Anchor
   return item.anchorId
     ? { op: "update", id: item.anchorId, fields }
     : { op: "create", id: newId(), fields };
+}
+
+/**
+ * Skip (ux.md): leave the cue unanchored on this version. Its guessed anchor, if any,
+ * becomes `missing` (no position), so the cue shows in the Unplaced tray and keeps its
+ * warning until someone places it. Accept is the way to keep a guess.
+ */
+export function skipBatch(item: ResolveItem): { cueOps: Op[]; anchorOps: AnchorOp[] } {
+  return {
+    cueOps: [],
+    anchorOps:
+      item.anchorId && item.state === "changed"
+        ? [{ op: "update", id: item.anchorId, fields: { state: "missing", confidence: 0 } }]
+        : [],
+  };
 }
 
 /** Cut: status Cut, and no anchor on this version. */
@@ -141,7 +156,7 @@ export function ResolveScreen({
 
   const run = async (
     fn: () => Promise<void>,
-    status: "accepted" | "placed" | "cut",
+    status: "accepted" | "placed" | "cut" | "skipped",
     what: string,
   ) => {
     setBusy(true);
@@ -166,6 +181,11 @@ export function ResolveScreen({
   const place = () => {
     if (!item || !picked) return;
     void run(() => onApply([], [placeOp(item, versionId, picked)]), "placed", "place the cue");
+  };
+  const skip = () => {
+    if (!item) return;
+    const b = skipBatch(item);
+    void run(() => onApply(b.cueOps, b.anchorOps), "skipped", "skip the cue");
   };
   const cut = () => {
     if (!item) return;
@@ -398,8 +418,8 @@ export function ResolveScreen({
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() => dispatch({ type: "done", status: "skipped" })}
-                  title="Leave it unplaced for now"
+                  onClick={skip}
+                  title="Leave it unplaced (it goes to the Unplaced tray)"
                 >
                   Skip
                 </button>

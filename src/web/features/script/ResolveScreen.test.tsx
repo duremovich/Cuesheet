@@ -162,10 +162,15 @@ describe("ResolveScreen", () => {
     );
   });
 
-  it("Cut sets status Cut and drops the anchor; Skip changes nothing; all done at the end", async () => {
+  it("Cut sets status Cut and drops the anchor; Skip drops the guess (missing, unplaced); all done at the end", async () => {
     const { container, onApply } = setup();
     await wait(0);
     click(btn(container, "Skip"));
+    await wait(0);
+    expect(onApply).toHaveBeenCalledWith(
+      [],
+      [{ op: "update", id: "n1", fields: { state: "missing", confidence: 0 } }],
+    );
     expect(heading(container)).toContain("Q 14.25");
     click(btn(container, "Cut"));
     await wait(0);
@@ -181,7 +186,7 @@ describe("ResolveScreen", () => {
       [],
     );
     expect(container.querySelector('[data-testid="resolve-done"]')).not.toBeNull();
-    expect(onApply).toHaveBeenCalledTimes(2);
+    expect(onApply).toHaveBeenCalledTimes(3);
   });
 
   it("Cut without a Cut status option reports instead of writing", async () => {

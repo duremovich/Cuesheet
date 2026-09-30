@@ -816,8 +816,9 @@ views" below).
   item shows the old text around the old anchor and the new page at the best guess
   (other guesses as chips). Accept / Place (select text, or click a line for its start) →
   anchor state `manual`; Cut → cue status "Cut" (seeded by DO migration
-  `0006_cue_status_cut`, to fold into M4a's 0006) and its anchor deleted; Skip → no
-  change. Cues still without a placed anchor are the reader's **Unplaced** tray; the cue
+  `0006_cue_status_cut`, to fold into M4a's 0006) and its anchor deleted; Skip → the
+  cue is left unanchored (a guessed anchor becomes `missing`, no position; Accept is how
+  to keep a guess). Cues still without a placed anchor are the reader's **Unplaced** tray; the cue
   list's number cell warns about `changed` / `missing` anchors (`anchorWarnings`).
 - **Roles**: viewers and commenters read (no popover, no drag, no import / resolve).
 - **Tests**: `markers`, `placement`, `resolve` (unit), `Reader`, `rangeToSpan`,
