@@ -1,0 +1,11 @@
+﻿Name,IP,Subnet,Username,Password,Type
+Novastar LED Processor,192.168.11.163,255.255.255.0,,,Projector
+Mac pro,192.168.11.162,255.255.252.0,mediaserver,REDACTED,Media Server
+,,255.255.255.0,,,Camera
+Morgan Laptop,DHCP,255.255.252.0,,,Designer Computer
+Casey Laptop,DHCP,255.255.252.0,,,Designer Computer
+Riley Laptop,DHCP,255.255.252.0,,,Designer Computer
+KVM Alaska 3 (RX),10.10.0.2,255.255.0.0,,REDACTED,Management
+KVM Alaska 2 (RX),10.10.0.1,255.255.0.0,,REDACTED,Management
+KVM Alaska 1 (TX),unset,unset,,REDACTED,Management
+LX Board,192.168.9.14,255.255.255.0,,,Management

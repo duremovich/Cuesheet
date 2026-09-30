@@ -1,0 +1,148 @@
+﻿Cue Number,PG,SM Call,LX,Timecode,AE Time,MSR,Description,STATUS,Assignee,Content,Content Notes
+0.10,,TEST PATTERN CUE / TAKEN MANUALLY,x,,,,TEST PATTERN CUE / TAKEN MANUALLY,,,,"""Take out the center slower maybe 9s
+"""
+0.30,,TIMECODE TEST,x,,,,TAKEN FROM SOUND COMP,,,,
+0.80,,OSC TEST,.5,,,,TAKEN FROM LX BOARD,,,,
+0.90,,BLACKOUT CHECK,0,,,,,,,,
+51.50,,,,,,,,,,,need a transition between Feather & Bad Rehearsal -- shouldn't linger in the peacock look -- get the LX cue to trigger it
+1.00,1,"PRESHOW
+",1,x,x,0,Red curtain look,CUED,Casey Brennan,100-001-CH20-PRESHOW,
+,,,,,,,,,,,
+2.00,2,[NO. 1 - OVERTURE],,1:00:00.00,00:00:00:00,1,"curtain rise, reveal skyline, buildings arrive",CUED,Casey Brennan,101-001-OVERTURETHIRSTYFOR,"flicker of white to blue when the curtain goes up at the top of the song - Riley working on it,hold back the color/contrast of the opening stars and building,weird glitch as curtain opens - Riley working on it,design to wandel/timecode/click,Thirsty Click A is off by a few bars. Use Vor to fix.,v04 available,pops in the pink/purple section -- add more but idea is there,dance break needs some love timing and flashy lights,3rd buildings are too dark,we need a second visual look on the 2nd bum bum bum (between curtain raise and stars coming in)"
+2.10,,Curtain raises,,,00:04:16:00,,,,,,
+2.20,,Stars in,,,00:00:16:02,,,,,,
+2.30,,Chicago Skyline,,,00:00:22:03,,,,,,
+3.00,2,"[NO. 2 - WHAT ARE YOU THIRSTY FOR] CLICK A - ""...Certainly all use a drink!""",,2:00:00.00,00:01:18:09,21,color shift,CUED,Casey Brennan,101-001-OVERTURETHIRSTYFOR,"swap out wood paneling to concrete,add drop shadow to everything,third building too dark,white drop shadow on SL. ,The palm chevrons look a little chunky. Make the lines wider.,Redesign with the book scene incorporated,vivid green is too bright,CH10.1 looks pixelated,building timing is off,click timing for final section is off. check vor,post-curtain up feels wimpy color wise. May need NDI & light look.,""add grunge to each layer, right now it is on top of everything"",Easy ease building moves. Chunky,2:01:49 Green v bright,2:05:29 Bottom too dark,""Click B - last few times I've had to take manually. Check if it is an issue with content/vor, the wrong time target in millumin or wut
+"",weird pop into Thirsty A,V05 available"
+3.20,4,"THIRSTY CLICK B - SUE: ""And if you find you're down to your last yacht...""",,2:04:00.00,00:03:17:01,126,,,,,
+3.40,5,THIRSTY CLICK C - Dance Break,,2:05:00.00,00:03:36:07,136,,,,,"""Click C - brightness off, bottom is too dark"""
+3.60,6,And when I'm laid out on judgement day....,,,00:04:52:24,183,,,,,
+4.00,,"THIRSTY CLICK D - SUE: ""I'll be fine to find I'm headed down ol' Satan's way""",,2:10:00.00,00:04:58:20,186,Transition back outdoors to buildings and night sky,CUED,Casey Brennan,101-001-OVERTURETHIRSTYFOR,"horizontal led chase animation not supporting storytelling or musicality ikho,scale moon up and come down a bit,""sync to click track, make buildings, moon, stars bounce back and forth"",buildings at the very end are kinda ugly. I think too much tweaking with levels.,Click D is being taken in the wrong spot? check vor and adjust.,need a button for what are you thirsty for"
+5.00,6,[No 2A - AFTER THE RAID] / THE STREET,117,,,,Skyline silhouette night,CUED,Casey Brennan,102-001-STREETEXT,"take the lower texture up into the buildings (don't think we want to do this anymore but it's ready),chicago skyline: arrange so not lost behind scenic detail,RENAME one of the 102-001-CH20- to have a different unique identifier"
+6.00,7,STREET LATER -- Same Time: MINNIE bails SUE outta jail.,121,,,,skyline silhouette early morning,CUED,Casey Brennan,102-002-STREETEXTLATER,"V05 png available,""Far SL/SR top very bright, gradient in"""
+7.00,8,"Cheetah Club
+",125,,,1,Cheetah Club: Green BG with Pink Cheetahs,CUED,,103-001-CH20-CHEETAHCLUB,"Going in to Cheetah Club - have the split curtain start off stage and come in.,guide layer peeking out,""V04 available with curtain sweep - NEED A V5 - v4 is missing alpha channel
+"",Didn't get LX 125,Fast curtain pull jarring. Maybe slow down and pull from center."
+8.00,10,[NO. 3 - YOU CAN'T HAVE ME (IF YOU DON'T HAVE HIM)],,3:00:00.00,,1,Darkens a bit,CUED,,103-004-CANTHAVEME,"flickering and glitching,not sure if we like the blur. they are where they are.,""dim the room, add a ground row that can dance with them"",pattern shifted from previous cue,in song cheetah club doesn't match in scene. why?,""Should we do something at the beginning of """"You Can't""""?, even a brighten?"""
+8.20,,Spat's entrance,181,,,,Cheetah Restore,,,,"""add an 8.2 to restore to the club post song, so no lights."",V04 available"
+8.50,13,[NO. 3A - YOU CAN'T HAVE ME (IF YOU DON'T HAVE HIM REPRISE B)],,3:20:00:00,,,TRANSITION to Spats' Office,CUED,,103-006-CANTHAVEMEREPRISEB,"V03 available,didn't get a reprise trigger frome timecode,""8.5 Needs to be a fade or match previous cue. There was a jump
+"",Should probably take out the center for this cue / add CH03 Mask,V04 available"
+9.00,14,104a. Spats's Office - A Little Later,192,,,,"A slinkier, grungier version of The Cheetah Club. Back rooms.",CUED,,"103-002-CH20-CHEETAHCLUBSPATSOFFICE,nothing USC in the transition to Spats' office","""missing grunge, like the emboss, maybe need a vignette"",Didn't get LX cue,Make sure Ch3 is off for scene change (not sure if that's this spats office or next one)"
+10.00,15,JERRY and JOE walk through audience,199,,,,dimmer,CUED,,103-001-CH20-CHEETAHCLUB,"""didn't receive 199 in rehearsal, did we receive in the dress rehearsal?"""
+11.00,15,Spat's Office,203,,,,"restore
+",CUED,,103-002-CH20-CHEETAHCLUBSPATSOFFICE,didn't get LX cue 203
+,,,,,,,,,,,
+12.00,16,105a. Joe and Jerry flee through backstage [CHASE],,3:40:00:00,,,"Spat's office out, Cheetah's in, add uplight",CUED,Casey Brennan,105-002-CheetahChase_V01,"""v02 available
+"",Uplights look unrealistic,""swap out background of spat's office to cheetah club. - New 103-007 Still
+"",This grunge is too much at the top of vamp"
+13.00,17,105b: The Chorus Girl Dressing Room,227,,,,dingy oversized flowery red & black pattern,CUED,Morgan Ellis,105-001-VAMP,"Too bright/ugly,look at internal timings in vor. it isn't quite matching up.,Skip brightening and just settle into darker look we get to later"
+14.00,17,[NO. 4 - VAMP!] underscore,228,,00:00:08:23,1,dinge dissipates,CUED,Morgan Ellis,105-001-VAMP,"""add grunge overlay/seedy overlay to VAMP, Play with blocking of texture"",strumming effect can glow and get a different color (not white),change the sides to a solid color/add vignette,V04 available,take down the whites and the pops,at end: switch out skyline & cheetah club at end of vamp for new version. time is 8:37pmCST,V03 available,re-align the hits in the earlier section,v05 available"
+14.20,17,"CLICK A - JOE: ""Sweet Sue needs a sax and a bass, and she's gonna get 'em!""",,4:00:00.00,00:00:21:28,9,no change,,Morgan Ellis,105-001-VAMP,"This pattern needs cleanup. Seeing a lot of white in the edges.,""Don't go to chicago at the end of this - rendered NEW V4
+"""
+14.25,,We gotta RIFF / HIT A,229,,00:00:52:06,,lights flash,,,,
+14.30,,We gotta JAM / HIT B,230,,00:00:53:04,,lights flash,,,,
+14.40,18,"Click B - JOE: ""When the club shuts down at 2am...""",,4:05:00.00,00:00:56:02,42,wallpaper hits ch02 & ch04,,Morgan Ellis,105-001-VAMP,
+14.60,18,"Click C - JOE: ""Strip!""",,4:10:00.00,00:01:47:00,90,bass line twangs ch02 & ch04,,Morgan Ellis,105-001-VAMP,"""Curtain pull, we should try to avoid seeing the black on channel 3 move"""
+14.80,,Button,283,,00:04:10:26,,brighten / flash,,,,
+15.00,21,Top of Scene,287,,,,"Smoke wipes off wallpaper, followed by train on ch03",CUED,,106-001-TRAINSTATION,"Columns could go steel i-beam rather than neo-classical,re-export as alpha,""build a look that matches the set more (marble, some green-brown-beige) etc."",""new train: too bright, too AI"",""train starts moving, let it be during their lean back. speed it quickly and blur out"",Need to add to side truss ch1/5,looping outdoors for the train windows,Sugar sings solo - color shift,move train split to when Sugar crosses up stage,Still missing Ch01 and Ch05"
+15.50,21,AUTOFOLLOW,,,,,Train stops,CUED,,106-001-TRAINSTATION,
+16.00,25,Ladies all aboard! / Sugar cane solo,319,,,,"Tint Blue, dims",CUED,Riley Sato,106-001-TRAINSTATION,"Jason wants an intermediate step from train platform to inside train,Doublecheck all these timings"
+16.50,25,"Sugar ""goes inside"" / Train Open",331,,,,Train splits & we go interior,CUED,Riley Sato,106-001-TRAINSTATION,"Train split in half to move into the train car,""make the opening with all aboard slower, ease it open"""
+17.00,25,They lean back,333,,,,Train starts to pick up speed and we're off!,CUED,Riley Sato,106-001-TRAINSTATION,
+18.00,26,"107a. A Train Car, Economy Class",339,,,,vignette proscenium,CUED,Casey Brennan,106-001-TRAINSTATION,Add Ch03 mask LX189 through spatz
+19.00,27,107b: The Washroom // Curtain Closes,334,,,,color shift peach,CUED,Casey Brennan,106-001-TRAINSTATION,"This should be with LX 343,uplight and bandshell - need to match colors,didn't get a ping from lx or timecode?"
+20.00,28,[NO. 6 - A DARKER SHADE OF BLUE] underscoring,347,,,,color shift blue,CUED,"Casey Brennan,Morgan Ellis",107-003-CH20-DARKERSHADEOFBLUE,"""go into a """"nothing space"""", lean in to color, gradient, stars. Can be more emotional texture."",swap grunge for a swankier texture (crushed velvet),""CH10.2, swap in for the diamond texture"",recompose the stars for this configuration. they are too small,add fake lights above the door transom,bandshell: color chasing,uplight dimension,match to timecode/wandel,export without the glow for speed,Much slower fade to blue noise background,More and smaller stars,Start evolution of noise when click starts,This song needs a button,Need a rehearsal look after this song,Stars too bright"
+20.10,28,CLICK STARTS -- Sugar begins to sing Darker Shade of Blue,,06:00:00:00,,16,,CUED,"Casey Brennan,Morgan Ellis",107-003-CH20-DARKERSHADEOFBLUE,"""Need to restore to basement
+"",""bring the stars in when she crosses downstage """"a violin can warm you"""" (timecode roughly: 06:01:03:00)"",What if we kept it in the washroom until the second verse and then we can introduce the blue texture moving?"
+21.00,29,INTO REHEARSAL,,,,,Intermediary space between performance and rehearsal?,RENDERED,,108-001-TAKE IT UP A STEP,"""adjust colors, ditch train. use opening curtain look to reveal each new place"",each look should get us closer to our west coast fairytale golden ticket,match to timecode/wandel,""locations are nice places in fancy venues, nicest venues in town, not speakeasies behind closed doors and hidden alleys."",Wichita = rehearsal,""Omaha = rehearsal
+"",couple of flashes in Take It To the Top,Move the color changing lights to later. Doesn't dramaturgically make sense at the top of the song,take down scale of the peeling paint texture.,slow down austrian curtain,want to try curtain wipes form left to right instead up austrian curtain up,darken the sides with a vignette - rehearsal"
+22.00,31,[NO. 7 - TAKE IT UP A STEP] / CLICK A,,7:00:00:00,00:00:00:00,16,,CUED,Casey Brennan,108-001-TAKE IT UP A STEP,"upres the curtains in Des Moines,green cutains in funeral parlour are pixelated,""check placemenet and layering, some layers are slipping through or spilling over"",use the motion of the signs going across to bring us to the new location,""V04 available
+"""
+23.00,31,"Curtain Raise: Omaha Rehearsal
+",387,,00:01:03:02,,"""curtain"" lifts to reveal omaha",,,,
+24.00,31,Daphne starts tapping -- Clip B,?,7:05:00:00,00:01:55:27,,,RENDERED,Casey Brennan,108-001-TAKE IT UP A STEP,
+25.00,33,SHELBYVILLE! -- Clip C,399 (unused),7:10:00:00,00:03:02:13,,"""curtain"" lifts to reveal shelbyville",RENDERED,Casey Brennan,108-001-TAKE IT UP A STEP,
+27.00,34,WICHITA REHEARSAL-- Clip D,415 (unused),7:15:00:00,00:04:16:27,,,RENDERED,Casey Brennan,108-001-TAKE IT UP A STEP,we slam into wichita -- slow down the fade up
+28.00,34,back to: 108g: Denver!!,419,x,00:05:08:21,,,RENDERED,Casey Brennan,108-001-TAKE IT UP A STEP,"Denver needs to be classier,Denver and Zeebap don't match. Update the comp references."
+31.00,37,[NO. 8 - ZEE BAP] -CLICK A,,08:00:00.00,00:00:00,,,CUED,Casey Brennan,109-002-CH20-ZEEBAP,"V02 designed to timecode/wandel maybe.,no swords in top half of video at some points. (KC: that is currently intentional but does not need to be. was just trying to find some variance in the song.),consider less variance on spinning sword rays.,sword circles going out too abrupt,swords come in abruptly,Denver and Zeebap don't match. Update the comp references."
+31.10,,CLICK B -- Webster's Dictionary,,08:05:00.00,00:17:16,,,CUED,,,
+32.00,39,ENTER BAGGAGE CAR,479,,,,stacked baggage across proscenium,CUED,Casey Brennan,110-001-BAGGAGE CAR,V05 available
+33.00,40,[NO. 9 - AT THE OLD MAJESTIC NICKEL MATINEE] / CLIP A,,9:00:00.00,00:00:00,,Into Song,CUED,Casey Brennan,110-002-MAJESTIC NICKEL MATINEE,"""make it glow, make it sparkle, tint it purple"",Make luggage more illustrative,timecode/wandel match,""vignette ch01&ch05, restore to blue at end instead of colorful baggage car"",we skipped over the color change cue? not sure why. LX or timecode issue? double check."
+33.40,41,,,,00:16:21,,Color shift to black and white,CUED,Casey Brennan,110-002-MAJESTIC NICKEL MATINEE,
+33.50,41,CLIP D (when?),,09:15:00:00,3:11:23,,Restore,CUED,Casey Brennan,110-002-MAJESTIC NICKEL MATINEE,
+34.00,41,"claps die down, transition into TOS INTO THE LOBBY",499,,,,fade into Hotel Lobby look,CUED,Riley Sato,111-001-WAVES,"transition from majestic nickel matinee into sc 11 coronado,find musical in between choreo or singing that we could do some fun animation,""fish, flowers, water, love raining from the sky when he sees Daphne and learns her name"",""beginning can be really illustrative, tone down in the middle, pick back up towards the end"",timecode/wandel,ch05 has double layer on wood,Movement a little fast across. Wood texture too bright and too big in scale"
+34.20,42,"Curtain Opens
+",505,,,,fade up ch03,CUED,Riley Sato,111-001-WAVES,
+34.40,42,"""Plink!""",509,,,,"Color change to blue, map pop in",CUED,Riley Sato,111-001-WAVES,
+35.00,42,[NO. 10 - A POOR LITTLE MILLIONAIRE] CLICK A,,10:00:00.00,,15,pattern turns to waves,CUED,Riley Sato,111-001-WAVES,"""millionaire should have three clicks: top, beautiful, Daphne
+"",V04,Fish are steely. Maybe make them slower? Motion blur? 60fps?,do we need to add a blur or something when the syncopators enter through the audience?,""Hearts are a little too dim, because we're pulling them down in Millumin."""
+35.20,44,"""...Absolutely beautiful!"" CLICK B",,10:05:00.00,,63,,CUED,Riley Sato,111-001-WAVES,
+35.30,45,"""Daphne! Time Stands Still!""",532,,,122,world goes pink,CUED,Riley Sato,111-001-WAVES,
+35.40,,CLICK C,,,,,,,,,
+35.50,46,Button!,541,,,,color shift,CUED,Riley Sato,111-001-WAVES,"""after the button, let's add a CH03 mask so Osgood can exit thorugh the curtain without being silhouetted"""
+35.70,,Scene comes downstage,,,,,dims up stage as the scene x ds,,,,
+35.80,46,Syncopators enter DSC?,545,,,,restore to Hotel Lobby Look,CUED,,111-001-WAVES,
+35.90,,transition,,,,,dims lobby,,,,
+36.00,47,JOE and DAPHNE enter SL,553,,,,Wallpaper in room,CUED,Casey Brennan,800-001-CH20-Room226,V03 available
+37.00,48,transition back to hotel lobby,556,,,,"Hotel Lobby stage right, Room stage right",CUED,Casey Brennan,802-001-CH20-113CoronadoHallway,"swap in for coronado lobby,swap for coronodo hallway,""for transition, blur out SL and then shift spotlight focus to SR"""
+38.00,49,SPATS & MACK at House Right,561,,,,Colorful Cheetah Club up light,CUED,Casey Brennan,801-001-CH20-114CheetahClub,"""Weird mask cutoffs, not lining up with set"""
+39.00,49,MULLIGAN in the House (The Halls of the Department of Justice),562,,,,White Hall of Justice up light,CUED,Casey Brennan,801-002-CH20-114DeptOfJustice,"""Weird mask cutoffs, not lining up with set"""
+40.00,49,"top of scene, SUE: ""Hello, San Diego""",567,,,,Crown Ballroom at low opacity,CUED,,115-001-CH20-BALLROOM,
+40.10,49,curtain open,570,,,,ch03 fade up,CUED,Riley Sato,115-001-CH20-BALLROOM,"take scale of waves down and the wood. wood looks cheap.,""foreground grates need lienar wooden panels to follow the lines of the chevrons, add LED tape."",scale up windows,""the chandeliers are glitching out, check the script"",wandel/timecode match"
+40.20,50,[NO. 11 - SOME LIKE IT HOT] CLICK A,,11:00:00.00,,10,color chasing,CUED,,115-001-CH20-BALLROOM,
+40.30,,auto-follow blackout .5s after button,640,,,,1s blackout,CUED,,115-001-CH20-BALLROOM,
+40.50,52,"Lights Up, Intermission",641,,,,Red Curtain,CUED,,100-001-CH20-PRESHOW,
+40.60,53,"intermission end? or  Entr'acte start?
+",645,,,,,,,,
+41.00,53,[NO. 12 - ENTR'ACTE],,12:00:00.00,,1,"want to see the band through the walls. if it happens in the ballroom, we should just reveal the band playing in the ballroom.",CUED,Riley Sato,115-001-CH20-BALLROOM,"""FILMING: we will film the Ent'racte, bows, exit music. filming on green at 1:30.  eight band members + conductor"""
+42.00,53,Curtain Closes,659,,,,Ch03 fade out,CUED,,115-001-CH20-BALLROOM,
+42.20,54,"Syncopators: ""Take it to the top!"" / SYNCOS & OSGOOD swan lake cross SR",661,,,,dim SL,CUED,,115-001-CH20-BALLROOM,
+42.50,54,SYNCOS & OSGOOD exit on Musical Button,663,,,,Blackout,CUED,,,Dim SL more
+43.00,54,"JOE and DAPHNE enter, top of scene",665,,,,fade up room 226,CUED,Casey Brennan,800-001-CH20-Room226,Swap 226 out with non-blurred SR version
+44.00,57,"[NO. 13 - LET'S BE BAD] / OSGOOD: ""While I'm able to raise Cain.."" / Click A In",,13:00:00:00,00:00:12:05,6,,IN PROCESS,Morgan Ellis,202-001-LETS BE BAD,"bring moon down,masking issue on ch04,V05 available,what if we use the same stars & moon from the Caledonia 7 so it's like we're under the same skyyy,needs new background for room 226,the blue after the bright red is too bright. - i think this is supposed to be in let's be bad...,vignette / spotlight goes away. need to integrate the new version,castanettes / red timing is off.,glow button at the end of lets be bad is nice. it should fade out slower,""Lets be bad to Caledonia seven, we should make it the same moon and line it up - change the moon in Let's be bad to match caledonia"",We should revisit let's be bad. See if we can be more methodical than whole color shifts. Still not sold on the design of this look,Pop at the top of Lets Be Bad,v06 available"
+45.00,58,"Click B In - DOLORES: ""Conservatory, nothing you see
+tonight will be demure or sensible.""",,13:05:00:00,00:01:11:19,55,,IN PROCESS,Morgan Ellis,202-001-LETS BE BAD,"Moon out of Let's be bad doesn't match caledonia,the moon placement doesn't match Caledonia 7. maybe get rid of it?,let's be bad -- there is a black spot where a butterfly should be. it is filled with a butterfly in fly mariposa"
+45.10,59,"SYNCOS, DAPHNE, OSGOOD cross DS",,,00:02:14:09,126,Room 226 Raises to reveal CANTINA,CUED,,202-001-LETS BE BAD,Cantina over stage right looks good here. Make sure this tracks in Fly Mariposa fly.
+45.15,,"With LX, Osgood and Daphne land in Mexico",697,,00:02:26:08,,,,,,
+45.20,59,Castonettes Dance Break,,,00:02:52:12,140,Color Shift: Red,,,202-001-LETS BE BAD,
+45.30,59,Samba,,,00:03:00:00,154,Color Shift: Purple,,,202-001-LETS BE BAD,
+45.40,60,"ALL: ""Here's the key for my ignition...""",,,00:03:20:07,192,Color shift: restore to original,,,202-001-LETS BE BAD,
+45.60,61,NO. 13A - LET'S BE BAD (PLAYOFF),719,,,,"fade out Ch01, ch02, ch04, ch05, hold ch03 then fade out?",,,,
+46.00,61,"TRANSITION-- DAPHNE and JOE DSC on the ""boat""",721,,,,fade up Caledonia Seven,CUED,Riley Sato,203-001-YACHT_V01,"stick in the blues and greens in the shooting stars,Too bright/ugly,they have added more bars to dance the world away -- will be wrong tonight -- will try to integrate by matinee tomorrow but more likely wednesday. -- i didn't notice where the 2 bars were added?"
+46.20,,They walk on stage,725,,,,brightens,,,,
+47.00,62,[NO. 14 - LET'S DANCE THE WORLD AWAY],,14:00:00.00,,1,,CUED,Riley Sato,203-001-YACHT_V01,"wandel/timecode match,Clouds too bright/pixelated"
+47.50,64,"KIP: ""Fade Out"" (they kiss)",751,,,,video fade out,CUED,,203-001-YACHT_V01,"this is when it should fade out/restore?,""""""Fade out"""" Maybe do an iris down  to black or an intermediary look? Ad the very least this cue should dip down more
+"",should we stay blurry in the transition and then in LX 753 go sharper?"
+48.00,64,scene fade up to Cantina,752,,,,,CUED,Casey Brennan,202-002-FLYMARIPOSA,V02 available 
+49.00,65,"[NO. 15 - FLY, MARIPOSA, FLY] CLICK A",,15:00:00.00,0:00:00.00,1,,CUED,Casey Brennan,202-002-FLYMARIPOSA,"particle system for butterflies?,""SL top channel does not match - FIXED new V02
+"",""Butterflies should go on Osgoods final """"sings"""""",""More for mariachi reveal, maybe fireflies on Ch03"",what if we use the same stars & moon from the Caledonia 7 so it's like we're under the same skyyy,v03 available,The mirror image butterfly in mariposa snuck back in. Offset the two loops."
+49.00,65,"CLICK B / OSGOOD: ""On a leaf a mariposa leaves a huevo""",,15:05:00.00,00:00:16.26,5,,,Casey Brennan,202-002-FLYMARIPOSA,
+49.30,65,"CLICK C / OSGOOD: ""Other men will see the colors that (GO) define you...""",659,15:10:00.00,00:01:05:26,36,Ch03 fades up,,Casey Brennan,202-002-FLYMARIPOSA,
+49.31,,"""Other men.. define you..""",,,,,fireflies,,,,
+49.40,66,CLICK D,,15:15:00.00,00:2:47:24,103,,,Casey Brennan,202-002-FLYMARIPOSA,
+50.00,67,"Daphne dances in her dreams
+",772,,,,"blur to ""Dreamy Daphne"" look",CUED,Casey Brennan,800-002-CH20-FEATHER_V01,after mariposa & before room 226: blur the room into purple
+51.00,67,top of scene,774,,,,fade into room 226,,,,"V04 available,this still has a blurry beginning room 226 - re"
+51.20,68,FEATHER CLICK A,,16:00:00:00,00:00:00,12,,CUED,Casey Brennan,800-002-CH20-FEATHER_V01,"Make this room 226 not blurry Sr,""tracking in of fan is very chunky, need to smooth out"",V04 available . JK JK - RE EXPORT WITHOUT THE VOR VIDEO IN THE BG"
+51.30,69,"Tempo Change / DAPHNE: ""You Always Loved the way That I slapped that bass..""",,16:05:00:00,01:37:17,53,"reveal peacock feathers
+",RENDERED,Casey Brennan,800-002-CH20-FEATHER_V01,find a way to animate the fan - maybe it slowly flips open? should we add DAPHNE on the fan?
+51.40,69,"BUTTON, restore Room 226",795,,03:07:29,,,CUED,Casey Brennan,800-002-CH20-FEATHER_V01,don't bump back to room 226
+51.50,,Transition,796,,,,,,,,
+52.00,70,[NO. 17 - BAD REHEARSAL] top of scene,797,,,,Daytime rehearsal look,IN PROCESS,Riley Sato,115-002-CH20-BALLROOMDAY.png,"turn off lights in daytime ballroom,add CH03 mask upstage -- there is a stage management preset happening up there."
+53.00,72,"[NO. 18 - HE LIED WHEN HE SAID HELLO] / CLICK A / JOSEPHINE: ""HIT IT!""",,18:00:00:00,00:00:00:00,1,Top of the Song -- Ballroom Look,CUED,"Casey Brennan,Morgan Ellis",115-002-HELIED,"swap in daytime look,""switches between worlds are quick shifts, not languid"",""adjust timing on world switches, turn down the brightness of the green"",""butterflies later, on """"deserves"""" rather than daphne"",""missing one switch back to the daytime ballroom. Colin's lights are white and cold, so maybe we go black and white here instead?"",Timing mismatch with lighting in restore/blue moments,someone he aint - colin goes isolated and purple,add a fade in to 53.00 - it has a sharp brighten cue"
+53.50,74,,,?,?,,"Click Out, we go to a sad Chicago/Coronado mix",RENDERED,"Casey Brennan,Morgan Ellis",115-002-HELIED,
+54.00,74,Osgood: Hello!,833,,,,Dressing Room,RENDERED,"Casey Brennan,Morgan Ellis",115-002-HELIED,v04 available
+54.00,74,Sugar starts singing,,,,,,IN PROCESS,Riley Sato,207-010-RIDEOUTTHESTORM_V02,"Bottom too bright,took out dressing room at the end"
+55.00,77,"[NO. 19 - RIDE OUT THE STORM] / CLICK A / SUGAR: ""All that's left is to ride out the storm...""`",839,19:00:00.00,,,blue turbulence into kaleidoscopic fan unravel,CUED,Riley Sato,207-010-RIDEOUTTHESTORM_V02,"Double check lighting cues,Fan was already too far open by curtain open. You should probably just prerender this sequence out so you can do time remapping,""Drop shadow is making everything too steppy, see if you can find another way to create depth"",""Button continued to spin, but should freeze"",adjust the start of the bloom opening to later? the curtain doesn't open until later and we want to see it slowly grow.,""at the music speed up, the color shift has some pixelization and there is a jump"",""Start of music for Rid out the storm needs something, at least dim
+"",""with LX 838, darken so it isn't pulling our eye up stage (very bright)"",""Roll back Ride Out the Storm, new version too chunky. Don't have time to fix it.
+"""
+55.50,,CLIP B / music speeds up,?,,,,speeds up,,,,
+55.60,,Button,,,,,color shift,,,,
+56.00,78,Spats Claps,850,,,,fade up the ballroom,CUED,Riley Sato,207-010-RIDEOUTTHESTORM_V02,"""Wrong ballroom wood - New V02
+"",""need a new background for ballroom, wood is wrong"""
+57.00,79,[NO. 20 - TIP TAP TROUBLE],,20:00:00:00,00:00:00:00,2,,RENDERED,Casey Brennan,802-002-208TIPTAPTROUBLE,"""want to see movement we've never seen before in the """"gameshow"""""",""when Sugar calls for """"GIRLS"""" video can be going going going all the time"",need to swap in updated ballroom and lobby. there may be a few more locations.,joey and daphne sneak out -- need something on CH02,Ballroom before Tip Tap Trouble Still wrong,tip tap trouble IN is abrupt,""timing/ zhuzhing needed -- the bangs don't work in the ballroom, set everything back by a few seconds"",Add something for Jos/Daphne reveal as they sneak across proscenium tip tap,During dance break - latin inspired movement everywhere,v03 availabile,all the fucking beats are off what is event he point?,Some of the backdrops look very awkward when tracking up,need a button at the end of the song,V04 available"
+58.00,83,"[NO. 21 - BABY, LET'S GET GOOD] underscore / OSGOOD: ""Nobody's perfect...""",,,,1,,NOT STARTED,,,
+59.00,84,"[NO. 21 - BABY, LET'S GET GOOD] CLICK / SUE: ""...and that spells the end of Prohibition!""",907,21:00:00.00,0:00:49:21,24,,,,,"SR Transom not aligned,V01 available,transom SL is off,""Rays aren't even, different gaps at center proscenium, should have no gap. SL wrong"""
+59.70,,FINAL BLACKOUT,956,,,,,,,,happened too early?
+60.00,87,BOW MUSIC,,22:00:00:00,,,,NOT STARTED,,,"Need  fade in to bows,Band too dim/blue"
+70.00,,POST SHOW / EXIT MUSIC,,23:00:00:00,,,,,,,what is the walk out look?
