@@ -11,18 +11,27 @@ import {
   ViewCache,
 } from "../../lib/show-selectors";
 import { type ShowState, useShowStore, useShowStoreInstance } from "../../lib/show-store";
+import { attachmentsOf, isImage } from "../attachments/selectors";
 import { groupOrder, placementFor } from "../shared/ops";
 import { cueItem, personItem, sceneItem } from "../shared/pickers";
 import { TableGrid } from "../shared/TableGrid";
 import { useWorkspace } from "../show/workspace";
 import { type ContentView, contentColumns, contentEditOps } from "./columns";
 import { prefixedContentName, scenePrefix } from "./contentName";
+import { currentVersions } from "./versions";
 
 const NONE: string[] = [];
+/** Gallery cards (R19): the first image attachment, titled by name. */
+const GALLERY = {
+  presetName: "Content gallery",
+  titleKey: "name",
+  title: (v: ContentView) => v.content.name || "(unnamed content)",
+  image: (v: ContentView) => v.files.find(isImage),
+};
 const selectState = (s: ShowState) => s;
 
 export function ContentGrid() {
-  const { canEdit } = useWorkspace();
+  const { canEdit, showId } = useWorkspace();
   const store = useShowStoreInstance();
   const state = useShowStore(selectState);
   const { tables, order, joins, fieldOptions } = state;
@@ -37,31 +46,34 @@ export function ContentGrid() {
     return m;
   }, [tables.notes]);
 
-  const views = useMemo(
-    () =>
-      cache.pass((get) =>
-        order.content.flatMap((id) => {
-          const content = tables.content.get(id);
-          if (!content) return [];
-          const scene = content.scene_id ? tables.scenes.get(content.scene_id) : undefined;
-          const creator = content.creator_id ? tables.persons.get(content.creator_id) : undefined;
-          const cueIds = cuesByContent.get(id) ?? NONE;
-          const cues = cueIds.map((c) => tables.cues.get(c));
-          const noteCount = notesByContent.get(id)?.length ?? 0;
-          return [
-            get(id, [content, scene, creator, noteCount, ...cues], () => ({
-              id,
-              content,
-              scene: scene ? sceneItem(scene) : null,
-              creator: creator ? personItem(creator) : null,
-              cues: cues.flatMap((c) => (c ? [cueItem(c)] : [])),
-              noteCount,
-            })),
-          ];
-        }),
-      ),
-    [cache, order.content, tables, cuesByContent, notesByContent],
-  );
+  const views = useMemo(() => {
+    const versions = currentVersions(tables.content_versions);
+    return cache.pass((get) =>
+      order.content.flatMap((id) => {
+        const content = tables.content.get(id);
+        if (!content) return [];
+        const scene = content.scene_id ? tables.scenes.get(content.scene_id) : undefined;
+        const creator = content.creator_id ? tables.persons.get(content.creator_id) : undefined;
+        const cueIds = cuesByContent.get(id) ?? NONE;
+        const cues = cueIds.map((c) => tables.cues.get(c));
+        const noteCount = notesByContent.get(id)?.length ?? 0;
+        const version = versions.get(id) ?? null;
+        const files = attachmentsOf(tables.attachments, "content", id);
+        return [
+          get(id, [content, scene, creator, noteCount, version, files, ...cues], () => ({
+            id,
+            content,
+            scene: scene ? sceneItem(scene) : null,
+            creator: creator ? personItem(creator) : null,
+            cues: cues.flatMap((c) => (c ? [cueItem(c)] : [])),
+            noteCount,
+            version,
+            files,
+          })),
+        ];
+      }),
+    );
+  }, [cache, order.content, tables, cuesByContent, notesByContent]);
 
   const scenes = useMemo(
     () => order.scenes.flatMap((id) => tables.scenes.get(id) ?? []),
@@ -81,8 +93,8 @@ export function ContentGrid() {
   groupsRef.current = groups;
 
   const columns = useMemo(
-    () => contentColumns({ store, fieldOptions, editable: canEdit }),
-    [store, fieldOptions, canEdit],
+    () => contentColumns({ store, fieldOptions, editable: canEdit, showId }),
+    [store, fieldOptions, canEdit, showId],
   );
 
   return (
@@ -150,6 +162,7 @@ export function ContentGrid() {
             deleteOps: (vs) => vs.map((v) => ({ op: "delete", table: "content", id: v.id })),
           }
         : {})}
+      gallery={GALLERY}
       panelTitle={(v) => v.content.name || "Content"}
       panelSections={(v) => [
         {

@@ -56,7 +56,7 @@ export function CellContent<Row>({
       return (
         <span className={styles.chips}>
           {items.map((it) => (
-            <Chip key={it.id} label={it.label} color={it.color} />
+            <Chip key={it.id} label={it.label} color={it.color} badge={it.badge} thumb={it.thumb} />
           ))}
         </span>
       );
@@ -66,6 +66,8 @@ export function CellContent<Row>({
     case "longtext":
       return <span className={styles.longtext}>{formatValue(col, value)}</span>;
     case "readonly":
+      return <span className={styles.readonly}>{formatValue(col, value)}</span>;
+    case "attachment":
       return <span className={styles.readonly}>{formatValue(col, value)}</span>;
     default:
       return <span className={styles.text}>{formatValue(col, value)}</span>;

@@ -8,6 +8,8 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import type { TableName } from "../../../shared/tables";
 import type { Column } from "../../components/grid/types";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
+import { AttachmentsField } from "../attachments/Attachments";
+import { ContentVersions } from "../content/ContentVersions";
 import { type NotesSubject, notesFor } from "../notes/compose";
 import { NotesPanel } from "../notes/NotesPanel";
 import { useWorkspace } from "../show/workspace";
@@ -25,7 +27,7 @@ export interface PanelSection {
   empty: string;
 }
 
-type TabId = "fields" | "notes" | "content" | "history";
+type TabId = "fields" | "notes" | "content" | "versions" | "history";
 
 const MIN_WIDTH = 300;
 const MAX_WIDTH = 900;
@@ -69,6 +71,7 @@ export function RowPanel<Row>({
     const t: { id: TabId; label: string }[] = [{ id: "fields", label: "Fields" }];
     if (notesSubject) t.push({ id: "notes", label: "Notes" });
     if (table === "cues") t.push({ id: "content", label: "Content" });
+    if (table === "content") t.push({ id: "versions", label: "Versions" });
     t.push({ id: "history", label: "History" });
     return t;
   }, [notesSubject, table]);
@@ -78,6 +81,14 @@ export function RowPanel<Row>({
   // Counts for the tab labels.
   const cueContent = useShowStore((s) =>
     table === "cues" ? (s.joins.cueContent.get(recordId) ?? NONE) : NONE,
+  );
+  const versionTable = useShowStore((s) => s.tables.content_versions);
+  const versionCount = useMemo(
+    () =>
+      table === "content"
+        ? [...versionTable.values()].filter((v) => v.content_id === recordId).length
+        : 0,
+    [table, versionTable, recordId],
   );
   const notes = useShowStore((s) => s.tables.notes);
   const noteCues = useShowStore((s) => s.joins.noteCues);
@@ -260,6 +271,9 @@ export function RowPanel<Row>({
             {t.id === "content" && cueContent.length > 0 && (
               <span className={styles.count}>{cueContent.length}</span>
             )}
+            {t.id === "versions" && versionCount > 0 && (
+              <span className={styles.count}>{versionCount}</span>
+            )}
           </button>
         ))}
       </div>
@@ -273,22 +287,37 @@ export function RowPanel<Row>({
         {active === "fields" && (
           <>
             <dl className={styles.fields}>
-              {columns.map((c) => (
-                <div key={c.key} className={styles.field}>
-                  <dt>{c.title}</dt>
-                  <dd>
-                    <FieldEditor
-                      col={c}
-                      row={row}
-                      canEdit={!!onEdit}
-                      onCommit={(v) => {
-                        const p = onEdit?.(c.key, v);
-                        if (p) p.catch((e: unknown) => ws.reportError(e, "save the change"));
-                      }}
-                    />
-                  </dd>
-                </div>
-              ))}
+              {columns.map((c) =>
+                c.type === "attachment" ? (
+                  // Attachments: full width, with add / remove / reorder (R13).
+                  <div key={c.key} className={styles.field} data-wide="">
+                    <dt>{c.title}</dt>
+                    <dd>
+                      <AttachmentsField
+                        table={table}
+                        recordId={recordId}
+                        field={c.key}
+                        label={c.title}
+                      />
+                    </dd>
+                  </div>
+                ) : (
+                  <div key={c.key} className={styles.field}>
+                    <dt>{c.title}</dt>
+                    <dd>
+                      <FieldEditor
+                        col={c}
+                        row={row}
+                        canEdit={!!onEdit}
+                        onCommit={(v) => {
+                          const p = onEdit?.(c.key, v);
+                          if (p) p.catch((e: unknown) => ws.reportError(e, "save the change"));
+                        }}
+                      />
+                    </dd>
+                  </div>
+                ),
+              )}
             </dl>
             {sections.map((s) => (
               <section key={s.title} className={styles.section}>
@@ -310,6 +339,7 @@ export function RowPanel<Row>({
         )}
         {active === "notes" && notesSubject && <NotesPanel subject={notesSubject} />}
         {active === "content" && table === "cues" && <CueContentCards cueId={recordId} />}
+        {active === "versions" && table === "content" && <ContentVersions contentId={recordId} />}
         {active === "history" && <PanelHistory table={table} id={recordId} labels={labels} />}
       </div>
     </aside>

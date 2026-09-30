@@ -15,6 +15,9 @@ import type { FieldOption, NoteRow } from "../../../shared/tables";
 import { Chip } from "../../components/grid";
 import { optionColor } from "../../components/grid/Chip";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
+import { AttachmentStrip, uploadQueue } from "../attachments/Attachments";
+import { attachmentsOf } from "../attachments/selectors";
+import { useRecordUploads } from "../attachments/uploads";
 import { useWorkspace } from "../show/workspace";
 import { canEditNote, formatTimestamp } from "./columns";
 import { initials, isOpen, nextStatus, noteRestoreOps } from "./compose";
@@ -109,6 +112,10 @@ export const NoteCard = memo(function NoteCard({
   const priorityOptions = useShowStore((s) => s.fieldOptions["notes.priority"] ?? NO_OPTIONS);
   const statusOptions = useShowStore((s) => s.fieldOptions["notes.status"] ?? NO_OPTIONS);
   const canEdit = canEditNote(ws.role, ws.userId, note);
+  const uploading = useRecordUploads(uploadQueue, "notes", note.id).length > 0;
+  const hasFiles = useShowStore(
+    (s) => attachmentsOf(s.tables.attachments, "notes", note.id).length > 0,
+  );
   const [draft, setDraft] = useState<string | null>(null);
   const refocus = useContext(NoteFocusContext);
 
@@ -150,8 +157,6 @@ export const NoteCard = memo(function NoteCard({
   };
 
   const next = nextStatus(status);
-  const attachments = (note.custom as { attachments?: unknown }).attachments;
-  const attachmentCount = Array.isArray(attachments) ? attachments.length : 0;
   const cueLabels = showLinks
     ? cueIds.flatMap((id) => {
         const c = cues.get(id);
@@ -237,6 +242,11 @@ export const NoteCard = memo(function NoteCard({
           </>
         )}
       </div>
+      {(hasFiles || uploading) && (
+        <div className={styles.photos}>
+          <AttachmentStrip table="notes" recordId={note.id} max={6} />
+        </div>
+      )}
       <div className={styles.meta}>
         {note.type.length > 0 && (
           <span className={styles.chips}>
@@ -276,7 +286,6 @@ export const NoteCard = memo(function NoteCard({
           </span>
         )}
         {note.session && <span className={styles.session}>{note.session}</span>}
-        {attachmentCount > 0 && <span>📎 {attachmentCount}</span>}
         <span>
           {author || "Unknown"} · {formatTimestamp(note.created_at)}
         </span>

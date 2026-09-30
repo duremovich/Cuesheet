@@ -14,9 +14,12 @@ import type {
   ShowResponse,
   ShowSummaryDTO,
   ShowsResponse,
+  StorageResponse,
   UpdateMemberRequest,
   UpdateShowRequest,
   UpdateShowResponse,
+  UploadUrlRequest,
+  UploadUrlResponse,
 } from "../../shared/api";
 import type {
   HistoryResponse,
@@ -115,6 +118,10 @@ export const api = {
     const q = opts.append ? "?append=1" : "";
     return request<ImportResponse>("POST", showPath(id, `/import/airtable${q}`), form);
   },
+  /** Reserve an attachment upload (then PUT the bytes with `putFile`). */
+  uploadUrl: (id: string, body: UploadUrlRequest) =>
+    request<UploadUrlResponse>("POST", showPath(id, "/attachments/upload-url"), body),
+  storage: (id: string) => request<StorageResponse>("GET", showPath(id, "/storage")),
   members: (id: string) => request<MembersResponse>("GET", showPath(id, "/members")),
   addMember: (id: string, body: AddMemberRequest) =>
     request<{ member: MemberDTO }>("POST", showPath(id, "/members"), body),
@@ -127,4 +134,41 @@ export const api = {
 export function showSocketUrl(showId: string, loc: Location = window.location): string {
   const proto = loc.protocol === "https:" ? "wss:" : "ws:";
   return `${proto}//${loc.host}/api/shows/${encodeURIComponent(showId)}/ws`;
+}
+
+/**
+ * PUT a file to an upload URL (from `api.uploadUrl`), reporting progress. XMLHttpRequest,
+ * because fetch can't report upload progress.
+ */
+export function putFile(
+  url: string,
+  file: Blob,
+  contentType: string,
+  onProgress: (loaded: number) => void = () => undefined,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", url);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader("Content-Type", contentType);
+    xhr.upload.onprogress = (e) => onProgress(e.loaded);
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress(file.size);
+        resolve();
+        return;
+      }
+      let message = `Upload failed (${xhr.status})`;
+      try {
+        message = (JSON.parse(xhr.responseText) as { error?: string }).error ?? message;
+      } catch {
+        // not JSON
+      }
+      reject(
+        xhr.status === 401 ? new UnauthorizedError(message) : new ApiError(xhr.status, message),
+      );
+    };
+    xhr.onerror = () => reject(new Error("The upload was interrupted (network)"));
+    xhr.send(file);
+  });
 }

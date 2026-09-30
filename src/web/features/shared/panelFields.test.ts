@@ -76,6 +76,7 @@ describe("row panel fields → ops", () => {
       scene: null,
       author: "Someone",
       editable: false,
+      files: [],
     };
     expect(isFieldEditable(col(notes, "status"), other)).toBe(false);
     expect(panelCommit(col(notes, "status"), other, "Done")).toBeUndefined();

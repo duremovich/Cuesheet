@@ -92,7 +92,15 @@ type Edit = { rowId: string; key: string; value: unknown };
 const isMod = (e: { metaKey: boolean; ctrlKey: boolean }) => e.metaKey || e.ctrlKey;
 
 function isEditable<Row>(col: Column<Row>, row: Row): boolean {
-  if (col.type === "readonly") return false;
+  // Attachment cells change through files (canTakeFiles), never through cell edits.
+  if (col.type === "readonly" || col.type === "attachment") return false;
+  if (col.editable === undefined) return true;
+  return typeof col.editable === "function" ? col.editable(row) : col.editable;
+}
+
+/** An attachment cell that accepts dropped / pasted files. */
+function canTakeFiles<Row>(col: Column<Row>, row: Row): boolean {
+  if (col.type !== "attachment" || !col.onFiles) return false;
   if (col.editable === undefined) return true;
   return typeof col.editable === "function" ? col.editable(row) : col.editable;
 }
@@ -618,6 +626,10 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     if (!it) return;
     const editKey = it.section ? ref.current.labelKey : key;
     const col = colOf(editKey);
+    if (col?.type === "attachment") {
+      if (initial === undefined) col.onOpen?.(it.row);
+      return;
+    }
     if (!col || !isEditable(col, it.row)) return;
     // Editing always holds the row in place (e.g. after Escape released it).
     if (ref.current.hold?.id !== id) {
@@ -1309,6 +1321,15 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     const cur = ref.current;
     const a = cur.active;
     if (cur.editing || !a || a.group || !(e.target as HTMLElement).closest?.("[data-cell]")) return;
+    const files = [...(e.clipboardData.files ?? [])];
+    if (files.length > 0) {
+      // Pasted files (a screenshot) go to an attachment cell.
+      const col = colOf(a.key);
+      const entry = cur.allRows.get(a.rowId);
+      e.preventDefault();
+      if (col && entry && canTakeFiles(col, entry.row)) col.onFiles?.(entry.row, files);
+      return;
+    }
     const text = e.clipboardData.getData("text/plain");
     if (!text) return;
     e.preventDefault();
@@ -1352,6 +1373,44 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       }
     }
     if (edits.length) applyEdits(edits);
+  };
+
+  // --- Files dropped onto attachment cells ---
+  const dropTarget = (
+    e: React.DragEvent,
+  ): { cell: HTMLElement; row: Row; col: Column<Row> } | null => {
+    if (!e.dataTransfer?.types?.includes("Files")) return null;
+    const cell = (e.target as HTMLElement).closest?.<HTMLElement>("[data-cell]");
+    const rowId = cell?.closest<HTMLElement>("[data-row-id]")?.dataset.rowId;
+    const col = cell?.dataset.col ? colOf(cell.dataset.col) : undefined;
+    const entry = rowId ? ref.current.allRows.get(rowId) : undefined;
+    if (!cell || !col || !entry || !canTakeFiles(col, entry.row)) return null;
+    return { cell, row: entry.row, col };
+  };
+  const dropCell = useRef<HTMLElement | null>(null);
+  const markDrop = (cell: HTMLElement | null) => {
+    if (dropCell.current === cell) return;
+    dropCell.current?.removeAttribute("data-drop");
+    cell?.setAttribute("data-drop", "true");
+    dropCell.current = cell;
+  };
+  const onFileDragOver = (e: React.DragEvent) => {
+    const t = dropTarget(e);
+    markDrop(t?.cell ?? null);
+    if (!t) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  };
+  const onFileDragLeave = (e: React.DragEvent) => {
+    if (!rootRef.current?.contains(e.relatedTarget as Node | null)) markDrop(null);
+  };
+  const onFileDrop = (e: React.DragEvent) => {
+    const t = dropTarget(e);
+    markDrop(null);
+    if (!t) return;
+    e.preventDefault();
+    const files = [...e.dataTransfer.files];
+    if (files.length) t.col.onFiles?.(t.row, files);
   };
 
   // --- Focus ---
@@ -1886,6 +1945,9 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       onPaste={onPaste}
       onFocus={onFocus}
       onBlur={onBlur}
+      onDragOver={onFileDragOver}
+      onDragLeave={onFileDragLeave}
+      onDrop={onFileDrop}
     >
       <div ref={scrollRef} className={styles.scroll} data-testid="grid-scroll">
         <div
@@ -2346,12 +2408,16 @@ function GridRowImpl<Row>(p: GridRowProps<Row>) {
             />
           ) : (
             <>
-              <CellContent
-                col={c.col}
-                value={isEditingPicker ? editing.value : value}
-                editable={editable}
-                onToggle={() => api.toggle(id, c.key)}
-              />
+              {c.col.type === "attachment" && c.col.renderCell ? (
+                c.col.renderCell(row)
+              ) : (
+                <CellContent
+                  col={c.col}
+                  value={isEditingPicker ? editing.value : value}
+                  editable={editable}
+                  onToggle={() => api.toggle(id, c.key)}
+                />
+              )}
               {ghost && activeKey === c.key && (
                 <span className={styles.ghost} data-testid="ghost">
                   {ghost}

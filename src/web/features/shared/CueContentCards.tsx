@@ -5,6 +5,9 @@ import { Link } from "react-router";
 import { Chip, RecordPicker } from "../../components/grid";
 import { sceneTitle } from "../../lib/show-selectors";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
+import { Thumb } from "../attachments/Attachments";
+import { thumbnailOf } from "../attachments/selectors";
+import { currentVersions } from "../content/versions";
 import { rowUrl } from "../show/tabs";
 import { useWorkspace } from "../show/workspace";
 import { createContent, searchContent } from "./pickers";
@@ -20,6 +23,8 @@ export function CueContentCards({ cueId }: { cueId: string }) {
   const scenes = useShowStore((s) => s.tables.scenes);
   const cue = useShowStore((s) => s.tables.cues.get(cueId));
   const statusOptions = useShowStore((s) => s.fieldOptions["content.status"]);
+  const files = useShowStore((s) => s.tables.attachments);
+  const versions = currentVersions(useShowStore((s) => s.tables.content_versions));
   const [adding, setAdding] = useState(false);
   const addRef = useRef<HTMLButtonElement>(null);
   const items = useMemo(() => ids.flatMap((id) => content.get(id) ?? []), [ids, content]);
@@ -36,13 +41,17 @@ export function CueContentCards({ cueId }: { cueId: string }) {
           {items.map((c) => {
             const scene = c.scene_id ? scenes.get(c.scene_id) : undefined;
             const status = statusOptions?.find((o) => o.value === c.status);
+            const thumb = thumbnailOf(files, "content", c.id);
+            const version = versions.get(c.id)?.version;
             return (
               <li key={c.id} className={styles.card} data-testid="content-card">
+                {thumb && <Thumb file={thumb} size="md" showId={ws.showId} />}
                 <div className={styles.cardMain}>
                   <Link className={styles.cardName} to={rowUrl(ws.showId, "content", c.id)}>
                     {c.name || "(unnamed content)"}
                   </Link>
                   <div className={styles.cardMeta}>
+                    {version && <span data-testid="content-card-version">{version}</span>}
                     {c.status && <Chip label={c.status} color={status?.color ?? "gray"} />}
                     <span>{scene ? sceneTitle(scene) : "No scene"}</span>
                   </div>

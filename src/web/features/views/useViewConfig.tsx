@@ -22,6 +22,7 @@ import {
   defaultViewConfig,
   normalizeViewConfig,
   type ViewConfig,
+  type ViewLayout,
 } from "../../../shared/views";
 import type {
   Column,
@@ -96,6 +97,8 @@ export interface ViewSetup<V> {
   sortPresets?: SortPreset[];
   /** "Sort now by cue number" (editors): resolves true when done. */
   sortNow?: { label: string; run: () => Promise<boolean> };
+  /** The table can be shown as a gallery (R19): the view bar offers the toggle and preset. */
+  gallery?: { presetName: string };
 }
 
 export interface ViewState<V> {
@@ -135,6 +138,8 @@ export interface ViewState<V> {
     style: { display: "contents" };
   };
   toolbar: ReactNode;
+  /** Grid or gallery cards (R19). */
+  layout: ViewLayout;
 }
 
 const NO_IDS: string[] = [];
@@ -152,6 +157,8 @@ export interface ViewActions {
   rename(id: string, name: string): void;
   remove(id: string): void;
   setDefault(id: string): void;
+  /** A new personal view with this config (the "Content gallery" preset), opened. */
+  createPersonal(name: string, config: ViewConfig): void;
 }
 
 /** A failed request that never reached the server (offline): worth retrying. */
@@ -167,6 +174,21 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
   const { shared, mine } = useViewsFor(table, userId);
   const [params, setParams] = useSearchParams();
   const urlView = params.get("view");
+  // `select` writes ?view=, but the router applies navigations asynchronously (in a
+  // transition), so for a render or two the URL still names the old view. Until it catches
+  // up, the view just picked wins: otherwise a change that switched views (a viewer's edit
+  // going to their copy) renders once with the old view's config, and a controlled
+  // checkbox / radio in a panel snaps back under the click (e2e flake: "Clicking the
+  // checkbox did not change its state").
+  const [picked, setPicked] = useState<{ id: string | null; urlWas: string | null } | null>(null);
+  const urlViewRef = useRef(urlView);
+  urlViewRef.current = urlView;
+  const pickPending = !!picked && picked.urlWas === urlView && picked.id !== urlView;
+  const wantedView = pickPending ? picked.id : urlView;
+  // The URL moved on (to the pick, or elsewhere): the URL rules again.
+  useEffect(() => {
+    if (picked && picked.urlWas !== urlView) setPicked(null);
+  }, [picked, urlView]);
 
   // --- Which view ---
   const lastKey = lastViewKey(userId, showId, table);
@@ -176,20 +198,21 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
   const current: ViewRow | null = useMemo(() => {
     const all = [...shared, ...mine];
     return (
-      all.find((v) => v.id === urlView) ??
+      all.find((v) => v.id === wantedView) ??
       all.find((v) => v.id === lastView) ??
       shared.find((v) => v.is_default) ??
       shared[0] ??
       mine[0] ??
       null
     );
-  }, [shared, mine, urlView, lastView]);
+  }, [shared, mine, wantedView, lastView]);
   const viewId = current?.id ?? `builtin:${table}`;
   const isPersonal = !!current && current.owner_user_id !== null;
 
   const select = useCallback(
     (id: string | null) => {
       setLastView(id);
+      setPicked({ id, urlWas: urlViewRef.current });
       writePref(lastKey, id ?? undefined);
       setParams(
         (prev) => {
@@ -206,7 +229,7 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
 
   // A ?view= naming no view you can see (deleted, someone else's): drop it.
   useEffect(() => {
-    if (!ready || !urlView) return;
+    if (!ready || !urlView || pickPending) return;
     if ([...shared, ...mine].some((v) => v.id === urlView)) return;
     toast("That view no longer exists.");
     if (lastView === urlView) setLastView(null);
@@ -218,7 +241,7 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
       },
       { replace: true, preventScrollReset: true },
     );
-  }, [ready, urlView, shared, mine, toast, setParams, lastView]);
+  }, [ready, urlView, pickPending, shared, mine, toast, setParams, lastView]);
 
   // --- Fields (columns + extras) ---
   const extras = setup.extraFields ?? (NO_EXTRAS as FieldDef<V>[]);
@@ -557,6 +580,21 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
           },
           true,
         );
+      },
+      createPersonal: (name, config) => {
+        const id = newId();
+        send(
+          [
+            {
+              op: "create",
+              table: "views",
+              id,
+              fields: { table, name, owner_user_id: userId, position: nextPosition(), config },
+            },
+          ],
+          "create the view",
+        );
+        select(id);
       },
       duplicate: (name, asShared) => {
         const cur = latest.current;
@@ -903,6 +941,7 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
       actions={actions}
       sortPresets={setup.sortPresets}
       sortNow={canEdit ? setup.sortNow : undefined}
+      gallery={setup.gallery}
     />
   );
 
@@ -925,6 +964,7 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
     trackActive,
     wrapProps,
     toolbar,
+    layout: setup.gallery && config.layout === "gallery" ? "gallery" : "grid",
   };
 }
 

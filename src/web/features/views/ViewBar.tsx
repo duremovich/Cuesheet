@@ -4,7 +4,13 @@
 // `actions.update`, which decides between a draft, a save, or a personal copy.
 import { type RefObject, useLayoutEffect, useRef, useState } from "react";
 import type { DataTableName, ViewRow } from "../../../shared/tables";
-import type { ColorRule, OptionColor, RowHeightName, ViewConfig } from "../../../shared/views";
+import {
+  type ColorRule,
+  defaultViewConfig,
+  type OptionColor,
+  type RowHeightName,
+  type ViewConfig,
+} from "../../../shared/views";
 import { type Column, OPTION_COLORS } from "../../components/grid/types";
 import { type FieldDef, fieldList, isComplete, withFieldOrder } from "./evaluate";
 import { FilterEditor, newFilter } from "./FilterEditor";
@@ -31,6 +37,8 @@ export interface ViewBarProps<V> {
   actions: ViewActions;
   sortPresets?: SortPreset[] | undefined;
   sortNow?: { label: string; run: () => Promise<boolean> } | undefined;
+  /** Offer the Grid / Gallery toggle and a gallery preset view (R19). */
+  gallery?: { presetName: string } | undefined;
 }
 
 function move<T>(list: readonly T[], from: number, to: number): T[] {
@@ -77,13 +85,23 @@ export function ViewBar<V>(p: ViewBarProps<V>) {
       <FieldsPanel {...p} />
       <RowHeightPanel {...p} />
       <ColorPanel {...p} />
+      {p.gallery && <LayoutToggle {...p} />}
     </div>
   );
 }
 
 // ---- View switcher ----
 
-function ViewSwitcher<V>({ current, shared, mine, canEdit, actions, dirty }: ViewBarProps<V>) {
+function ViewSwitcher<V>({
+  table,
+  current,
+  shared,
+  mine,
+  canEdit,
+  actions,
+  dirty,
+  gallery,
+}: ViewBarProps<V>) {
   const [form, setForm] = useState<null | { kind: "mine" | "shared" | "rename"; name: string }>(
     null,
   );
@@ -140,6 +158,23 @@ function ViewSwitcher<V>({ current, shared, mine, canEdit, actions, dirty }: Vie
             <ul className={styles.viewList}>
               {mine.map((v) => item(v, close))}
               {mine.length === 0 && <li className={styles.muted}>None yet</li>}
+              {gallery && !mine.some((v) => v.name === gallery.presetName) && (
+                <li>
+                  <button
+                    type="button"
+                    className={styles.linkButton}
+                    onClick={() => {
+                      actions.createPersonal(gallery.presetName, {
+                        ...defaultViewConfig(table),
+                        layout: "gallery",
+                      });
+                      close();
+                    }}
+                  >
+                    + {gallery.presetName}
+                  </button>
+                </li>
+              )}
             </ul>
           </section>
           {form ? (
@@ -639,6 +674,29 @@ function FieldsPanel<V>({ config, columns, actions }: ViewBarProps<V>) {
         </div>
       </div>
     </Popover>
+  );
+}
+
+// ---- Layout: grid / gallery (R19) ----
+
+function LayoutToggle<V>({ config, actions }: ViewBarProps<V>) {
+  const gallery = config.layout === "gallery";
+  return (
+    <button
+      type="button"
+      className={styles.toolButton}
+      aria-pressed={gallery}
+      data-testid="view-layout"
+      title={gallery ? "Show as a grid" : "Show as gallery cards"}
+      onClick={() =>
+        actions.update((c) => {
+          const { layout: _l, ...rest } = c;
+          return gallery ? rest : { ...rest, layout: "gallery" };
+        })
+      }
+    >
+      Gallery
+    </button>
   );
 }
 

@@ -94,7 +94,11 @@ export interface ViewConfig {
    * changes reuse the copy instead of making another.
    */
   forkedFrom?: string;
+  /** How rows are shown (R19): the grid (default, stored as absent) or gallery cards. */
+  layout?: ViewLayout;
 }
+
+export type ViewLayout = "grid" | "gallery";
 
 export const MAX_FILTERS = 50;
 export const MAX_COLOR_RULES = 50;
@@ -226,6 +230,9 @@ export function viewConfigError(raw: unknown): string | null {
   if (c.forkedFrom !== undefined && !isKey(c.forkedFrom)) {
     return "config.forkedFrom must be a view id";
   }
+  if (c.layout !== undefined && c.layout !== "grid" && c.layout !== "gallery") {
+    return 'config.layout must be "grid" or "gallery"';
+  }
   return null;
 }
 
@@ -285,6 +292,7 @@ export function normalizeViewConfig(raw: unknown, table?: DataTableName): ViewCo
         ),
     ),
     ...(isKey(raw.forkedFrom) ? { forkedFrom: raw.forkedFrom } : {}),
+    ...(raw.layout === "gallery" ? { layout: "gallery" as const } : {}),
   };
 }
 
@@ -373,6 +381,7 @@ export const VIEW_FIELDS: Record<
   },
   notes: {
     body: { kind: "text" },
+    attachments: { kind: "text" },
     type: { kind: "multi" },
     priority: { kind: "select" },
     status: { kind: "select" },
@@ -386,6 +395,8 @@ export const VIEW_FIELDS: Record<
   },
   content: {
     name: { kind: "text" },
+    version: { kind: "text" },
+    attachments: { kind: "text" },
     scene: { kind: "link" },
     status: { kind: "select" },
     creator: { kind: "link" },
@@ -528,6 +539,7 @@ export function sanitizeViewConfig(
       frozenCount: c.frozenCount,
       colorRules,
       ...(c.forkedFrom !== undefined ? { forkedFrom: c.forkedFrom } : {}),
+      ...(c.layout === "gallery" ? { layout: "gallery" as const } : {}),
     },
   };
 }

@@ -4,12 +4,15 @@
 import { type ReactNode, useCallback, useMemo, useRef } from "react";
 import { newId } from "../../../shared/ids";
 import type { Op } from "../../../shared/ops";
+import type { AttachmentRow } from "../../../shared/tables";
 import { DataGrid } from "../../components/grid";
 import type { Column, Group, InsertPosition } from "../../components/grid/types";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
+import { openLightbox } from "../attachments/state";
 import { type TabKey, tabInfo } from "../show/tabs";
 import { useWorkspace } from "../show/workspace";
 import type { FieldDef } from "../views/evaluate";
+import { Gallery } from "../views/Gallery";
 import { DATE_FIELDS, NATIVE_GROUP_KEY } from "../views/tableDefaults";
 import { useViewConfig } from "../views/useViewConfig";
 import { type PanelSection, RowPanel } from "./RowPanel";
@@ -56,6 +59,16 @@ export interface TableConfig<V> {
   /** Where the toolbar's "+ Add" button inserts (default: the end of the last group). */
   addPosition?: InsertPosition;
   testId?: string;
+  /**
+   * The table can show as gallery cards (R19): a view's `layout: "gallery"`. `image` is the
+   * card's picture (the first image attachment), `title` its heading.
+   */
+  gallery?: {
+    presetName: string;
+    titleKey: string;
+    title: (v: V) => string;
+    image: (v: V) => AttachmentRow | undefined;
+  };
 }
 
 export function TableGrid<V>(config: TableConfig<V>) {
@@ -100,6 +113,7 @@ export function TableGrid<V>(config: TableConfig<V>) {
     ...(config.defaultCollapsed ? { defaultCollapsed: config.defaultCollapsed } : {}),
     ...(config.extraFields ? { extraFields: config.extraFields } : {}),
     ...(dateFields ? { dateFields } : {}),
+    ...(config.gallery ? { gallery: { presetName: config.gallery.presetName } } : {}),
   });
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -215,29 +229,55 @@ export function TableGrid<V>(config: TableConfig<V>) {
       }
     >
       <div {...view.wrapProps}>
-        <DataGrid<V>
-          ref={chrome.grid}
-          aria-label={config.label}
-          columns={view.columns}
-          rowId={config.rowId}
-          {...(view.groups ? { groups: view.groups } : { rows: view.rows ?? [] })}
-          sort={view.sort}
-          sortColumns={view.sortColumns}
-          rowHeight={view.rowHeight}
-          colorRules={view.colorRules}
-          collapsed={view.collapsed}
-          onCollapsedChange={view.onCollapsedChange}
-          onColumnResize={view.onColumnResize}
-          onActiveRowChange={onActive}
-          onOpenRow={chrome.onOpenRow}
-          {...(chrome.onEscape ? { onEscape: chrome.onEscape } : {})}
-          addRowLabel={`Add ${config.noun}`}
-          onEdit={onEdit}
-          {...(canInsert ? { onInsert: insert } : {})}
-          {...(config.moveOps ? { onMove } : {})}
-          {...(config.deleteOps ? { onDelete } : {})}
-          onError={(e, action) => report(e, GRID_ACTIONS[action])}
-        />
+        {view.layout === "gallery" && config.gallery ? (
+          <Gallery<V>
+            ref={chrome.grid}
+            aria-label={`${config.label} (gallery)`}
+            {...(view.groups ? { groups: view.groups } : { rows: view.rows ?? [] })}
+            rowId={config.rowId}
+            columns={view.columns}
+            titleKey={config.gallery.titleKey}
+            title={config.gallery.title}
+            image={config.gallery.image}
+            showId={ws.showId}
+            colorRules={view.colorRules}
+            onActiveRowChange={onActive}
+            onOpenRow={chrome.onOpenRow}
+            onOpenImage={(v, file) =>
+              openLightbox({
+                table,
+                recordId: config.rowId(v),
+                field: file.field,
+                attachmentId: file.id,
+              })
+            }
+            {...(chrome.onEscape ? { onEscape: chrome.onEscape } : {})}
+          />
+        ) : (
+          <DataGrid<V>
+            ref={chrome.grid}
+            aria-label={config.label}
+            columns={view.columns}
+            rowId={config.rowId}
+            {...(view.groups ? { groups: view.groups } : { rows: view.rows ?? [] })}
+            sort={view.sort}
+            sortColumns={view.sortColumns}
+            rowHeight={view.rowHeight}
+            colorRules={view.colorRules}
+            collapsed={view.collapsed}
+            onCollapsedChange={view.onCollapsedChange}
+            onColumnResize={view.onColumnResize}
+            onActiveRowChange={onActive}
+            onOpenRow={chrome.onOpenRow}
+            {...(chrome.onEscape ? { onEscape: chrome.onEscape } : {})}
+            addRowLabel={`Add ${config.noun}`}
+            onEdit={onEdit}
+            {...(canInsert ? { onInsert: insert } : {})}
+            {...(config.moveOps ? { onMove } : {})}
+            {...(config.deleteOps ? { onDelete } : {})}
+            onError={(e, action) => report(e, GRID_ACTIONS[action])}
+          />
+        )}
       </div>
     </TableFrame>
   );

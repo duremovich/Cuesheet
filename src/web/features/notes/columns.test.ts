@@ -29,6 +29,7 @@ describe("notes", () => {
       scene: null,
       author: "",
       editable: true,
+      files: [],
     } satisfies NoteView;
     expect(noteEditOps(view, "body", "")).toEqual([
       { op: "update", table: "notes", id: "n1", fields: { body: null } },

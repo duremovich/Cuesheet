@@ -420,10 +420,7 @@ test("quick-add at 390px: pick a cue, save, the cue stays picked", async ({ brow
   await quick.getByRole("searchbox", { name: "Find a cue" }).fill("14.2");
   await quick.getByRole("button", { name: /^14\.20/ }).click();
   await expect(quick.getByTestId("quick-picked")).toContainText("Cue 14.20");
-  await expect(quick.getByRole("button", { name: "Add a photo" })).toHaveAttribute(
-    "title",
-    "Attachments arrive in M3",
-  );
+  await expect(quick.getByRole("button", { name: "Add a photo" })).toBeEnabled();
 
   const body = uniqueName("phone note");
   await quick.getByRole("textbox", { name: "Quick note" }).fill(body);

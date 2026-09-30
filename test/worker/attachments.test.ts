@@ -197,7 +197,7 @@ describe("attachments", () => {
     await dl.arrayBuffer();
 
     const thumb = await api(`${reserved.uploadUrl}/thumb`, { cookie: admin });
-    expect(thumb.status, await thumb.clone().text()).toBe(200);
+    expect(thumb.status).toBe(200);
     expect(thumb.headers.get("Content-Type")).toBe("image/png");
     const tb = new Uint8Array(await thumb.arrayBuffer());
     expect(imageSize(tb)).toEqual({ width: 320, height: 240 });
