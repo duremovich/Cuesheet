@@ -171,11 +171,28 @@ Things the first build had to decide; each is easy to change.
 - **CSV exports** show values as the grid does (lengths in your unit, formulas rounded as
   displayed). "Export all" is the raw form (meters, ids, stored text).
 
+## Sharing, security and deploy (M5b)
+
+- **Row-level scoping of share links (later hardening pass).** A view link shows the
+  *whole* table (live), not just the view's filtered rows: the view's filters, sorts and
+  columns shape the rendering on the client, and the Sharing UI says so. Someone with the
+  link and the API can read every row of that table (and the label tables its grid needs:
+  a cue link sees scene names and content chips, never notes). A hardening pass could
+  evaluate the view's filters in the ShowDO (snapshot and live ops), which needs the
+  filter evaluator on the server and re-checking rows as they change in and out of the
+  filter.
+- **DO point-in-time recovery tooling.** Show data is only backed up by owners' weekly
+  "Download backup" and Durable Object PITR, which (as far as we know) needs an admin
+  route calling the Storage API. Build that route, and an import of `export.json`?
+- **One share cookie per show per browser.** Opening a second link of the same show in
+  one browser replaces the first (its tab keeps working until it reloads). Rare enough?
+- **Compatibility date** is 2026-08-22, the newest the local test runtime
+  (`@cloudflare/vitest-pool-workers`) supports; bump it together with that package.
+
 ## Infrastructure
 
-- **Sign-in for SM/director.** Do they need accounts, or is a read-only link enough?
-- **Hosting.** Any preference or budget (a small VPS, a managed platform)? Who maintains
-  it once it's running?
+- **Hosting ownership.** Who maintains the Cloudflare account and watches the logs once
+  it's running (docs/deploy.md)?
 - **Offline.** Not v1, but how bad is venue Wi-Fi in practice? If tech regularly happens
   without internet, the architecture should plan for a local-first mode early.
 
@@ -191,6 +208,24 @@ Things the first build had to decide; each is easy to change.
 - **Custom field values on notes** (M5a review): commenters may edit custom values on
   their own notes, like the notes' core fields. → CLAUDE.md "Custom fields and custom
   tables"
+
+- **Share link tokens** (M5b): shown once (only a hash is stored); a lost or leaked link
+  is replaced with **Regenerate** (a new token, same settings; the old link stops
+  working). Editors and the owner manage links. → CLAUDE.md "Share links"
+- **Rate limits** (M5b), as built: failures only; sign-in 10 a minute and 50 an hour per
+  email+IP, 100 an hour per email, 50 an hour per IP; bad invite/reset/share tokens 10 a
+  minute and 50 an hour per IP. → CLAUDE.md "Account security"
+- **Invites into a show** (M5b): a show's owner (not only admins) may invite people into
+  their show with a role.
+- **Co-owners** (M5b): no; one owner per show, transfer makes the old owner an editor.
+- **Backups** (M5b), as built: weekly D1 dumps to R2 (13 kept) plus per-show JSON exports
+  on demand. → docs/deploy.md
+- **Presence names** (M5b, R22): the presence pill lists who's connected by name (share
+  visitors as "Guest (read-only)"; guests see counts only).
+
+- **Sign-in for SM/director** (M5b): a read-only share link is enough; no account needed
+  (owners make them in Show settings → Sharing). → CLAUDE.md "Share links"
+- **Hosting** (M5b): Cloudflare, deployed by GitHub Actions from `main`. → docs/deploy.md
 
 - **Resolve → Skip** (M4b): leaves the cue unanchored on the new version, per ux.md: a
   guessed (`changed`) anchor is set to `missing` with no position, so the cue shows in

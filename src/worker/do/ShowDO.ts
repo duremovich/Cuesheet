@@ -15,6 +15,7 @@ import type {
   MutateResponse,
   SnapshotResponse,
 } from "../../shared/ops";
+import type { ShareScope } from "../../shared/share";
 import {
   type AttachmentRow,
   type CueAnchorRow,
@@ -24,9 +25,10 @@ import {
   type ScriptRow,
   type ScriptVersionRow,
 } from "../../shared/tables";
-import { PING_FRAME, PONG_FRAME, type ServerMessage } from "../../shared/ws";
+import { PING_FRAME, PONG_FRAME, type PresenceUser, type ServerMessage } from "../../shared/ws";
 import migrations from "../db/do/migrations/migrations.js";
 import * as schema from "../db/do/schema";
+import { filterOps, filterSnapshot } from "../share-filter";
 import {
   Batch,
   currentVersion,
@@ -49,8 +51,26 @@ export const USER_ID_HEADER = "X-Cuesheet-User";
 /** Header carrying the opener's session id (the SHA-256 of their cookie token). */
 export const SESSION_ID_HEADER = "X-Cuesheet-Session";
 
+/** Header with the opener's role (read-only sockets are counted in presence). */
+export const ROLE_HEADER = "X-Cuesheet-Role";
+/** Header with the opener's display name, URI-encoded (presence lists names). */
+export const NAME_HEADER = "X-Cuesheet-Name";
+/** How a share link's visitors appear in members' presence lists. */
+export const GUEST_NAME = "Guest (read-only)";
+/** Header carrying a share link's scope (JSON `ShareScope`) for a share viewer's socket. */
+export const SHARE_SCOPE_HEADER = "X-Cuesheet-Share";
+/**
+ * Set by the Worker on the requests it builds for the DO. The Worker never forwards
+ * client headers (it builds a fresh `Headers`); the DO still refuses any request carrying
+ * `X-Cuesheet-*` headers without this marker, as a second line of defence.
+ */
+export const INTERNAL_HEADER = "X-Cuesheet-Internal";
+export const INTERNAL_MARKER = "worker";
+
 /** WebSocket tag for the sockets one session (one signed-in browser) opened. */
 const sessionTag = (sessionId: string) => `session:${sessionId}`;
+/** WebSocket tag (the first) of a share link's viewers. */
+const shareTag = (linkId: string) => `share:${linkId}`;
 
 /** Close code sent to sockets whose user lost access (logout, removed from the show). */
 export const ACCESS_REVOKED_CODE = 4003;
@@ -101,7 +121,19 @@ const UPLOAD_PREFIX = "upload:";
 
 interface SocketAttachment {
   userId: string;
+  /** Display name for presence (members: from D1; share visitors: GUEST_NAME). */
+  name?: string;
   sessionId?: string;
+  /** Viewers and share links: shown in presence as read-only. */
+  readOnly?: boolean;
+  /** A share link's viewer: receives only what the link's scope allows. */
+  share?: ShareScope;
+}
+
+interface Presence {
+  clients: number;
+  readOnly: number;
+  users: PresenceUser[];
 }
 
 export class ShowDO extends DurableObject<Env> {
@@ -177,6 +209,10 @@ export class ShowDO extends DurableObject<Env> {
 
   // ---- deferred R2 deletes (Undo can restore a deleted file for a day) ----
 
+  private async scheduleAlarm(at: number): Promise<void> {
+    return this.schedulePurge(at);
+  }
+
   private async schedulePurge(at: number): Promise<void> {
     const current = await this.ctx.storage.getAlarm();
     if (current === null || current > at) await this.ctx.storage.setAlarm(at);
@@ -187,7 +223,32 @@ export class ShowDO extends DurableObject<Env> {
    * give their bytes back to D1 `shows.storage_bytes`, and schedule the next purge.
    */
   override async alarm(): Promise<void> {
-    await this.purgeDeletedFiles(Date.now());
+    const now = Date.now();
+    this.expireShareSockets(now);
+    await this.purgeDeletedFiles(now);
+  }
+
+  /**
+   * Close the sockets of share links that have expired (their `ShareScope.expiresAt`).
+   * Called by the alarm (set for the earliest expiry when a share socket opens) and before
+   * every broadcast. Returns how many were closed.
+   */
+  expireShareSockets(now: number): number {
+    const expired = this.openSockets().filter((ws) => {
+      const exp = (ws.deserializeAttachment() as SocketAttachment | null)?.share?.expiresAt;
+      return typeof exp === "number" && exp <= now;
+    });
+    return this.revoke(expired);
+  }
+
+  /** The earliest expiry among open share sockets, or null. */
+  private nextShareExpiry(): number | null {
+    let next: number | null = null;
+    for (const ws of this.openSockets()) {
+      const exp = (ws.deserializeAttachment() as SocketAttachment | null)?.share?.expiresAt;
+      if (typeof exp === "number" && (next === null || exp < next)) next = exp;
+    }
+    return next;
   }
 
   /** The alarm's work, at `now` (tests pass a time). Returns how many files went. */
@@ -214,8 +275,11 @@ export class ShowDO extends DurableObject<Env> {
           .run();
       }
     }
-    // More than one batch due (500 at a time) → again soon; else when the next one is due.
-    const again = due.length >= 500 ? now + 1000 : next;
+    // More than one batch due (500 at a time) → again soon; else when the next one is due,
+    // or when the next share link's sockets expire, whichever comes first (one alarm).
+    const purge = due.length >= 500 ? now + 1000 : next;
+    const share = this.nextShareExpiry();
+    const again = purge === null ? share : share === null ? purge : Math.min(purge, share);
     if (again !== null) await this.ctx.storage.setAlarm(again);
     return due.length;
   }
@@ -395,35 +459,73 @@ export class ShowDO extends DurableObject<Env> {
   ): void {
     const ownerOf = (op: AnyResolvedOp) =>
       "table" in op && op.table === "views" ? viewOwners.get(op.id) : undefined;
-    const textFor = (userId: string | undefined): string | null => {
+    const encode = (ops: AnyResolvedOp[]): string | null => {
       const msg: ServerMessage = {
         type: "ops",
         prevVersion: result.prevVersion,
         version: result.version,
         clientId: ctx.clientId ?? "",
-        ops: result.ops.filter((op) => {
-          const owner = ownerOf(op);
-          return owner === undefined || owner === userId;
-        }),
+        ops,
       };
       const text = JSON.stringify(msg);
       return new TextEncoder().encode(text).byteLength <= MAX_BROADCAST_BYTES ? text : null;
     };
+    const textFor = (userId: string | undefined): string | null =>
+      encode(
+        result.ops.filter((op) => {
+          const owner = ownerOf(op);
+          return owner === undefined || owner === userId;
+        }),
+      );
     const versionText = JSON.stringify({
       type: "version",
       version: result.version,
     } satisfies ServerMessage);
-    if (!result.ops.some((op) => ownerOf(op) !== undefined)) {
+    // Share links past their expiry are closed before they'd see this batch.
+    this.expireShareSockets(Date.now());
+    const sockets = this.openSockets();
+    const shared = sockets.some((ws) => this.ctx.getTags(ws)[0]?.startsWith("share:"));
+    if (!shared && !result.ops.some((op) => ownerOf(op) !== undefined)) {
       this.broadcastRaw(textFor(undefined) ?? versionText);
       return;
     }
+    const sql = this.ctx.storage.sql;
+    // Live rows, else a row this batch deleted (kept in pending_r2_deletes with its row).
+    const attachmentTable = (id: string): string | undefined => {
+      const live = sql
+        .exec<{ t: string }>('SELECT "table" AS t FROM attachments WHERE id = ?', id)
+        .toArray()[0]?.t;
+      if (live) return live;
+      const gone = sql
+        .exec<{ row: string }>("SELECT row FROM pending_r2_deletes WHERE attachment_id = ?", id)
+        .toArray()[0]?.row;
+      try {
+        const t = gone ? (JSON.parse(gone) as { table?: unknown }).table : undefined;
+        return typeof t === "string" ? t : undefined;
+      } catch {
+        return undefined;
+      }
+    };
     const cache = new Map<string | undefined, string>();
-    for (const ws of this.openSockets()) {
-      const userId = this.ctx.getTags(ws)[0];
-      let text = cache.get(userId);
+    for (const ws of sockets) {
+      const key = this.ctx.getTags(ws)[0];
+      let text = cache.get(key);
       if (text === undefined) {
-        text = textFor(userId) ?? versionText;
-        cache.set(userId, text);
+        const scope = key?.startsWith("share:")
+          ? (ws.deserializeAttachment() as SocketAttachment | null)?.share
+          : undefined;
+        if (scope) {
+          // Share viewers: no personal views at all, then the link's scope (scrubbed).
+          const ops = filterOps(
+            result.ops.filter((op) => ownerOf(op) === undefined),
+            scope,
+            { attachmentTable },
+          );
+          text = (ops === "refetch" ? null : encode(ops)) ?? versionText;
+        } else {
+          text = textFor(key) ?? versionText;
+        }
+        cache.set(key, text);
       }
       try {
         ws.send(text);
@@ -440,6 +542,41 @@ export class ShowDO extends DurableObject<Env> {
    */
   async snapshotJson(userId?: string): Promise<string> {
     return JSON.stringify(readSnapshot(this.ctx.storage.sql, userId) satisfies SnapshotResponse);
+  }
+
+  /** The snapshot a share link may see (routes/share.ts; src/worker/share-filter.ts). */
+  async snapshotForShare(scope: ShareScope): Promise<string> {
+    // A user id no view belongs to: shared views only, then the scope's one view.
+    const snap = readSnapshot(this.ctx.storage.sql, "\u0000share");
+    return JSON.stringify(filterSnapshot(snap, scope) satisfies SnapshotResponse);
+  }
+
+  /**
+   * The shared view of `table` a share link shows: `asked` if it is one (else null), or
+   * with no `asked`, the table's shared default (else its first shared view).
+   */
+  async sharedViewId(table: string, asked: string | null): Promise<string | null> {
+    const sql = this.ctx.storage.sql;
+    const row = asked
+      ? sql
+          .exec<{ id: string }>(
+            'SELECT id FROM views WHERE id = ? AND "table" = ? AND owner_user_id IS NULL',
+            asked,
+            table,
+          )
+          .toArray()[0]
+      : sql
+          .exec<{ id: string }>(
+            'SELECT id FROM views WHERE "table" = ? AND owner_user_id IS NULL ORDER BY is_default DESC, position, created_at, id LIMIT 1',
+            table,
+          )
+          .toArray()[0];
+    return row?.id ?? null;
+  }
+
+  /** Health check (GET /api/health): the object answers and its SQLite works. */
+  async ping(): Promise<number> {
+    return currentVersion(this.ctx.storage.sql);
   }
 
   /** Changes, newest first; with `userId`, others' personal views are left out. */
@@ -481,7 +618,12 @@ export class ShowDO extends DurableObject<Env> {
   /** Tell a user's open sockets their role changed (`{type:"role"}`). Returns how many. */
   async notifyRole(userId: string, role: Role): Promise<number> {
     const sockets = this.ctx.getWebSockets(userId);
-    for (const ws of sockets) this.send(ws, { type: "role", role });
+    for (const ws of sockets) {
+      const att = ws.deserializeAttachment() as SocketAttachment | null;
+      if (att) ws.serializeAttachment({ ...att, readOnly: role === "viewer" });
+      this.send(ws, { type: "role", role });
+    }
+    if (sockets.length > 0) this.broadcastPresence();
     return sockets.length;
   }
 
@@ -513,6 +655,11 @@ export class ShowDO extends DurableObject<Env> {
     return this.revoke(this.ctx.getWebSockets(sessionTag(sessionId)));
   }
 
+  /** Close a share link's viewers (the link was revoked). */
+  async disconnectShare(linkId: string): Promise<number> {
+    return this.revoke(this.ctx.getWebSockets(shareTag(linkId)));
+  }
+
   private revoke(sockets: WebSocket[]): number {
     for (const ws of sockets) {
       this.send(ws, { type: "revoked" });
@@ -532,21 +679,47 @@ export class ShowDO extends DurableObject<Env> {
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
       return new Response("Expected a WebSocket upgrade", { status: 426 });
     }
-    const userId = request.headers.get(USER_ID_HEADER);
+    const internal = request.headers.get(INTERNAL_HEADER) === INTERNAL_MARKER;
+    const ours = [...request.headers.keys()].some((h) => h.toLowerCase().startsWith("x-cuesheet-"));
+    if (ours && !internal) return new Response("Forged internal headers", { status: 400 });
+    const shareHeader = request.headers.get(SHARE_SCOPE_HEADER);
+    const share = shareHeader ? (JSON.parse(shareHeader) as ShareScope) : undefined;
+    const userId = share ? shareTag(share.linkId) : request.headers.get(USER_ID_HEADER);
     if (!userId) return new Response("Missing user", { status: 400 });
     const meta = await this.getMeta();
     if (!meta) return new Response("Show not initialised", { status: 404 });
 
     const sessionId = request.headers.get(SESSION_ID_HEADER) ?? undefined;
+    if (share?.expiresAt != null && share.expiresAt <= Date.now()) {
+      return new Response("Share link expired", { status: 410 });
+    }
     const { 0: client, 1: server } = new WebSocketPair();
     this.ctx.acceptWebSocket(server, sessionId ? [userId, sessionTag(sessionId)] : [userId]);
-    server.serializeAttachment({ userId, sessionId } satisfies SocketAttachment);
+    // Close this share link's sockets when it expires (one alarm, shared with R2 purges).
+    if (share?.expiresAt != null) await this.scheduleAlarm(share.expiresAt);
+    let name = GUEST_NAME;
+    if (!share) {
+      try {
+        name = decodeURIComponent(request.headers.get(NAME_HEADER) ?? "") || "Someone";
+      } catch {
+        name = "Someone";
+      }
+    }
+    server.serializeAttachment({
+      userId,
+      name,
+      ...(sessionId ? { sessionId } : {}),
+      readOnly: !!share || request.headers.get(ROLE_HEADER) === "viewer",
+      ...(share ? { share } : {}),
+    } satisfies SocketAttachment);
 
-    const clients = this.openSockets().length;
-    this.send(server, { type: "hello", showId: meta.showId, clients });
+    const p = this.presence();
+    this.send(server, { type: "hello", showId: meta.showId, ...this.presenceFor(server, p) });
     // Lets the client notice changes it missed while disconnected (and refetch).
     this.send(server, { type: "version", version: currentVersion(this.ctx.storage.sql) });
-    this.broadcast({ type: "presence", clients }, server);
+    for (const ws of this.openSockets()) {
+      if (ws !== server) this.send(ws, { type: "presence", ...this.presenceFor(ws, p) });
+    }
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -570,8 +743,52 @@ export class ShowDO extends DurableObject<Env> {
   }
 
   private onDisconnect(...gone: WebSocket[]): void {
-    const remaining = this.openSockets().filter((ws) => !gone.includes(ws));
-    for (const ws of remaining) this.send(ws, { type: "presence", clients: remaining.length });
+    this.broadcastPresence(gone);
+  }
+
+  /**
+   * Open sockets (minus `gone`): how many, how many read-only, and who (one entry per user
+   * or share link; read-only if any of their sockets is).
+   */
+  private presence(gone: WebSocket[] = []): Presence {
+    const open = this.openSockets().filter((ws) => !gone.includes(ws));
+    let readOnly = 0;
+    const users = new Map<string, PresenceUser>();
+    for (const ws of open) {
+      const att = ws.deserializeAttachment() as SocketAttachment | null;
+      if (!att) continue;
+      if (att.readOnly) readOnly++;
+      const seen = users.get(att.userId);
+      if (seen) seen.readOnly = seen.readOnly || !!att.readOnly;
+      else
+        users.set(att.userId, {
+          id: att.userId,
+          name: att.name ?? "Someone",
+          readOnly: !!att.readOnly,
+        });
+    }
+    // Members by name, then share links' guests (a stable order for the list).
+    const guest = (u: PresenceUser) => (u.id.startsWith("share:") ? 1 : 0);
+    const list = [...users.values()].sort(
+      (x, y) =>
+        guest(x) - guest(y) ||
+        x.name.localeCompare(y.name) ||
+        (x.id < y.id ? -1 : x.id > y.id ? 1 : 0),
+    );
+    return { clients: open.length, readOnly, users: list };
+  }
+
+  /** Presence as `ws` may see it: share visitors get the counts, never members' names. */
+  private presenceFor(ws: WebSocket, p: Presence): Presence | Omit<Presence, "users"> {
+    const att = ws.deserializeAttachment() as SocketAttachment | null;
+    return att?.share ? { clients: p.clients, readOnly: p.readOnly } : p;
+  }
+
+  private broadcastPresence(gone: WebSocket[] = []): void {
+    const p = this.presence(gone);
+    for (const ws of this.openSockets()) {
+      if (!gone.includes(ws)) this.send(ws, { type: "presence", ...this.presenceFor(ws, p) });
+    }
   }
 
   private openSockets(): WebSocket[] {

@@ -42,7 +42,7 @@ describe("API", () => {
   it("GET /api/health", async () => {
     const res = await api("/api/health");
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
+    expect(await res.json()).toEqual({ ok: true, d1: true, do: true });
   });
 
   it("rejects cross-site form posts (CSRF)", async () => {
@@ -175,7 +175,7 @@ describe("API", () => {
       ws.addEventListener("message", (e) => resolve(JSON.parse(e.data as string)), { once: true }),
     );
     ws.accept();
-    expect(await first).toEqual({ type: "hello", showId: show.id, clients: 1 });
+    expect(await first).toMatchObject({ type: "hello", showId: show.id, clients: 1, readOnly: 0 });
     ws.close(1000, "done");
   });
 
@@ -197,10 +197,22 @@ describe("API", () => {
   it("invites: admin-only, one-time, and the new user is signed in", async () => {
     const admin = await loginAdmin();
     expect((await post("/api/invites", { email: "not-an-email" }, admin)).status).toBe(400);
-    expect((await post("/api/invites", { email: ADMIN.email }, admin)).status).toBe(409);
+    // Same answer whether or not the email has an account (no account oracle)…
+    const existing = await post("/api/invites", { email: ADMIN.email }, admin);
+    expect(existing.status).toBe(200);
+    const existingToken = ((await existing.json()) as CreateInviteResponse).path.split("/").at(-1);
+    // …and accepting it for an existing account is refused.
+    expect(
+      (
+        await post(`/api/invites/${existingToken}/accept`, {
+          name: "X",
+          password: "long-enough-pw",
+        })
+      ).status,
+    ).toBe(409);
 
     const created = await post("/api/invites", { email: "New.Person@Test.Local" }, admin);
-    expect(created.status).toBe(201);
+    expect(created.status).toBe(200);
     const invite = (await created.json()) as CreateInviteResponse;
     expect(invite.email).toBe("new.person@test.local");
     expect(invite.path).toMatch(/^\/invite\/[A-Za-z0-9_-]{40,}$/);
@@ -208,6 +220,8 @@ describe("API", () => {
 
     expect(await (await api(`/api/invites/${token}`)).json()).toEqual({
       email: "new.person@test.local",
+      showName: null,
+      role: null,
     });
     expect(
       (await post(`/api/invites/${token}/accept`, { name: "New", password: "short" })).status,

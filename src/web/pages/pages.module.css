@@ -48,6 +48,16 @@
   min-width: 200px;
 }
 
+/* Long show names in a select must not widen the page (390 px). */
+.inlineForm label {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.inlineForm select {
+  max-width: 100%;
+}
+
 .sectionHeader {
   display: flex;
   justify-content: space-between;

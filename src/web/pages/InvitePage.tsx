@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { MIN_PASSWORD_LENGTH } from "../../shared/api";
+import { type InviteInfoResponse, MIN_PASSWORD_LENGTH } from "../../shared/api";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import styles from "./pages.module.css";
@@ -9,7 +9,8 @@ export function InvitePage() {
   const { token = "" } = useParams();
   const { setUser } = useAuth();
   const navigate = useNavigate();
-  const [email, setEmail] = useState<string | null>(null);
+  const [invite, setInvite] = useState<InviteInfoResponse | null>(null);
+  const email = invite?.email ?? null;
   const [invalid, setInvalid] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -17,7 +18,7 @@ export function InvitePage() {
   useEffect(() => {
     api
       .getInvite(token)
-      .then((r) => setEmail(r.email))
+      .then(setInvite)
       .catch(() => setInvalid(true));
   }, [token]);
 
@@ -56,6 +57,13 @@ export function InvitePage() {
           <form className={styles.form} onSubmit={onSubmit}>
             <p style={{ margin: 0 }}>
               Setting up the account for <strong data-testid="invite-email">{email}</strong>.
+              {invite?.showName && (
+                <>
+                  {" "}
+                  You'll join <strong data-testid="invite-show">{invite.showName}</strong> as{" "}
+                  {invite.role === "editor" ? "an editor" : `a ${invite.role ?? "member"}`}.
+                </>
+              )}
             </p>
             <label>
               Your name

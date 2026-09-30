@@ -88,6 +88,7 @@ export function CallingScriptPrint() {
       back={scriptUrl(ws.showId)}
       testId="print-script"
       screenOnlyHeader
+      running={false}
       controls={
         <label className={styles.control}>
           <input

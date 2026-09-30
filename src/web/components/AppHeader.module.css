@@ -63,3 +63,76 @@
     display: none;
   }
 }
+
+/* Account menu (AccountMenu.tsx) and the change-password dialog. */
+.menuWrap {
+  position: relative;
+}
+
+.menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  padding: var(--space-1);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-raised);
+}
+
+.menu button {
+  text-align: left;
+  border: 0;
+  background: transparent;
+}
+
+.menu button:hover,
+.menu button:focus-visible {
+  background: var(--color-surface-hover);
+}
+
+.dialogBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: color-mix(in srgb, var(--color-bg) 60%, transparent);
+}
+
+.dialog {
+  width: min(420px, 100%);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-raised);
+  padding: var(--space-4);
+}
+
+.dialog h2 {
+  margin: 0 0 var(--space-3);
+  font-size: 18px;
+}
+
+.dialogForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.dialogForm label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.dialogButtons {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}

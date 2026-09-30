@@ -4,7 +4,12 @@ import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { PING_FRAME, type ServerMessage } from "../../src/shared/ws";
-import { type ShowDO, USER_ID_HEADER } from "../../src/worker/do/ShowDO";
+import {
+  INTERNAL_HEADER,
+  INTERNAL_MARKER,
+  type ShowDO,
+  USER_ID_HEADER,
+} from "../../src/worker/do/ShowDO";
 
 function stubFor(name: string) {
   return env.SHOW.get(env.SHOW.idFromName(name));
@@ -13,7 +18,7 @@ function stubFor(name: string) {
 /** Open a WebSocket straight into the DO and collect what it receives. */
 async function connect(stub: DurableObjectStub<ShowDO>, userId = "user-1") {
   const res = await stub.fetch("http://do/ws", {
-    headers: { Upgrade: "websocket", [USER_ID_HEADER]: userId },
+    headers: { Upgrade: "websocket", [USER_ID_HEADER]: userId, [INTERNAL_HEADER]: INTERNAL_MARKER },
   });
   expect(res.status).toBe(101);
   const ws = res.webSocket;
@@ -68,7 +73,7 @@ describe("ShowDO", () => {
     const stub = stubFor("show-empty");
     expect((await stub.fetch("http://do/")).status).toBe(426);
     const res = await stub.fetch("http://do/ws", {
-      headers: { Upgrade: "websocket", [USER_ID_HEADER]: "u" },
+      headers: { Upgrade: "websocket", [USER_ID_HEADER]: "u", [INTERNAL_HEADER]: INTERNAL_MARKER },
     });
     expect(res.status).toBe(404);
   });
@@ -82,11 +87,21 @@ describe("ShowDO", () => {
       type: "hello",
       showId: "show-ws",
       clients: 1,
+      readOnly: 0,
+      users: [{ id: "alice", name: "Someone", readOnly: false }],
     });
 
     const b = await connect(stub, "bob");
     expect(await b.next((m) => m.type === "hello")).toMatchObject({ clients: 2 });
-    expect(await a.next((m) => m.type === "presence")).toEqual({ type: "presence", clients: 2 });
+    expect(await a.next((m) => m.type === "presence")).toEqual({
+      type: "presence",
+      clients: 2,
+      readOnly: 0,
+      users: [
+        { id: "alice", name: "Someone", readOnly: false },
+        { id: "bob", name: "Someone", readOnly: false },
+      ],
+    });
     expect(await stub.clientCount()).toBe(2);
 
     b.ws.send(PING_FRAME);
@@ -96,6 +111,8 @@ describe("ShowDO", () => {
     expect(await a.next((m) => m.type === "presence" && m.clients === 1)).toEqual({
       type: "presence",
       clients: 1,
+      readOnly: 0,
+      users: [{ id: "alice", name: "Someone", readOnly: false }],
     });
     a.ws.close(1000, "bye");
   });

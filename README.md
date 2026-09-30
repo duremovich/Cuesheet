@@ -126,6 +126,20 @@ to try on the **Cues** tab:
 - **Bulk edit**: select rows (click a row number, Shift+click another), right-click →
   **Set field for selection…** (or **Move to scene…** on cues); the toast offers Undo.
 
+- **Sharing** (editors and the owner): ⚙ Show settings → **Sharing** → pick a view (or a print layout:
+  calling script, SM cue sheet, notes by person / by cue, content list, surface sheet),
+  optionally an expiry → **Create link**. Open it in a private window: no sign-in, just
+  that table, read-only and live (edit a cue in the other window). A link shows the whole
+  table, not just the view's filtered rows. **Regenerate** replaces a lost link;
+  **Revoke** closes it at once. Hover the presence pill to see who's connected.
+- **Print layouts**: ⌘K → *Print notes by person* (per-person page breaks, a tick box per
+  note, **Distribute notes**: an email per person), *Print notes by cue*, *Print content
+  list*, *Print surface sheet* (sizes in m and ft-in, pixels, PPI). Printed pages carry
+  "Page N of M" and the show/session in the margins.
+- **Account** (⋯ in the header): change your password, or **Sign out everywhere**. Admins
+  make password reset links on the Shows page; show owners can invite people straight
+  into their show (Members → Add → "Create invite link").
+
 Undo (⌘Z / ⌘⇧Z) covers cell edits made in that grid; inserts, moves, deletes and "Sort
 now" aren't undoable yet. Column widths, order, filters, sorts, grouping, row height and
 color rules belong to the saved view; collapsed groups are remembered per browser.
@@ -174,8 +188,15 @@ Content, Cue List and Notes CSVs together).
 | `pnpm cf-typegen` | Regenerate `src/worker/worker-configuration.d.ts` after editing `wrangler.jsonc` |
 | `pnpm seed:example` | Create "Some Like It Hot" from `examples/*.csv` on a running dev server |
 
-Nothing here deploys. Deploying needs a Cloudflare account, real D1/R2 IDs in
-`wrangler.jsonc`, and `ADMIN_EMAIL` / `ADMIN_PASSWORD` set as secrets.
+Nothing here deploys; see "Deploy" below.
+
+## Deploy
+
+Production runs on Cloudflare (Workers Paid recommended). One-time setup (D1 database, R2
+bucket, secrets, first deploy, first admin, custom domain) and everything after it
+(automatic deploys from `main` via `.github/workflows/deploy.yml`, rollback, backups,
+monitoring, security headers) are in **[docs/deploy.md](docs/deploy.md)**; the bare
+command checklist is [scripts/cf-setup.md](scripts/cf-setup.md).
 
 ## Tests
 

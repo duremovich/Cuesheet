@@ -32,3 +32,58 @@
 .count {
   color: var(--color-text-muted);
 }
+
+.eye {
+  vertical-align: -2px;
+}
+
+.self {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-text-muted);
+}
+
+.presence {
+  position: relative;
+}
+
+.countButton {
+  padding: 0 var(--space-1);
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.countButton:hover .count {
+  color: var(--color-text);
+}
+
+.list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 40;
+  min-width: 180px;
+  max-width: min(320px, calc(100vw - 32px));
+  margin: 0;
+  padding: var(--space-2);
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-raised);
+  white-space: normal;
+}
+
+.list li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  overflow-wrap: anywhere;
+}

@@ -1,5 +1,10 @@
 // Thin fetch wrapper for /api. Every call is same-origin and sends the session cookie.
 
+import type {
+  ChangePasswordRequest,
+  CreateResetLinkResponse,
+  ResetLinkInfoResponse,
+} from "../../shared/account";
 import type { ImportMapping } from "../../shared/airtable-columns";
 import type {
   AcceptInviteRequest,
@@ -39,6 +44,12 @@ import type {
   ReanchorResponse,
   ScriptText,
 } from "../../shared/script";
+import type {
+  CreateShareLinkRequest,
+  CreateShareLinkResponse,
+  ShareInfoResponse,
+  ShareLinksResponse,
+} from "../../shared/share";
 
 export class ApiError extends Error {
   constructor(
@@ -171,7 +182,46 @@ export const api = {
     request<{ ok: true }>("PATCH", showPath(id, `/members/${encodeURIComponent(userId)}`), body),
   removeMember: (id: string, userId: string) =>
     request<{ ok: true }>("DELETE", showPath(id, `/members/${encodeURIComponent(userId)}`)),
+  /** Owner: make another member the owner (you become an editor). */
+  transferOwnership: (id: string, userId: string) =>
+    request<{ ok: true }>("POST", showPath(id, "/transfer"), { userId }),
+  /** Leave a show (not the owner). */
+  leaveShow: (id: string) => request<{ ok: true }>("POST", showPath(id, "/leave"), {}),
+
+  // ---- account security (R24) ----
+  /** Ends every session of this account and closes its show sockets. */
+  logoutAll: () => request<{ ok: true }>("POST", "/auth/logout-all", {}),
+  changePassword: (body: ChangePasswordRequest) =>
+    request<{ ok: true; sessionsEnded: number }>("POST", "/auth/password", body),
+  createResetLink: (email: string) =>
+    request<CreateResetLinkResponse>("POST", "/admin/password-resets", { email }),
+  getResetLink: (token: string) =>
+    request<ResetLinkInfoResponse>("GET", `/password-resets/${encodeURIComponent(token)}`),
+  completeReset: (token: string, password: string) =>
+    request<MeResponse>("POST", `/password-resets/${encodeURIComponent(token)}`, { password }),
+
+  // ---- share links (R23) ----
+  shareLinks: (id: string) => request<ShareLinksResponse>("GET", showPath(id, "/share-links")),
+  createShareLink: (id: string, body: CreateShareLinkRequest) =>
+    request<CreateShareLinkResponse>("POST", showPath(id, "/share-links"), body),
+  /** Revoke a live link and make a new one with the same settings (tokens show once). */
+  regenerateShareLink: (id: string, linkId: string) =>
+    request<CreateShareLinkResponse>(
+      "POST",
+      showPath(id, `/share-links/${encodeURIComponent(linkId)}/regenerate`),
+      {},
+    ),
+  revokeShareLink: (id: string, linkId: string) =>
+    request<{ ok: true }>("DELETE", showPath(id, `/share-links/${encodeURIComponent(linkId)}`)),
+  /** Resolve `/s/<token>` (no sign-in; sets the show's share cookie). */
+  openShare: (token: string) =>
+    request<ShareInfoResponse>("GET", `/share/${encodeURIComponent(token)}`),
 };
+
+/** The owner's JSON export of a show (a download link). */
+export function exportUrl(showId: string): string {
+  return `/api${showPath(showId, "/export.json")}`;
+}
 
 export function showSocketUrl(showId: string, loc: Location = window.location): string {
   const proto = loc.protocol === "https:" ? "wss:" : "ws:";

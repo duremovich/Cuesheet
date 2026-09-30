@@ -275,3 +275,277 @@
     column-gap: var(--space-2);
   }
 }
+
+/* Share links (features/share): live status and the theme toggle at the right. */
+.shareTools {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+/* Share links' live view: the expand column and the read-only row details. */
+.table .expandCell {
+  width: 28px;
+  padding: 0;
+  text-align: center;
+}
+
+.expand {
+  padding: 0 6px;
+  min-height: 24px;
+  border: 0;
+  background: transparent;
+  color: var(--color-accent);
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.detailsBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  justify-content: flex-end;
+  background: color-mix(in srgb, var(--color-bg) 40%, transparent);
+}
+
+.details {
+  width: min(480px, 100%);
+  height: 100%;
+  overflow: auto;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-left: 1px solid var(--color-border);
+  box-shadow: var(--shadow-raised);
+  padding: var(--space-4);
+}
+
+.detailsHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.detailsHead h2 {
+  font-size: 18px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.detailsList {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.detailsList dt {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.detailsList dd {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media print {
+  .expandCell,
+  .detailsBackdrop {
+    display: none;
+  }
+}
+
+/* --- notes by person / by cue --- */
+.table .tickCell {
+  width: 22px;
+  text-align: center;
+}
+
+.tickBox {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border: 1.5px solid var(--color-text);
+  border-radius: 2px;
+  vertical-align: -1px;
+}
+
+.noteBody {
+  white-space: pre-wrap;
+}
+
+.table tr:not([data-open]) .noteBody {
+  color: var(--color-text-muted);
+}
+
+.distribute {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  margin-bottom: var(--space-4);
+  background: var(--color-bg-sunken);
+}
+
+.distributeHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.distributeHead h2 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.distributeList {
+  list-style: none;
+  padding: 0;
+  margin: var(--space-2) 0 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.distributeList li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: baseline;
+}
+
+.distribute code {
+  overflow-wrap: anywhere;
+}
+
+/* --- content list --- */
+.thumbCell {
+  width: 64px;
+}
+
+.thumbCell img {
+  display: block;
+  max-width: 60px;
+  max-height: 40px;
+  object-fit: contain;
+}
+
+/* --- surface sheet --- */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-3);
+}
+
+.card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  break-inside: avoid;
+  display: grid;
+  gap: var(--space-2);
+  align-content: start;
+}
+
+.card h2 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.cardImage {
+  width: 100%;
+  max-height: 180px;
+  object-fit: contain;
+  background: var(--color-bg-sunken);
+  border-radius: var(--radius-sm);
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px var(--space-3);
+  margin: 0;
+}
+
+.facts dt {
+  color: var(--color-text-muted);
+}
+
+.facts dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.regions {
+  margin: 0;
+  padding-left: var(--space-4);
+}
+
+@media print {
+  .distribute {
+    display: none;
+  }
+
+  .table[data-break] {
+    break-before: page;
+  }
+
+  .cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Phones: previews of the wide layouts wrap instead of scrolling sideways. */
+@media screen and (max-width: 600px) {
+  .print {
+    padding: var(--space-2);
+  }
+
+  .table {
+    font-size: 12px;
+  }
+
+  .table th,
+  .table [data-nowrap] {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .thumbCell img {
+    max-width: 40px;
+  }
+}
+
+/* Cue numbers and priorities in the notes layouts never wrap, phones included. */
+.table [data-num] {
+  white-space: nowrap;
+}
+
+.personalLink {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+/* Phones: the live share view and every print table fit the width. */
+@media screen and (max-width: 600px) {
+  .table td,
+  .table th {
+    padding: 2px 4px;
+  }
+
+  /* A table too wide for the phone scrolls inside its own box; the page never does. */
+  .table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+}

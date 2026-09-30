@@ -26,6 +26,7 @@ import { customTablesInOrder } from "../custom/model";
 import { runActiveExport } from "../export/activeExport";
 import { SessionControl } from "../notes/SessionControl";
 import { cueSheetUrl, printViewUrl } from "../print/PrintTable";
+import { printPresetUrl } from "../print/presets";
 import { scriptPrintUrl, scriptUrl } from "../script/links";
 import { ScriptSourceProvider } from "../script/source";
 import { CommandPalette, goToCommands, type PaletteCommand } from "../search/CommandPalette";
@@ -66,6 +67,8 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
   const canEdit = role === "owner" || role === "editor";
   // Name and session can change while the show is open (`{type:"show"}`).
   const showName = useShowStore((s) => s.show?.name) ?? data.show.name;
+  const currentSession =
+    useShowStore((s) => s.show?.currentSession) ?? data.show.currentSession ?? null;
   const [searchParams] = useSearchParams();
   const currentCue = searchParams.get("cue");
   // ⌘/Ctrl+Shift+. anywhere in the show: tech mode at the current cue.
@@ -238,6 +241,28 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
         label: "Print SM cue sheet",
         run: () => navigate(cueSheetUrl(showId)),
       },
+      {
+        id: "print-notes-person",
+        label: currentSession
+          ? `Print notes by person (${currentSession})`
+          : "Print notes by person",
+        run: () => navigate(printPresetUrl(showId, "by-person", { session: currentSession })),
+      },
+      {
+        id: "print-notes-cue",
+        label: currentSession ? `Print notes by cue (${currentSession})` : "Print notes by cue",
+        run: () => navigate(printPresetUrl(showId, "by-cue", { session: currentSession })),
+      },
+      {
+        id: "print-content",
+        label: "Print content list",
+        run: () => navigate(printPresetUrl(showId, "content")),
+      },
+      {
+        id: "print-surfaces",
+        label: "Print surface sheet",
+        run: () => navigate(printPresetUrl(showId, "surfaces")),
+      },
       ...(pathTab && !pathTab.key.startsWith("tables/")
         ? [
             {
@@ -307,6 +332,7 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
       viewCommands,
       pathTab,
       searchParams,
+      currentSession,
       customTables,
       toast,
     ],
@@ -343,7 +369,7 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
             <h1 className={pageStyles.showTitle} data-testid="show-name" title={showName}>
               {showName}
             </h1>
-            <PresenceIndicator {...socket} />
+            <PresenceIndicator {...socket} self={role === "viewer"} />
             {/* Tech mode and quick-add have their own session control. */}
             {!/\/(tech|quick)$/.test(pathname) && <SessionControl compact />}
           </AppHeader>

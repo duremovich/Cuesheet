@@ -3,12 +3,17 @@
 // holds the group title and the column headers, so browsers repeat both at the top of
 // every printed page the group runs onto. Other layouts (SM cue sheet, notes by person…)
 // are meant to reuse this with their own columns.
-import type { ReactNode } from "react";
+//
+// On a share link's live view (features/share) each row gets an expand button that opens
+// its fields read-only (the share page's only panel).
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import type { ColorRule, Column, Group } from "../../components/grid/types";
 import { formatValue } from "../../components/grid/values";
 import { useShowStore } from "../../lib/show-store";
+import { useShareMode } from "../share/context";
 import frameStyles from "../shared/TableFrame.module.css";
+import { useMediaQuery } from "../shared/useMediaQuery";
 import { type TabKey, tabInfo } from "../show/tabs";
 import { useWorkspace } from "../show/workspace";
 import styles from "./Print.module.css";
@@ -94,6 +99,11 @@ export function PrintTable<R>({
 }) {
   const [orientation, setOrientation] = useOrientation("landscape");
   const ws = useWorkspace();
+  const share = useShareMode();
+  // Phones: no fixed column widths, so the table wraps to the screen instead of scrolling.
+  const narrow = useMediaQuery("screen and (max-width: 600px)");
+  const expandable = share?.kind === "view";
+  const [openRow, setOpenRow] = useState<{ row: R; opener: HTMLElement } | null>(null);
   const viewName = useShowStore((s) => (viewId ? s.tables.views.get(viewId)?.name : undefined));
   const info = tabInfo(tab);
   const back = `/shows/${encodeURIComponent(ws.showId)}/${tab}${viewId ? `?view=${encodeURIComponent(viewId)}` : ""}`;
@@ -101,11 +111,12 @@ export function PrintTable<R>({
   const all: Group<R>[] = groups ?? [{ id: "all", title: "", rows: rows ?? [] }];
   const count = all.reduce((n, g) => n + g.rows.length, 0);
 
+  const span = shown.length + (expandable ? 1 : 0);
   const head = (g: Group<R>): ReactNode => (
     <thead>
       {g.title && (
         <tr className={styles.groupRow}>
-          <th colSpan={shown.length}>
+          <th colSpan={span}>
             {g.title}
             {g.subtitle ? <span className={styles.groupSub}> · {g.subtitle}</span> : null}
             <span className={styles.groupSub}> ({g.rows.length})</span>
@@ -113,11 +124,16 @@ export function PrintTable<R>({
         </tr>
       )}
       <tr>
+        {expandable && (
+          <th scope="col" className={styles.expandCell}>
+            <span className={styles.srOnly}>Open</span>
+          </th>
+        )}
         {shown.map((c) => (
           <th
             key={c.key}
             scope="col"
-            style={{ width: c.width ? `${c.width}px` : undefined }}
+            style={{ width: c.width && !narrow ? `${c.width}px` : undefined }}
             data-nowrap={noWrap(c) || undefined}
           >
             {c.title}
@@ -135,7 +151,7 @@ export function PrintTable<R>({
       orientation={orientation}
       onOrientation={setOrientation}
       controls={
-        tab === "cues" ? (
+        tab === "cues" && !share ? (
           <Link
             to={variant ? printViewUrl(ws.showId, "cues", viewId) : cueSheetUrl(ws.showId)}
             data-testid="print-switch-layout"
@@ -167,13 +183,32 @@ export function PrintTable<R>({
                 if (label !== null) {
                   return (
                     <tr key={rowId(r)} className={styles.section}>
-                      <td colSpan={shown.length}>{label}</td>
+                      <td colSpan={span}>{label}</td>
                     </tr>
                   );
                 }
                 const colors = rowColors(colorRules, r);
                 return (
-                  <tr key={rowId(r)} style={cellStyle(colors.row, false)} data-color={colors.row}>
+                  <tr
+                    key={rowId(r)}
+                    style={cellStyle(colors.row, false)}
+                    data-color={colors.row}
+                    data-testid="print-row"
+                  >
+                    {expandable && (
+                      <td className={styles.expandCell}>
+                        <button
+                          type="button"
+                          className={styles.expand}
+                          aria-label="Open row details"
+                          title="Open row details"
+                          data-testid="share-open-row"
+                          onClick={(e) => setOpenRow({ row: r, opener: e.currentTarget })}
+                        >
+                          ↗
+                        </button>
+                      </td>
+                    )}
                     {shown.map((c) => {
                       const cell = colors.cells.get(c.key);
                       return (
@@ -192,7 +227,70 @@ export function PrintTable<R>({
             </tbody>
           </table>
         ))}
+      {openRow && (
+        <RowDetails
+          columns={shown}
+          row={openRow.row}
+          onClose={() => {
+            openRow.opener.focus();
+            setOpenRow(null);
+          }}
+        />
+      )}
     </PrintShell>
+  );
+}
+
+/** A row's fields, read-only (share links' live view). Escape or × closes. */
+function RowDetails<R>({
+  columns,
+  row,
+  onClose,
+}: {
+  columns: Column<R>[];
+  row: R;
+  onClose: () => void;
+}) {
+  const close = useRef<HTMLButtonElement>(null);
+  useEffect(() => close.current?.focus(), []);
+  const first = columns[0];
+  const title = first ? formatValue(first, first.getValue(row)) : "";
+  return (
+    <div
+      className={styles.detailsBackdrop}
+      onPointerDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title || "Row details"}
+        className={styles.details}
+        data-testid="share-row-details"
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.stopPropagation();
+            onClose();
+          }
+        }}
+      >
+        <div className={styles.detailsHead}>
+          <h2>{title || "Details"}</h2>
+          <button type="button" ref={close} onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+        <dl className={styles.detailsList}>
+          {columns.map((c) => (
+            <div key={c.key}>
+              <dt>{c.title}</dt>
+              <dd>{formatValue(c, c.getValue(row)) || "—"}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    </div>
   );
 }
 

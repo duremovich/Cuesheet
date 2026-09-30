@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import type { ImportMapping } from "../../shared/airtable-columns";
@@ -24,12 +24,22 @@ import type {
 import { sha256Hex } from "../auth/bytes";
 import { requireAuth } from "../auth/middleware";
 import { normalizeEmail } from "../auth/session";
+import { requireAuthOrShare, shareResourceGuard } from "../auth/share-auth";
 import { schema } from "../db/d1/client";
 import { RESERVED_KEYS } from "../do/ops-engine";
-import { SESSION_ID_HEADER, USER_ID_HEADER } from "../do/ShowDO";
+import {
+  INTERNAL_HEADER,
+  INTERNAL_MARKER,
+  NAME_HEADER,
+  ROLE_HEADER,
+  SESSION_ID_HEADER,
+  SHARE_SCOPE_HEADER,
+  USER_ID_HEADER,
+} from "../do/ShowDO";
 import { buildAirtableImport, type CsvFile } from "../import/airtable";
 import type { AppEnv } from "../types";
 import * as attachments from "./attachments";
+import { exportShow } from "./backup";
 import * as clone from "./clone";
 import * as script from "./script";
 import {
@@ -55,9 +65,13 @@ export type ShowEnv = AppEnv & {
   };
 };
 
-/** 404 unless the show exists and the signed-in user is a member of it. */
+/**
+ * 404 unless the show exists and the signed-in user is a member of it, or the request is
+ * a share link's viewer for this show (`c.var.share`; role viewer; routes/share.ts).
+ */
 export const requireMembership = createMiddleware<ShowEnv>(async (c, next) => {
   const showId = c.req.param("id") ?? "";
+  const share = c.var.share;
   const row = await c.var.db
     .select({
       id: schema.shows.id,
@@ -69,11 +83,31 @@ export const requireMembership = createMiddleware<ShowEnv>(async (c, next) => {
     .innerJoin(schema.memberships, eq(schema.memberships.showId, schema.shows.id))
     .where(and(eq(schema.shows.id, showId), eq(schema.memberships.userId, c.var.user.id)))
     .get();
+  if (row) {
+    // A member's own access wins over a share cookie they may also carry.
+    c.set("share", undefined);
+    c.set("show", { id: row.id, name: row.name, currentSession: row.currentSession });
+    c.set("role", row.role);
+    return next();
+  }
+  if (share && share.showId === showId) {
+    const show = await c.var.db
+      .select({
+        id: schema.shows.id,
+        name: schema.shows.name,
+        currentSession: schema.shows.currentSession,
+      })
+      .from(schema.shows)
+      .where(eq(schema.shows.id, showId))
+      .get();
+    if (show) {
+      c.set("show", show);
+      c.set("role", "viewer");
+      return next();
+    }
+  }
   // Same response for "no such show" and "not a member": don't leak show IDs.
-  if (!row) return c.json({ error: "Show not found" }, 404);
-  c.set("show", { id: row.id, name: row.name, currentSession: row.currentSession });
-  c.set("role", row.role);
-  await next();
+  return c.json({ error: "Show not found" }, 404);
 });
 
 const requireOwner = createMiddleware<ShowEnv>(async (c, next) => {
@@ -115,7 +149,8 @@ function isGrantable(role: unknown): role is Role {
 
 export const showRoutes = new Hono<ShowEnv>()
   .use("/shows", requireAuth)
-  .use("/shows/*", requireAuth)
+  // Share links' viewers get through on a few GET routes (auth/share-auth.ts).
+  .use("/shows/*", requireAuthOrShare)
   .get("/shows", async (c) => {
     const rows = await c.var.db
       .select({
@@ -208,16 +243,31 @@ export const showRoutes = new Hono<ShowEnv>()
     return c.json({ show: updated } satisfies UpdateShowResponse);
   })
   .get("/shows/:id/ws", requireSameOriginUpgrade, requireMembership, async (c) => {
-    const headers = new Headers(c.req.raw.headers);
-    headers.set(USER_ID_HEADER, c.var.user.id);
-    // So logout can close exactly this browser's sockets (ShowDO.disconnectSession).
-    headers.set(SESSION_ID_HEADER, await sha256Hex(c.var.sessionToken));
-    return showStub(c.env, c.var.show.id).fetch(new Request(c.req.raw, { headers }));
+    // A fresh set of headers: nothing the client sent reaches the DO (it could otherwise
+    // forge X-Cuesheet-* identity headers). The runtime completes the handshake with the
+    // client from the original request.
+    const headers = new Headers({ Upgrade: "websocket", [INTERNAL_HEADER]: INTERNAL_MARKER });
+    if (c.var.share) {
+      // A share link's viewer: its ops are filtered to the link's scope in the DO.
+      headers.set(SHARE_SCOPE_HEADER, JSON.stringify(c.var.share));
+    } else {
+      headers.set(USER_ID_HEADER, c.var.user.id);
+      headers.set(ROLE_HEADER, c.var.role);
+      headers.set(NAME_HEADER, encodeURIComponent(c.var.user.name));
+      // So logout can close exactly this browser's sockets (ShowDO.disconnectSession).
+      headers.set(SESSION_ID_HEADER, await sha256Hex(c.var.sessionToken));
+    }
+    return showStub(c.env, c.var.show.id).fetch(
+      new Request(`https://do/shows/${c.var.show.id}/ws`, { headers }),
+    );
   })
 
   // ---- show data ----
   .get("/shows/:id/snapshot", requireMembership, async (c) => {
-    const snap = await showStub(c.env, c.var.show.id).snapshotJson(c.var.user.id);
+    const stub = showStub(c.env, c.var.show.id);
+    const snap = c.var.share
+      ? await stub.snapshotForShare(c.var.share)
+      : await stub.snapshotJson(c.var.user.id);
     return c.body(snap, 200, { "Content-Type": "application/json" });
   })
   .post("/shows/:id/mutate", requireMembership, async (c) => {
@@ -347,14 +397,27 @@ export const showRoutes = new Hono<ShowEnv>()
   // ---- attachments (routes/attachments.ts) ----
   .post("/shows/:id/attachments/upload-url", requireMembership, attachments.uploadUrl)
   .put("/shows/:id/attachments/:aid", requireMembership, attachments.upload)
-  .get("/shows/:id/attachments/:aid", requireMembership, attachments.download)
-  .get("/shows/:id/attachments/:aid/thumb", requireMembership, attachments.thumbnail)
+  .get("/shows/:id/attachments/:aid", requireMembership, shareResourceGuard, attachments.download)
+  .get(
+    "/shows/:id/attachments/:aid/thumb",
+    requireMembership,
+    shareResourceGuard,
+    attachments.thumbnail,
+  )
   .get("/shows/:id/storage", requireMembership, attachments.storage)
 
   // ---- script (routes/script.ts) ----
   .post("/shows/:id/script/versions", requireMembership, script.createVersion)
-  .get("/shows/:id/script/versions/:vid/text", requireMembership, script.versionText)
+  .get(
+    "/shows/:id/script/versions/:vid/text",
+    requireMembership,
+    shareResourceGuard,
+    script.versionText,
+  )
   .post("/shows/:id/script/versions/:vid/reanchor", requireMembership, script.reanchorVersion)
+
+  // ---- backup (routes/backup.ts): the owner's JSON export of everything ----
+  .get("/shows/:id/export.json", requireMembership, requireOwner, exportShow)
 
   // ---- members ----
   .get("/shows/:id/members", requireMembership, async (c) => {
@@ -425,5 +488,63 @@ export const showRoutes = new Hono<ShowEnv>()
       .returning({ userId: schema.memberships.userId });
     if (removed.length === 0) return c.json({ error: "Not a member of this show" }, 404);
     await showStub(c.env, c.var.show.id).disconnectUser(userId);
+    return c.json({ ok: true });
+  })
+  // Hand the show to another member (owner only): they become the owner, you an editor.
+  .post("/shows/:id/transfer", requireMembership, requireOwner, async (c) => {
+    const body = await readJsonObject(c);
+    const userId = str(body?.userId);
+    if (!userId || userId === c.var.user.id) {
+      return c.json({ error: "Pick another member to make the owner" }, 400);
+    }
+    const target = await c.var.db
+      .select({ role: schema.memberships.role })
+      .from(schema.memberships)
+      .where(
+        and(eq(schema.memberships.showId, c.var.show.id), eq(schema.memberships.userId, userId)),
+      )
+      .get();
+    if (!target) return c.json({ error: "Not a member of this show" }, 404);
+    const showId = c.var.show.id;
+    const setRole = (uid: string, role: Role) =>
+      c.var.db
+        .update(schema.memberships)
+        .set({ role })
+        .where(and(eq(schema.memberships.showId, showId), eq(schema.memberships.userId, uid)));
+    await c.var.db.batch([
+      setRole(userId, "owner"),
+      setRole(c.var.user.id, "editor"),
+      // The old owner's open invites into this show end with their ownership.
+      c.var.db
+        .update(schema.invites)
+        .set({ expiresAt: Date.now() })
+        .where(
+          and(
+            eq(schema.invites.showId, showId),
+            eq(schema.invites.invitedBy, c.var.user.id),
+            isNull(schema.invites.acceptedAt),
+          ),
+        ),
+    ]);
+    const stub = showStub(c.env, showId);
+    await stub.notifyRole(userId, "owner");
+    await stub.notifyRole(c.var.user.id, "editor");
+    return c.json({ ok: true });
+  })
+  // Leave a show (anyone but the owner, who transfers ownership first).
+  .post("/shows/:id/leave", requireMembership, async (c) => {
+    if (c.var.share) return c.json({ error: "Not signed in" }, 401);
+    if (c.var.role === "owner") {
+      return c.json({ error: "Transfer ownership to someone else before leaving" }, 400);
+    }
+    await c.var.db
+      .delete(schema.memberships)
+      .where(
+        and(
+          eq(schema.memberships.showId, c.var.show.id),
+          eq(schema.memberships.userId, c.var.user.id),
+        ),
+      );
+    await showStub(c.env, c.var.show.id).disconnectUser(c.var.user.id);
     return c.json({ ok: true });
   });

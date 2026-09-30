@@ -18,6 +18,7 @@ import { TablePrintRoute } from "./features/print/TablePrintRoute";
 import { QuickAddPage } from "./features/quick/QuickAddPage";
 import { SceneGrid } from "./features/scenes/SceneGrid";
 import { ScriptPage } from "./features/script/ScriptPage";
+import { SharePage } from "./features/share/SharePage";
 import { ShotGrid } from "./features/shots/ShotGrid";
 import { SurfaceGrid } from "./features/surfaces/SurfaceGrid";
 import { TechPage } from "./features/tech/TechPage";
@@ -25,6 +26,7 @@ import { AuthProvider, RequireAuth } from "./lib/auth";
 import { devRoutes } from "./pages/dev/routes";
 import { InvitePage } from "./pages/InvitePage";
 import { LoginPage } from "./pages/LoginPage";
+import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { ShowPage } from "./pages/ShowPage";
 import { ShowsPage } from "./pages/ShowsPage";
 import "./styles/global.css";
@@ -43,6 +45,9 @@ const GRIDS = {
 const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
   { path: "/invite/:token", element: <InvitePage /> },
+  { path: "/reset/:token", element: <ResetPasswordPage /> },
+  // Read-only share links (R23): no sign-in.
+  { path: "/s/:token", element: <SharePage grids={GRIDS} /> },
   { path: "/", element: <RequireAuth>{(user) => <ShowsPage user={user} />}</RequireAuth> },
   {
     path: "/shows/:id",

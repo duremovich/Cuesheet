@@ -1,6 +1,13 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import type { CreateInviteResponse, ShowSummaryDTO, UserDTO } from "../../shared/api";
+import type { CreateResetLinkResponse } from "../../shared/account";
+import {
+  type CreateInviteResponse,
+  GRANTABLE_ROLES,
+  type Role,
+  type ShowSummaryDTO,
+  type UserDTO,
+} from "../../shared/api";
 import { AppHeader } from "../components/AppHeader";
 import { api } from "../lib/api";
 import { useApiErrorHandler } from "../lib/auth";
@@ -52,7 +59,8 @@ export function ShowsPage({ user }: { user: UserDTO }) {
         {shows?.some((s) => s.isTemplate) && (
           <TemplatesSection templates={shows.filter((s) => s.isTemplate)} />
         )}
-        {user.isAdmin && <InviteForm />}
+        {user.isAdmin && <InviteForm shows={(shows ?? []).filter((s) => !s.isTemplate)} />}
+        {user.isAdmin && <ResetLinkForm />}
       </main>
     </>
   );
@@ -175,7 +183,7 @@ function NewShowForm() {
   );
 }
 
-function InviteForm() {
+function InviteForm({ shows }: { shows: ShowSummaryDTO[] }) {
   const handleError = useApiErrorHandler();
   const [invite, setInvite] = useState<CreateInviteResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -183,11 +191,14 @@ function InviteForm() {
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const formEl = e.currentTarget;
-    const email = String(new FormData(formEl).get("email") ?? "");
+    const data = new FormData(formEl);
+    const email = String(data.get("email") ?? "");
+    const showId = String(data.get("show") ?? "");
+    const role = String(data.get("role") ?? "editor") as Role;
     setError(null);
     setInvite(null);
     try {
-      setInvite(await api.createInvite({ email }));
+      setInvite(await api.createInvite(showId ? { email, showId, role } : { email }));
       formEl.reset();
     } catch (err) {
       setError(handleError(err));
@@ -205,6 +216,27 @@ function InviteForm() {
         <label style={{ flex: 1 }}>
           <span>Email</span>
           <input name="email" type="email" required />
+        </label>
+        <label>
+          <span>Join show</span>
+          <select name="show" defaultValue="">
+            <option value="">No show</option>
+            {shows.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>As</span>
+          <select name="role" defaultValue="editor">
+            {GRANTABLE_ROLES.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </select>
         </label>
         <button type="submit">Create invite link</button>
       </form>
@@ -226,6 +258,59 @@ function InviteForm() {
               Copy link
             </button>
           </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** Admins: a one-time link that lets someone set a new password (R24). */
+function ResetLinkForm() {
+  const handleError = useApiErrorHandler();
+  const [reset, setReset] = useState<CreateResetLinkResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function onSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const formEl = e.currentTarget;
+    const email = String(new FormData(formEl).get("email") ?? "");
+    setError(null);
+    setReset(null);
+    try {
+      setReset(await api.createResetLink(email));
+      formEl.reset();
+    } catch (err) {
+      setError(handleError(err));
+    }
+  }
+
+  const link = reset ? `${window.location.origin}${reset.path}` : "";
+  return (
+    <section className={styles.card}>
+      <div className={styles.sectionHeader}>
+        <h2>Reset a password</h2>
+      </div>
+      <form className={styles.inlineForm} onSubmit={onSubmit} aria-label="Reset a password">
+        <label style={{ flex: 1 }}>
+          <span>Account to reset</span>
+          <input name="email" type="email" required />
+        </label>
+        <button type="submit">Create reset link</button>
+      </form>
+      {error && (
+        <p className="error" style={{ marginTop: 12 }}>
+          {error}
+        </p>
+      )}
+      {reset && (
+        <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+          <p className="muted" style={{ margin: 0 }}>
+            Send this one-time link to {reset.email}. It expires in 24 hours; using it signs them
+            out everywhere.
+          </p>
+          <code className={styles.inviteLink} data-testid="reset-link">
+            {link}
+          </code>
         </div>
       )}
     </section>
