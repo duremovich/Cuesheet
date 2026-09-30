@@ -24,7 +24,7 @@ new decision record. Build milestone by milestone; don't pull later-milestone fe
 | `pnpm build` / `pnpm preview` | Production build / serve the built Worker locally |
 | `pnpm check` | typecheck + lint + unit/worker tests. Run before every commit |
 | `pnpm e2e` | Playwright headless (builds and starts its own server on :4317) |
-| `pnpm test` | Vitest only (`--project unit` or `--project worker` to narrow) |
+| `pnpm test` | Vitest only (`--project unit`, `--project dom` or `--project worker` to narrow) |
 | `pnpm format` | Biome autofix (formatting + import order) |
 | `pnpm db:generate` | Drizzle SQL migrations for both D1 and the ShowDO |
 | `pnpm db:migrate:local` | Apply D1 migrations to `.wrangler/state` |
@@ -48,7 +48,12 @@ Before finishing any task: `pnpm check && pnpm e2e`.
 - `src/web/`: `main.tsx` (router), `pages/`, `components/`, `lib/` (api client, auth, theme,
   `useShowSocket`), `styles/` (`theme.css`, `global.css`). CSS modules per component.
 - `test/worker/`: Vitest tests running inside workerd. `e2e/`: Playwright.
-- Unit tests sit next to the code as `*.test.ts` and run in plain Node.
+- Unit tests sit next to the code as `*.test.ts` and run in plain Node. React component
+  tests are `*.test.tsx` and run in jsdom (the `dom` project; helpers in `src/web/test/dom.ts`,
+  no testing-library).
+- `src/web/pages/dev/`: developer-only pages (`/dev/grid`). Registered via `devRoutes` in
+  `main.tsx`; present in `pnpm dev` and in builds with `VITE_DEV_PAGES=1` (the e2e build sets
+  it), and compiled out of production builds along with the example data they embed.
 
 ## Conventions
 
@@ -196,6 +201,15 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   with `"rules": { "preset": "recommended" }` (Biome 2.5's replacement for the deprecated
   `recommended: true`). Don't disable rules globally; if you run `biome migrate`, check it
   didn't turn the linter's rules off.
+
+## Grid
+
+Every table UI uses the generic `DataGrid` in `src/web/components/grid/`. Read its
+[README](src/web/components/grid/README.md) before wiring a table: props, value shapes per
+column type, ordering rules (show order vs live sort with the focused row held until blur),
+the keyboard map and an integration example. The grid never fetches or persists; it calls
+`onEdit` / `onInsert` / `onMove` / `onDelete` and renders what it's given. `RecordPicker`
+(find-or-create, R5a) is exported for reuse outside the grid. Try it at `/dev/grid`.
 
 ## Theme and colors
 

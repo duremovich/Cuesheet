@@ -46,6 +46,16 @@ example base: 17 inferred, 28 left Unassigned). See CLAUDE.md, "Airtable import"
 - **Sessions.** Do you label notes by rehearsal ("Tech 3", "Preview 1") today, or is
   date enough?
 
+## Grid
+
+- **Enter in a picker.** In a select or link cell, Enter picks and stays on the cell (Tab
+  picks and moves right). Text cells move down on Enter. Should pickers move down too?
+- **Row deletes.** The grid's undo covers cell edits only; deleting rows isn't undoable,
+  so deleting more than one row asks for confirmation. Should deletes become undoable
+  (soft delete in the data layer), which would let us drop the confirmation?
+- **Pasting into link cells.** Paste fills text, number and select cells only. Should it
+  also resolve names in link cells (find, or create when missing)?
+
 ## Infrastructure
 
 - **Sign-in for SM/director.** Do they need accounts, or is a read-only link enough?

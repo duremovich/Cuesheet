@@ -28,7 +28,8 @@ export default defineConfig({
   webServer: {
     command: [
       `rm -rf ${STATE_DIR}`,
-      "pnpm build",
+      // VITE_DEV_PAGES=1 includes the /dev/* pages (e2e/grid.spec.ts) in this build only.
+      "VITE_DEV_PAGES=1 pnpm build",
       `pnpm exec wrangler d1 migrations apply DB --local --persist-to ${STATE_DIR}`,
       `CUESHEET_PERSIST=${STATE_DIR} pnpm exec vite preview --port ${PORT} --strictPort`,
     ].join(" && "),

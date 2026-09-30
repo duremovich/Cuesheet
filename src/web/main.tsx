@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, Link, RouterProvider } from "react-router";
 import { AuthProvider, RequireAuth } from "./lib/auth";
+import { devRoutes } from "./pages/dev/routes";
 import { InvitePage } from "./pages/InvitePage";
 import { LoginPage } from "./pages/LoginPage";
 import { ShowPage } from "./pages/ShowPage";
@@ -13,6 +14,7 @@ const router = createBrowserRouter([
   { path: "/invite/:token", element: <InvitePage /> },
   { path: "/", element: <RequireAuth>{(user) => <ShowsPage user={user} />}</RequireAuth> },
   { path: "/shows/:id", element: <RequireAuth>{() => <ShowPage />}</RequireAuth> },
+  ...devRoutes,
   {
     path: "*",
     element: (
