@@ -11,6 +11,11 @@ export const meta = sqliteTable("meta", {
   showId: text("show_id").notNull(),
   name: text("name").notNull(),
   createdAt: integer("created_at").notNull(),
+  /**
+   * Display unit for measurement fields when neither the view nor the user picks one
+   * (a Unit from src/shared/units.ts; null = meters). Written by the `meta` op.
+   */
+  default_unit: text("default_unit"),
 });
 
 /** Columns on every core table. `custom` is a JSON object of custom field values. */
@@ -115,6 +120,32 @@ export const notes = sqliteTable(
   (t) => [index("notes_created_idx").on(t.created_at)],
 );
 
+/**
+ * Projection surfaces, LED walls and regions of them (data-model.md §Surface). Lengths are
+ * meters (measurement fields); PPI, pixel pitch, aspect and throw width are computed on the
+ * client (src/web/features/surfaces/formulas.ts). `images` (attachments) arrive with M3a.
+ */
+export const surfaces = sqliteTable(
+  "surfaces",
+  {
+    ...common(),
+    order_key: text("order_key").notNull(),
+    name: text("name"),
+    /** Millumin channel/layer, "CH02.1". */
+    channel: text("channel"),
+    /** The surface this is a region of (no cycles; the op engine checks). */
+    parent_id: text("parent_id"),
+    width: real("width"),
+    height: real("height"),
+    pixel_width: real("pixel_width"),
+    pixel_height: real("pixel_height"),
+    throw_distance: real("throw_distance"),
+    lens_ratio: real("lens_ratio"),
+    description: text("description"),
+  },
+  (t) => [index("surfaces_order_idx").on(t.order_key), index("surfaces_parent_idx").on(t.parent_id)],
+);
+
 // Join tables for many-to-many links. `position` keeps chip order stable.
 export const cue_content = sqliteTable(
   "cue_content",
@@ -178,6 +209,40 @@ export const note_assignees = sqliteTable(
   (t) => [
     primaryKey({ columns: [t.note_id, t.person_id] }),
     index("note_assignees_person_idx").on(t.person_id),
+  ],
+);
+
+export const scene_surfaces = sqliteTable(
+  "scene_surfaces",
+  {
+    scene_id: text("scene_id")
+      .notNull()
+      .references(() => scenes.id, { onDelete: "cascade" }),
+    surface_id: text("surface_id")
+      .notNull()
+      .references(() => surfaces.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.scene_id, t.surface_id] }),
+    index("scene_surfaces_surface_idx").on(t.surface_id),
+  ],
+);
+
+export const content_surfaces = sqliteTable(
+  "content_surfaces",
+  {
+    content_id: text("content_id")
+      .notNull()
+      .references(() => content.id, { onDelete: "cascade" }),
+    surface_id: text("surface_id")
+      .notNull()
+      .references(() => surfaces.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.content_id, t.surface_id] }),
+    index("content_surfaces_surface_idx").on(t.surface_id),
   ],
 );
 
