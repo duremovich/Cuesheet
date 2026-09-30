@@ -249,7 +249,8 @@ export class ShowStoreImpl implements ShowStore {
         this.refetchAgain = false;
         const snap = await this.transport.snapshot();
         if (this.disposed) return;
-        this.confirmed = fromSnapshot(snap);
+        // Structural sharing: rows that didn't change keep their identity (no re-render).
+        this.confirmed = fromSnapshot(snap, this.confirmed);
         this.loadStatus = "ready";
         this.error = null;
       } while (this.refetchAgain);

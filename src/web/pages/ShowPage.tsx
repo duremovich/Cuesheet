@@ -1,14 +1,13 @@
+// /shows/:id/*: loads the show (name, your role), then the show store and the workspace
+// with one tab per core table (routes in main.tsx).
 import { useEffect, useState } from "react";
 import { useParams } from "react-router";
 import type { ShowResponse } from "../../shared/api";
-import { AddCueForm } from "../components/AddCueForm";
 import { AppHeader } from "../components/AppHeader";
-import { CueListPlain } from "../components/CueListPlain";
-import { ImportAirtableButton } from "../components/ImportAirtableButton";
-import { PresenceIndicator } from "../components/PresenceIndicator";
+import { ShowWorkspace } from "../features/show/ShowWorkspace";
 import { ApiError, api } from "../lib/api";
 import { useApiErrorHandler, useAuth } from "../lib/auth";
-import { ShowStoreProvider, useShowSocketState } from "../lib/show-store";
+import { ShowStoreProvider } from "../lib/show-store";
 import styles from "./pages.module.css";
 
 export function ShowPage() {
@@ -55,30 +54,7 @@ function LoadedShow({ data }: { data: ShowResponse }) {
   const { user } = useAuth();
   return (
     <ShowStoreProvider showId={data.show.showId} {...(user ? { userId: user.id } : {})}>
-      <ShowContent data={data} />
+      <ShowWorkspace data={data} />
     </ShowStoreProvider>
-  );
-}
-
-function ShowContent({ data }: { data: ShowResponse }) {
-  const socket = useShowSocketState();
-  const canEdit = data.role === "owner" || data.role === "editor";
-  return (
-    <>
-      <AppHeader>
-        <h1 className={styles.showTitle} data-testid="show-name">
-          {data.show.name}
-        </h1>
-        <PresenceIndicator {...socket} />
-      </AppHeader>
-      <main className={styles.showPage}>
-        <div className={styles.showToolbar}>
-          <h2>Cue list</h2>
-          {canEdit && <ImportAirtableButton showId={data.show.showId} />}
-        </div>
-        <CueListPlain />
-        {canEdit && <AddCueForm />}
-      </main>
-    </>
   );
 }

@@ -26,20 +26,34 @@ export function applyTheme(theme: Theme): void {
   document.documentElement.dataset.theme = theme;
 }
 
+// Every useTheme() shares one value (the header toggle and the ⌘K "Toggle theme" command).
+const listeners = new Set<(t: Theme) => void>();
+let current: Theme | null = null;
+
+/** Persist and apply a theme choice; every mounted useTheme() follows. */
+export function setTheme(t: Theme): void {
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, t);
+  } catch {
+    // Storage blocked: the choice lasts for this page only.
+  }
+  current = t;
+  applyTheme(t);
+  for (const l of [...listeners]) l(t);
+}
+
 /** Current theme plus a setter that persists the user's choice. */
 export function useTheme(): [Theme, (t: Theme) => void] {
-  const [theme, setThemeState] = useState<Theme>(() => resolveTheme(readStored()));
+  const [theme, setThemeState] = useState<Theme>(() => current ?? resolveTheme(readStored()));
 
+  useEffect(() => {
+    listeners.add(setThemeState);
+    return () => {
+      listeners.delete(setThemeState);
+    };
+  }, []);
   useEffect(() => applyTheme(theme), [theme]);
 
-  const setTheme = useCallback((t: Theme) => {
-    try {
-      localStorage.setItem(THEME_STORAGE_KEY, t);
-    } catch {
-      // Storage blocked: the choice lasts for this page only.
-    }
-    setThemeState(t);
-  }, []);
-
-  return [theme, setTheme];
+  const set = useCallback((t: Theme) => setTheme(t), []);
+  return [theme, set];
 }

@@ -62,7 +62,7 @@ export const inviteRoutes = new Hono<AppEnv>()
     if (!invite) return c.json({ error: "This invite link is invalid or has been used" }, 404);
     return c.json({ email: invite.email } satisfies InviteInfoResponse);
   })
-  .post("/invites/:tokeREDACTEDccept", async (c) => {
+  .post("/invites/:token/accept", async (c) => {
     const body = await readJsonObject(c);
     const name = str(body?.name).trim();
     const password = str(body?.password);

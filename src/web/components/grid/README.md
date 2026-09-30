@@ -196,6 +196,10 @@ layer; keep the array identity stable (`useMemo`).
 
 ## Wiring a real table
 
+The real tables are wired in `src/web/features/` (see "Table views" in CLAUDE.md):
+`features/cues/CueGrid.tsx` for the cue list, `features/shared/TableGrid.tsx` for the
+others. A sketch:
+
 ```tsx
 const columns = useMemo<Column<Cue>[]>(() => [
   { key: "number", title: "Cue", type: "text", width: 80, frozen: true, getValue: (c) => c.number },

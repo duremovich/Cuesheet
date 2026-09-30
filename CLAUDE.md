@@ -1,7 +1,9 @@
 # Notes for Claude
 
-The project has left the spec-only phase: M0 (the application scaffold) and M1a (the show
-data layer: core tables, ops, sync, history, members, Airtable import) are built. The stack
+The project has left the spec-only phase: M0 (the application scaffold), M1a (the show
+data layer: core tables, ops, sync, history, members, Airtable import), M1b (the generic
+`DataGrid`) and M1c (the show workspace: a grid tab per core table on the live store, ⌘K)
+are built. The stack
 is decided in `docs/decisions/0005-cloudflare-platform.md`; don't relitigate it without a
 new decision record. Build milestone by milestone; don't pull later-milestone features
 (e.g. the cue grid) into an earlier one.
@@ -45,8 +47,9 @@ Before finishing any task: `pnpm check && pnpm e2e`.
 - `src/worker/`: `index.ts` (entry; exports DO classes), `app.ts` (Hono app under `/api`),
   `routes/`, `auth/`, `do/ShowDO.ts`, `db/d1/` (D1 schema + migrations), `db/do/` (ShowDO
   schema + migrations).
-- `src/web/`: `main.tsx` (router), `pages/`, `components/`, `lib/` (api client, auth, theme,
-  `useShowSocket`), `styles/` (`theme.css`, `global.css`). CSS modules per component.
+- `src/web/`: `main.tsx` (router), `pages/`, `features/` (see "Table views"), `components/`,
+  `lib/` (api client, auth, theme, `useShowSocket`, show store + `show-selectors.ts`),
+  `styles/` (`theme.css`, `global.css`). CSS modules per component.
 - `test/worker/`: Vitest tests running inside workerd. `e2e/`: Playwright.
 - Unit tests sit next to the code as `*.test.ts` and run in plain Node. React component
   tests are `*.test.tsx` and run in jsdom (the `dom` project; helpers in `src/web/test/dom.ts`,
@@ -150,10 +153,13 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   `noteAssignees`: from-id → target ids), `fieldOptions` (`"cues.status"` → options).
   `mutate` is optimistic (applies at once, including order keys and delete cascades, via
   `show-state.ts`), sends one batch at a time, and on error rolls back and rethrows (an
-  `ApiError` with `opIndex`). Untouched rows keep object identity across updates.
-  **Deferred:** a snapshot refetch (version gap, reconnect, import) replaces every row
-  object, so every row re-renders; the grid (M1c) may need structural sharing there
-  (reuse the old object when a row is unchanged).
+  `ApiError` with `opIndex`). Untouched rows keep object identity across updates,
+  and a snapshot refetch (version gap, reconnect, import) is structurally shared
+  (`fromSnapshot(snap, prev)`: deep-equal rows, unchanged tables, order lists and join
+  lists keep their identity), so only changed rows re-render. `show-selectors.ts`:
+  `groupByScene` (Unassigned first; the `UNASSIGNED` sentinel group id ↔ `scene_id = null`
+  via `sceneIdForGroup`), `reverseJoin`, and `ViewCache` (one derived view object per row,
+  rebuilt only when its dependency list changes).
 - **Adding a field to a core table.** (1) Column in `src/worker/db/do/schema.ts` +
   `pnpm db:generate` (nullable, or with a default, since existing shows have rows). (2) The
   field spec in `FIELDS` and the row interface in `src/shared/tables.ts` (type drives
@@ -210,6 +216,57 @@ column type, ordering rules (show order vs live sort with the focused row held u
 the keyboard map and an integration example. The grid never fetches or persists; it calls
 `onEdit` / `onInsert` / `onMove` / `onDelete` and renders what it's given. `RecordPicker`
 (find-or-create, R5a) is exported for reuse outside the grid. Try it at `/dev/grid`.
+
+## Table views (`src/web/features/`)
+
+The show page (`/shows/:id`) is a workspace (`features/show/ShowWorkspace.tsx`): header
+(title, presence, theme), tabs (`features/show/tabs.ts`: Cues, Scenes, Content, Notes,
+People → `/shows/:id/<tab>`; `/shows/:id` and unknown tabs redirect to `cues`), Show
+settings (import, members), the ⌘K palette (`features/search/`) and toasts. Tabs read
+`useWorkspace()` (role, `canEdit`/`canComment`, member names, `toast`/`reportError`, the
+cue live sort, `sortCuesNow`, `openImport`).
+
+- **One folder per table**: `features/<table>/columns.ts` (the `Column<View>[]` in display
+  order, plus `<table>EditOps(view, key, value) → Op[]`) and the tab component. A tab
+  builds **view objects** (the row plus its links resolved to `PickerItem`s) with a
+  `ViewCache`, so a view keeps its identity until its inputs change (the grid memoizes rows
+  on the object). Scenes, Content, Notes and People use the generic
+  `features/shared/TableGrid.tsx` (config: columns, rows or groups, `editOps`,
+  `createOps`, `moveOps`, `deleteOps`, panel); the cue list (`features/cues/CueGrid.tsx`)
+  has its own component for number hints and the sort menu. Read-only: `editable: false`
+  columns (or a per-row function, as notes do for commenters) and no
+  `createOps`/`moveOps`/`deleteOps` (the grid then offers no insert/drag/delete).
+- **Grid callbacks → ops** (`features/shared/ops.ts`): `onEdit` → the table's edit ops
+  (text `""` → `null`; link lists via `linkDiffOps`: minimal link/unlink with positions).
+  `onInsert({afterRowId, beforeRowId, groupId})` → one `create` with
+  `placementFor(pos, groupOrder(groups))`: the display neighbour as `after`/`before` (under
+  a live sort this places the row in show order next to the row it was inserted beside);
+  with only a group, after that group's last row (empty group: after the nearest earlier
+  group's last row). `scene_id` comes from the group id (`sceneIdForGroup`), else from the
+  neighbour. `onMove` → `move` (+ an `update` of `scene_id` when the group changed), one
+  batch. Inserts return the new id synchronously (the store applies optimistically);
+  their errors go to `reportError` (a toast). `onEdit` returns the mutate promise so the
+  grid's `onError` sees rejections. "Sort now" (`features/cues/sortNow.ts`) moves every
+  out-of-place cue to the end in target order (short keys; a section stays above the cue
+  that followed it; unnumbered cues go last, after a confirm).
+- **Cue numbers** (`features/cues/cueNumbers.ts`): ghost = midpoint of the numbered display
+  neighbours (`suggestCueNumber`); duplicates (14.2 = 14.20) and unusual numbers warn.
+  The hints map is value-compared so `cellDecoration` keeps its identity.
+- **Pickers** (`features/shared/pickers.ts`): searches read `store.getState()` at call time
+  (so columns don't depend on data); `createContent` names new content with the
+  `SSS-NNN-` prefix (`features/content/contentName.ts`); `createPerson`.
+- **URL state**: the active row is `?<param>=<id>` (`cue`, `scene`, `content`, `note`,
+  `person`; `tabs.ts`), written with `replace`. On load, or on a navigation carrying router
+  state `{ focus: id }` (⌘K), the tab calls `grid.focusRow(id)` once the row exists
+  (`features/shared/useTableChrome.ts`). Per-browser prefs (`features/shared/prefs.ts`,
+  localStorage, until saved views): column widths per show+table, collapsed groups per
+  user+show+table, the cue live sort per show.
+- **Row panel** (`RowPanel`): Space / expand icon; read-only; follows the active row;
+  Escape or × closes it and refocuses the row. Grid undo covers cell edits only; inserts,
+  moves, deletes and Sort now aren't undoable yet.
+- **E2E**: set up data through the API (`apiLogin`, `apiCreateShow`, `importExamples` in
+  `e2e/helpers.ts`); the grid virtualizes rows, so open a far-down row with `?cue=<id>`
+  instead of expecting it in the DOM.
 
 ## Theme and colors
 
