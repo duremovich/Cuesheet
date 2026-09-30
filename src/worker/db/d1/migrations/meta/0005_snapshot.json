@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "d51871b2-e8e7-45d2-b3df-8c3ecca4abd0",
-  "prevId": "2f8266f1-d320-4409-a4c0-aa6fd0a7b053",
+  "id": "98b54894-b9b2-4188-a255-326aa61970e2",
+  "prevId": "afc69872-1948-4293-8555-770ab5f4a2e8",
   "tables": {
     "invites": {
       "name": "invites",
@@ -473,6 +473,14 @@
           "notNull": true,
           "autoincrement": false,
           "default": 0
+        },
+        "is_template": {
+          "name": "is_template",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
         }
       },
       "indexes": {},

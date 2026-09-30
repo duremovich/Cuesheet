@@ -22,7 +22,11 @@ import { jsonEqual } from "../../lib/show-state";
  * isn't shown (e.g. a cue's open-note count). `valueType: "date"` marks a readonly
  * timestamp (ms) so it gets before/after.
  */
-export type FieldDef<V> = Column<V> & { valueType?: "date" };
+export type FieldDef<V> = Column<V> & {
+  valueType?: "date";
+  /** A text field the tab groups by itself (a view may group by it: shots' `group`). */
+  groupable?: boolean;
+};
 
 // ---- Operators per field type ----
 
@@ -190,6 +194,8 @@ export function dayStart(value: unknown): number {
 
 function toTime(v: unknown): number {
   if (typeof v === "number") return v;
+  // A date custom field (`YYYY-MM-DD`): local midnight, like the filter's day.
+  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v.trim())) return dayStart(v);
   if (typeof v === "string" && v.trim()) return Date.parse(v);
   return Number.NaN;
 }

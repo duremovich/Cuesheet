@@ -36,26 +36,115 @@ export function ShowsPage({ user }: { user: UserDTO }) {
           <NewShowForm />
           {error && <p className="error">{error}</p>}
           {shows === null && !error && <p className="muted">Loading…</p>}
-          {shows?.length === 0 && <p className="muted">No shows yet. Create one above.</p>}
-          {shows && shows.length > 0 && (
+          {shows?.filter((s) => !s.isTemplate).length === 0 && (
+            <p className="muted">No shows yet. Create one above.</p>
+          )}
+          {shows?.some((s) => !s.isTemplate) && (
             <ul className={styles.showList} data-testid="show-list" style={{ marginTop: 16 }}>
-              {shows.map((s) => (
-                <li key={s.id}>
-                  <Link to={`/shows/${s.id}`}>
-                    <span className={styles.showListName} title={s.name}>
-                      {s.name}
-                    </span>
-                    <span className={`muted ${styles.showListRole}`}>{s.role}</span>
-                  </Link>
-                </li>
-              ))}
+              {shows
+                .filter((s) => !s.isTemplate)
+                .map((s) => (
+                  <li key={s.id}>
+                    <Link to={`/shows/${s.id}`}>
+                      <span className={styles.showListName} title={s.name}>
+                        {s.name}
+                      </span>
+                      <span className={`muted ${styles.showListRole}`}>{s.role}</span>
+                    </Link>
+                  </li>
+                ))}
             </ul>
           )}
         </section>
-        {user.isAdmin && <InviteForm shows={shows ?? []} />}
+        {shows?.some((s) => s.isTemplate) && (
+          <TemplatesSection templates={shows.filter((s) => s.isTemplate)} />
+        )}
+        {user.isAdmin && <InviteForm shows={(shows ?? []).filter((s) => !s.isTemplate)} />}
         {user.isAdmin && <ResetLinkForm />}
       </main>
     </>
+  );
+}
+
+/** Templates (R27): listed apart from shows; "New from template" copies one's structure. */
+function TemplatesSection({ templates }: { templates: ShowSummaryDTO[] }) {
+  const handleError = useApiErrorHandler();
+  const navigate = useNavigate();
+  const usable = templates.filter((t) => t.role === "owner" || t.role === "editor");
+  const [templateId, setTemplateId] = useState(usable[0]?.id ?? "");
+  const [includeScenes, setIncludeScenes] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function onSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const name = String(new FormData(e.currentTarget).get("name") ?? "").trim();
+    if (!name || !templateId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const { show } = await api.cloneShow(templateId, { name, includeScenes });
+      navigate(`/shows/${show.id}`);
+    } catch (err) {
+      setError(handleError(err));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className={styles.card} data-testid="templates">
+      <div className={styles.sectionHeader}>
+        <h2>Templates</h2>
+      </div>
+      <ul className={styles.showList} data-testid="template-list">
+        {templates.map((s) => (
+          <li key={s.id}>
+            <Link to={`/shows/${s.id}`}>
+              <span className={styles.showListName} title={s.name}>
+                {s.name}
+              </span>
+              <span className={`muted ${styles.showListRole}`}>template</span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+      {usable.length > 0 && (
+        <form
+          className={styles.inlineForm}
+          onSubmit={onSubmit}
+          aria-label="New from template"
+          style={{ marginTop: 16 }}
+        >
+          <label>
+            <span>Template</span>
+            <select value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
+              {usable.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label style={{ flex: 1 }}>
+            <span>Name of the copy</span>
+            <input name="name" type="text" required maxLength={200} />
+          </label>
+          <label>
+            <span>Scenes</span>
+            <input
+              type="checkbox"
+              checked={includeScenes}
+              aria-label="Include scenes"
+              onChange={(e) => setIncludeScenes(e.target.checked)}
+            />
+          </label>
+          <button type="submit" className="primary" disabled={busy}>
+            New from template
+          </button>
+          {error && <p className="error">{error}</p>}
+        </form>
+      )}
+    </section>
   );
 }
 

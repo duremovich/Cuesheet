@@ -2,6 +2,19 @@
 // docs/decisions/0006-mutation-ops-and-sync.md). Runs synchronously inside
 // `ctx.storage.transactionSync`, so any thrown OpError rolls the whole batch back.
 import type { Role } from "../../shared/api";
+import {
+  CUSTOM_FIELD_CORE_TABLES,
+  type CustomFieldDef,
+  checkCustomValue,
+  checkFieldOptions,
+  customTableId,
+  customTableRef,
+  isCustomFieldType,
+  isCustomKey,
+  isFieldTable,
+  isStoredType,
+  refitValue,
+} from "../../shared/custom-fields";
 import { isValidId, newId } from "../../shared/ids";
 import type {
   AnyOp,
@@ -25,22 +38,21 @@ import {
   SCRIPT_SOURCES,
 } from "../../shared/script";
 import {
-  ATTACHMENT_FIELDS,
   DATA_TABLES,
-  type DataTableName,
   FIELDS,
   type FieldOptions,
   type FieldSpec,
   fieldSpec,
   isAttachmentField,
-  isDataTable,
   isOrderedTable,
   isTableName,
+  isViewTable,
   LINKS,
   type LinkSpec,
   linkSpec,
   TABLE_NAMES,
   type TableName,
+  type ViewTable,
 } from "../../shared/tables";
 import { isPixelSize, isUnit, UNITS } from "../../shared/units";
 import {
@@ -49,6 +61,7 @@ import {
   MAX_PERSONAL_VIEWS,
   sanitizeViewConfig,
   viewConfigError,
+  viewFieldsFor,
 } from "../../shared/views";
 
 export interface MutationContext {
@@ -90,6 +103,10 @@ export interface BatchResult {
 }
 
 const MAX_TEXT = 100_000;
+/** Custom values without a field definition: at most this much JSON per row. */
+export const MAX_FREE_FORM_BYTES = 16 * 1024;
+/** What history records instead of a sensitive custom field's value. */
+export const HIDDEN_VALUE = "(hidden)";
 /** Largest a row may be, as UTF-8 JSON. */
 export const MAX_ROW_BYTES = 512 * 1024;
 const DONE_STATUS = "Done";
@@ -193,6 +210,8 @@ export class Batch {
   /** Attachments this batch deleted (directly or by cascade): their files wait for purge. */
   filesDeleted = 0;
   private options: Map<string, Set<string>> | null = null;
+  /** Custom field definitions by field table (`cues`, `custom:<id>`); reset on writes. */
+  private fieldDefs: Map<string, CustomFieldDef[]> | null = null;
   private opIndex = 0;
   private readonly now: number;
 
@@ -276,6 +295,9 @@ export class Batch {
   }
 
   private apply(op: AnyOp): void {
+    if (op.op !== "meta" && (op.table === "custom_fields" || op.table === "custom_tables")) {
+      this.fieldDefs = null;
+    }
     switch (op.op) {
       case "meta":
         this.setMeta(op.fields as Record<string, unknown>);
@@ -478,9 +500,16 @@ export class Batch {
   /** Extra checks for `views` fields (beyond their FieldSpec type). */
   private validateViewField(field: string, value: unknown): void {
     switch (field) {
-      case "table":
-        if (!isDataTable(value)) this.fail(`views.table must be one of ${DATA_TABLES.join(", ")}`);
+      case "table": {
+        if (!isViewTable(value)) {
+          this.fail(`views.table must be one of ${DATA_TABLES.join(", ")} or custom:<id>`);
+        }
+        const custom = customTableId(value);
+        if (custom && !this.getRow("custom_tables", custom)) {
+          this.fail(`views.table: custom table ${custom} not found`);
+        }
         break;
+      }
       case "name":
         if (typeof value === "string" && value.length > 100) this.fail("views.name is too long");
         break;
@@ -500,8 +529,8 @@ export class Batch {
   }
 
   /** The config rebuilt from known keys, or a 400 naming what's wrong (`sanitizeViewConfig`). */
-  private sanitizeConfig(table: DataTableName, value: unknown): unknown {
-    const r = sanitizeViewConfig(table, value);
+  private sanitizeConfig(table: ViewTable, value: unknown): unknown {
+    const r = sanitizeViewConfig(table, value, viewFieldsFor(table, this.fieldsOf(table)));
     if ("error" in r) this.fail(`views.${r.error}`);
     return r.config;
   }
@@ -570,6 +599,20 @@ export class Batch {
   // ---- history ----
 
   private log(table: TableName, recordId: string, field: string, oldV: unknown, newV: unknown) {
+    // Sensitive custom fields (passwords…) never reach the history.
+    if (field.startsWith("custom.")) {
+      const def = this.fieldFor(table, recordId, field.slice(7));
+      if (def?.options.sensitive) {
+        oldV = oldV === undefined ? undefined : HIDDEN_VALUE;
+        newV = newV === undefined ? undefined : HIDDEN_VALUE;
+      } else if (oldV !== undefined && this.wasHidden(table, recordId, field)) {
+        // Written while the field was sensitive: stays hidden after the flag is removed.
+        oldV = HIDDEN_VALUE;
+      }
+    } else if (field === "*") {
+      oldV = this.redactRow(table, oldV, recordId);
+      newV = this.redactRow(table, newV, recordId);
+    }
     this.sql.exec(
       'INSERT INTO changes (ts, user_id, "table", record_id, field, old, new, client_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       this.now,
@@ -647,6 +690,14 @@ export class Batch {
         row[name] = this.validate(table, name, spec, value, this.allowAuto(table));
       }
     }
+    if (table === "custom_rows" && typeof row.table_id !== "string") {
+      this.fail("custom_rows.table_id is required");
+    }
+    if (table === "shots" && typeof row.shot_list_id !== "string") {
+      this.fail("shots.shot_list_id is required");
+    }
+    if (table === "custom_fields") this.prepareCustomField(id, row, null);
+    row.custom = this.checkCustomValues(table, row, row.custom as Record<string, unknown>);
     if (table === "attachments") {
       if (restoring) this.sql.exec("DELETE FROM pending_r2_deletes WHERE attachment_id = ?", id);
       this.prepareAttachment(row);
@@ -657,7 +708,7 @@ export class Batch {
     if (table === "cue_anchors") this.prepareAnchor(row, true);
     if (table === "surfaces") this.checkParent(id, row.parent_id);
     if (table === "views") {
-      if (!isDataTable(row.table)) this.fail("views.table is required");
+      if (!isViewTable(row.table)) this.fail("views.table is required");
       row.config =
         "config" in fields
           ? this.sanitizeConfig(row.table, row.config)
@@ -685,6 +736,7 @@ export class Batch {
       ...cols.map((c) => encodeValue(c === "custom" ? undefined : fieldSpec(table, c), row[c])),
     );
     this.log(table, id, "*", undefined, row);
+    this.checkFreeFormRow(table, row);
     const { id: _id, ...rest } = row;
     this.resolved.push({
       op: "create",
@@ -699,6 +751,12 @@ export class Batch {
     }
     if (table === "content_versions") this.afterVersionWrite(id);
     if (table === "cue_anchors") this.syncCuePage(row);
+    if (table === "custom_fields") {
+      // A field defined over a key rows already use (free-form values): values that don't
+      // fit the field are cleared.
+      this.fieldDefs = null;
+      this.afterCustomFieldUpdate(null, this.mustGet("custom_fields", id));
+    }
   }
 
   /**
@@ -860,7 +918,11 @@ export class Batch {
     if (
       typeof table !== "string" ||
       typeof field !== "string" ||
-      !isAttachmentField(table, field)
+      typeof record_id !== "string" ||
+      !(
+        isAttachmentField(table, field) ||
+        isCustomAttachmentField(this.sql, table, record_id, field)
+      )
     ) {
       this.fail(`${String(table)}.${String(field)} is not an attachment field`);
     }
@@ -997,16 +1059,25 @@ export class Batch {
     this.resolved.push({ op: kind, table, id, fields: changed });
   }
 
-  private update(table: TableName, id: string, fields: FieldValues) {
+  private update(table: TableName, id: string, requested: FieldValues) {
     const before = this.mustGet(table, id);
     this.noteViewOwner(table, id, before);
     this.checkRole(table, before);
+    let fields = requested;
+    // A select field's renamed choices: `renames: [{from, to}]` rewrites the stored values
+    // (and views' filters and color rules) in the same batch, before the new choices apply.
+    if (table === "custom_fields" && "renames" in fields) {
+      const { renames, ...rest } = fields;
+      fields = rest;
+      this.renameChoices(before, renames);
+    }
     const changes: WireRow = {};
     for (const [name, value] of Object.entries(fields)) {
       if (name === "custom") {
         const patch = this.validateCustom(value);
+        const checked = this.checkCustomValues(table, before, patch);
         const merged = { ...parseJson<Record<string, unknown>>(before.custom, {}) };
-        for (const [k, v] of Object.entries(patch)) {
+        for (const [k, v] of Object.entries(checked)) {
           if (v === null) delete merged[k];
           else merged[k] = v;
         }
@@ -1035,7 +1106,12 @@ export class Batch {
       for (const k of ["block", "offset", "length", "page"]) changes[k] = merged[k];
     }
     if (table === "views" && "config" in changes) {
-      changes.config = this.sanitizeConfig(before.table as DataTableName, changes.config);
+      changes.config = this.sanitizeConfig(before.table as ViewTable, changes.config);
+    }
+    if (table === "custom_fields") {
+      const merged = { ...decodeRow(table, before), ...changes };
+      this.prepareCustomField(id, merged, before);
+      if ("options" in changes) changes.options = merged.options;
     }
     if (table === "surfaces" && "parent_id" in changes) this.checkParent(id, changes.parent_id);
     // Un-currenting the current version hands "current" to the newest other one.
@@ -1045,6 +1121,11 @@ export class Batch {
         : undefined;
     if (successor === null) this.fail("The only version of a content item stays current");
     this.write(table, id, before, changes);
+    if (table === "custom_fields") {
+      this.fieldDefs = null;
+      this.afterCustomFieldUpdate(before, this.mustGet("custom_fields", id));
+    }
+    if ("custom" in changes) this.checkFreeForm(table, id);
     if (table === "views") this.afterViewWrite(id);
     if (table === "content_versions") this.afterVersionWrite(id);
     if (table === "cue_anchors") this.syncCuePage(this.mustGet("cue_anchors", id));
@@ -1116,8 +1197,8 @@ export class Batch {
    * `cascade` ref (a content's versions) and its attachments are deleted; other references
    * to it are cleared. Roles are checked on the row the client named; dependents go with it.
    */
-  private remove(table: TableName, id: string, before: DbRow) {
-    if (table === "views" && before.owner_user_id === null) {
+  private remove(table: TableName, id: string, before: DbRow, force = false) {
+    if (table === "views" && before.owner_user_id === null && !force) {
       const { n } = this.sql
         .exec<{ n: number }>(
           'SELECT count(*) AS n FROM views WHERE "table" = ? AND owner_user_id IS NULL',
@@ -1127,6 +1208,9 @@ export class Batch {
       if (n <= 1) this.fail("A table needs at least one shared view");
     }
     // Cascade, as explicit ops so history and clients see every change.
+    if (table === "custom_fields") this.removeFieldValues(before);
+    if (table === "custom_tables") this.removeCustomTableParts(id);
+    this.removeLinkValues(table, id, before);
     for (const spec of Object.values(LINKS) as LinkSpec[]) {
       if (spec.from === table) {
         const rows = this.sql
@@ -1159,7 +1243,8 @@ export class Batch {
         }
       }
     }
-    if (ATTACHMENT_FIELDS[table]) {
+    if (table !== "attachments" && table !== "custom_fields") {
+      // Built-in attachment fields and custom ones (`field` = the custom field's key).
       const files = this.sql
         .exec<DbRow>(
           'SELECT * FROM attachments WHERE "table" = ? AND record_id = ? ORDER BY position, id',
@@ -1197,6 +1282,388 @@ export class Batch {
     this.sql.exec(`DELETE FROM ${q(table)} WHERE id = ?`, id);
     this.log(table, id, "*", decodeRow(table, before), undefined);
     this.resolved.push({ op: "delete", table, id });
+    if (table === "custom_fields") {
+      this.fieldDefs = null;
+      this.resanitizeViews(String(before.table));
+    }
+  }
+
+  // ---- custom fields and custom tables (R9; src/shared/custom-fields.ts) ----
+
+  /** Custom fields of a field table (`cues`, `custom:<id>`), by position. */
+  private fieldsOf(fieldTable: string): CustomFieldDef[] {
+    if (!this.fieldDefs) this.fieldDefs = loadCustomFields(this.sql);
+    return this.fieldDefs.get(fieldTable) ?? [];
+  }
+
+  /** The field table a row's custom values belong to, or null (no custom fields there). */
+  private fieldTableOf(table: TableName, row: Record<string, unknown> | null): string | null {
+    if ((CUSTOM_FIELD_CORE_TABLES as readonly string[]).includes(table)) return table;
+    if (table === "custom_rows" && row && typeof row.table_id === "string") {
+      return customTableRef(row.table_id);
+    }
+    return null;
+  }
+
+  private fieldFor(table: TableName, recordId: string, key: string): CustomFieldDef | undefined {
+    let fieldTable: string | null = null;
+    if (table === "custom_rows") {
+      const r = this.sql
+        .exec<{ t: string }>("SELECT table_id AS t FROM custom_rows WHERE id = ?", recordId)
+        .toArray()[0];
+      if (r) fieldTable = customTableRef(r.t);
+    } else fieldTable = this.fieldTableOf(table, null);
+    return fieldTable ? this.fieldsOf(fieldTable).find((f) => f.key === key) : undefined;
+  }
+
+  /** A logged create/delete row without its sensitive custom values. */
+  private redactRow(table: TableName, v: unknown, recordId: string): unknown {
+    if (!isPlainObject(v) || !isPlainObject(v.custom)) return v;
+    const fieldTable = this.fieldTableOf(table, v);
+    if (!fieldTable) return v;
+    const sensitive = new Set(
+      this.fieldsOf(fieldTable)
+        .filter((f) => f.options.sensitive)
+        .map((f) => f.key),
+    );
+    const hide = Object.keys(v.custom).filter(
+      (k) => sensitive.has(k) || this.wasHidden(table, recordId, `custom.${k}`),
+    );
+    if (hide.length === 0) return v;
+    const custom = { ...(v.custom as Record<string, unknown>) };
+    for (const k of hide) custom[k] = HIDDEN_VALUE;
+    return { ...v, custom };
+  }
+
+  /** Whether the last logged write of a record's custom value was hidden (sensitive then). */
+  private wasHidden(table: TableName, recordId: string, field: string): boolean {
+    const last = this.sql
+      .exec<{ new: string | null }>(
+        'SELECT new FROM changes WHERE "table" = ? AND record_id = ? AND field = ? ORDER BY version DESC LIMIT 1',
+        table,
+        recordId,
+        field,
+      )
+      .toArray()[0];
+    return last?.new === JSON.stringify(HIDDEN_VALUE);
+  }
+
+  /**
+   * Check custom values being written to a row against their field definitions: the
+   * field's type (as for core fields), link ids existing in the target table; formula and
+   * attachment fields aren't stored. Keys without a definition pass (free-form metadata,
+   * e.g. an imported note's `created_by_name`). Returns the normalised patch.
+   */
+  private checkCustomValues(
+    table: TableName,
+    row: Record<string, unknown>,
+    patch: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const fieldTable = this.fieldTableOf(table, row);
+    if (!fieldTable) return patch;
+    const defs = this.fieldsOf(fieldTable);
+    if (defs.length === 0) return patch;
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(patch)) {
+      const def = defs.find((f) => f.key === k);
+      if (!def || v === null) {
+        out[k] = v;
+        continue;
+      }
+      if (!isStoredType(def.type)) this.fail(`${table}.custom.${k} is a ${def.type} field`);
+      const r = checkCustomValue(def, v);
+      if ("error" in r) this.fail(`${table}.custom.${k}: ${r.error}`);
+      if (def.type === "link") {
+        const target = def.options.target ?? "";
+        for (const tid of (r.value as string[] | null) ?? []) {
+          if (!this.targetExists(target, tid))
+            this.fail(`${table}.custom.${k}: ${target} ${tid} not found`);
+        }
+      }
+      out[k] = r.value;
+    }
+    return out;
+  }
+
+  /** Does record `id` exist in a link target (a core table or `custom:<id>`)? */
+  private targetExists(target: string, id: string): boolean {
+    const custom = customTableId(target);
+    if (custom) {
+      return (
+        this.sql
+          .exec("SELECT 1 FROM custom_rows WHERE id = ? AND table_id = ?", id, custom)
+          .toArray().length > 0
+      );
+    }
+    return isTableName(target) && this.getRow(target, id) !== null;
+  }
+
+  /**
+   * A custom field's definition as it will be stored: its table exists, the key is a slug
+   * unique in the table, the type is known, options are well-formed for the type (and a
+   * link's target exists). Mutates `row.options` to the cleaned options.
+   */
+  private prepareCustomField(id: string, row: Record<string, unknown>, before: DbRow | null) {
+    if (!isFieldTable(row.table)) {
+      this.fail("custom_fields.table must be a core table or custom:<id>");
+    }
+    const ct = customTableId(row.table);
+    if (ct && !this.getRow("custom_tables", ct)) this.fail(`custom table ${ct} not found`);
+    if (!before) {
+      if (!isCustomKey(row.key)) {
+        this.fail("custom_fields.key must be a lowercase slug (a-z, 0-9, _), at most 40 long");
+      }
+      const dup = this.sql
+        .exec(
+          'SELECT 1 FROM custom_fields WHERE "table" = ? AND key = ? AND id != ?',
+          row.table,
+          row.key,
+          id,
+        )
+        .toArray();
+      if (dup.length > 0) this.fail(`${row.table} already has a field "${row.key}"`);
+    }
+    if (!isCustomFieldType(row.type)) this.fail("custom_fields.type is not a field type");
+    if (typeof row.label === "string" && row.label.length > 200) {
+      this.fail("custom_fields.label is too long");
+    }
+    const r = checkFieldOptions(row.type, row.options);
+    if ("error" in r) this.fail(`custom_fields.options: ${r.error}`);
+    const target = r.options.target;
+    if (target) {
+      const tid = customTableId(target);
+      if (tid && !this.getRow("custom_tables", tid)) this.fail(`link target ${target} not found`);
+    }
+    row.options = r.options;
+  }
+
+  /**
+   * After a field's type or options changed: values that no longer fit are cleared (a type
+   * change between shapes, a removed select choice), as explicit updates.
+   */
+  private afterCustomFieldUpdate(before: DbRow | null, after: DbRow): void {
+    const def = toFieldDef(after);
+    const old = before ? toFieldDef(before) : { type: def.type };
+    const oldType = old.type;
+    const typeChanged = oldType !== def.type;
+    if (before && !typeChanged && before.options === after.options) return;
+    for (const { table, row } of this.rowsWithKey(def.table, def.key)) {
+      const custom = parseJson<Record<string, unknown>>(row.custom, {});
+      const v = custom[def.key];
+      const next = refitValue(old, def, v);
+      if (sameValue(next, v)) continue;
+      const merged = { ...custom };
+      if (next === null) delete merged[def.key];
+      else merged[def.key] = next;
+      this.write(table, row.id as string, row, { custom: merged });
+    }
+    if (typeChanged && oldType === "attachment") this.removeFieldFiles(def.table, def.key);
+    // Views that use the field drop what no longer applies (operators, grouping).
+    if (before && typeChanged) this.resanitizeViews(def.table);
+  }
+
+  /** Every view of a field table, re-checked against its fields now (stale parts dropped). */
+  private resanitizeViews(fieldTable: string): void {
+    if (!isViewTable(fieldTable)) return;
+    const views = this.sql
+      .exec<DbRow>('SELECT * FROM views WHERE "table" = ? ORDER BY id', fieldTable)
+      .toArray();
+    for (const v of views) {
+      const config = parseJson<unknown>(v.config, null);
+      const r = sanitizeViewConfig(
+        fieldTable,
+        config,
+        viewFieldsFor(fieldTable, this.fieldsOf(fieldTable)),
+      );
+      if ("error" in r || sameValue(r.config, config)) continue;
+      this.noteViewOwner("views", v.id as string, v);
+      this.write("views", v.id as string, v, { config: r.config });
+    }
+  }
+
+  /** Renamed select choices: stored values and view filters / color rules follow. */
+  private renameChoices(field: DbRow, raw: unknown): void {
+    const def = toFieldDef(field);
+    if (def.type !== "select" && def.type !== "multiselect") {
+      this.fail("custom_fields.renames: only select fields have choices");
+    }
+    if (!Array.isArray(raw) || raw.length > 200) this.fail("custom_fields.renames must be a list");
+    const map = new Map<string, string>();
+    for (const r of raw) {
+      if (
+        !isPlainObject(r) ||
+        typeof r.from !== "string" ||
+        typeof r.to !== "string" ||
+        !r.to.trim()
+      ) {
+        this.fail("custom_fields.renames entries need {from, to}");
+      }
+      if (r.from !== r.to) map.set(r.from, r.to);
+    }
+    if (map.size === 0) return;
+    const rename = (v: unknown): unknown =>
+      typeof v === "string"
+        ? (map.get(v) ?? v)
+        : Array.isArray(v)
+          ? [...new Set(v.map((x) => (typeof x === "string" ? (map.get(x) ?? x) : x)))]
+          : v;
+    for (const { table, row } of this.rowsWithKey(def.table, def.key)) {
+      const custom = parseJson<Record<string, unknown>>(row.custom, {});
+      const next = rename(custom[def.key]);
+      if (sameValue(next, custom[def.key])) continue;
+      this.write(table, row.id as string, row, { custom: { ...custom, [def.key]: next } });
+    }
+    const key = `custom.${def.key}`;
+    const views = this.sql
+      .exec<DbRow>('SELECT * FROM views WHERE "table" = ? ORDER BY id', def.table)
+      .toArray();
+    for (const v of views) {
+      const config = parseJson<Record<string, unknown>>(v.config, {});
+      const fix = (list: unknown) =>
+        Array.isArray(list)
+          ? list.map((f) =>
+              isPlainObject(f) && f.key === key ? { ...f, value: rename(f.value) } : f,
+            )
+          : list;
+      const next = {
+        ...config,
+        filters: fix(config.filters),
+        colorRules: Array.isArray(config.colorRules)
+          ? config.colorRules.map((r) => (isPlainObject(r) ? { ...r, when: fix(r.when) } : r))
+          : config.colorRules,
+      };
+      if (sameValue(next, config)) continue;
+      this.noteViewOwner("views", v.id as string, v);
+      this.write("views", v.id as string, v, { config: next });
+    }
+  }
+
+  /** Free-form (undefined) custom keys of a row may take at most 16 KB of JSON together. */
+  private checkFreeForm(table: TableName, id: string): void {
+    const row = this.getRow(table, id);
+    if (row) this.checkFreeFormRow(table, decodeRow(table, row));
+  }
+
+  private checkFreeFormRow(table: TableName, row: Record<string, unknown>): void {
+    if (!isPlainObject(row.custom)) return;
+    const fieldTable = this.fieldTableOf(table, row);
+    const defined = new Set(fieldTable ? this.fieldsOf(fieldTable).map((f) => f.key) : []);
+    const free = Object.fromEntries(Object.entries(row.custom).filter(([k]) => !defined.has(k)));
+    const bytes = byteLength(free);
+    if (bytes > MAX_FREE_FORM_BYTES) {
+      console.warn(`custom values without a field on ${table} ${String(row.id)}: ${bytes} bytes`);
+      this.fail(
+        `${table}: custom values without a field may take at most ${MAX_FREE_FORM_BYTES / 1024} KB`,
+      );
+    }
+  }
+
+  /** Rows of a field table whose `custom` holds `key`. */
+  private rowsWithKey(fieldTable: string, key: string): { table: TableName; row: DbRow }[] {
+    const like = `%${JSON.stringify(key)}%`;
+    const tid = customTableId(fieldTable);
+    const rows = tid
+      ? this.sql
+          .exec<DbRow>(
+            "SELECT * FROM custom_rows WHERE table_id = ? AND custom LIKE ? ORDER BY order_key, id",
+            tid,
+            like,
+          )
+          .toArray()
+      : isTableName(fieldTable)
+        ? this.sql
+            .exec<DbRow>(`SELECT * FROM ${q(fieldTable)} WHERE custom LIKE ? ORDER BY id`, like)
+            .toArray()
+        : [];
+    const table: TableName = tid ? "custom_rows" : (fieldTable as TableName);
+    return rows
+      .filter((r) => Object.hasOwn(parseJson<Record<string, unknown>>(r.custom, {}), key))
+      .map((row) => ({ table, row }));
+  }
+
+  /** A deleted custom field: its values leave every row, its files are deleted. */
+  private removeFieldValues(field: DbRow): void {
+    const def = toFieldDef(field);
+    for (const { table, row } of this.rowsWithKey(def.table, def.key)) {
+      const custom = { ...parseJson<Record<string, unknown>>(row.custom, {}) };
+      delete custom[def.key];
+      this.write(table, row.id as string, row, { custom });
+    }
+    if (def.type === "attachment") this.removeFieldFiles(def.table, def.key);
+  }
+
+  /** Files of a custom attachment field. */
+  private removeFieldFiles(fieldTable: string, key: string): void {
+    const tid = customTableId(fieldTable);
+    const files = tid
+      ? this.sql
+          .exec<DbRow>(
+            `SELECT * FROM attachments WHERE "table" = 'custom_rows' AND field = ? AND record_id IN (SELECT id FROM custom_rows WHERE table_id = ?) ORDER BY position, id`,
+            key,
+            tid,
+          )
+          .toArray()
+      : this.sql
+          .exec<DbRow>(
+            'SELECT * FROM attachments WHERE "table" = ? AND field = ? ORDER BY position, id',
+            fieldTable,
+            key,
+          )
+          .toArray();
+    for (const f of files) this.remove("attachments", f.id as string, f);
+  }
+
+  /**
+   * A deleted custom table takes its fields, the link fields elsewhere that point at it,
+   * and its views (its rows go by the `table_id` cascade).
+   */
+  private removeCustomTableParts(id: string): void {
+    const ref = customTableRef(id);
+    const fields = this.sql
+      .exec<DbRow>(
+        `SELECT * FROM custom_fields WHERE "table" = ? OR (type = 'link' AND options LIKE ?) ORDER BY position, id`,
+        ref,
+        `%${ref}%`,
+      )
+      .toArray()
+      .filter((f) => f.table === ref || toFieldDef(f).options.target === ref);
+    for (const f of fields) {
+      if (this.getRow("custom_fields", f.id as string))
+        this.remove("custom_fields", f.id as string, f);
+    }
+    const views = this.sql
+      .exec<DbRow>('SELECT * FROM views WHERE "table" = ? ORDER BY id', ref)
+      .toArray();
+    for (const v of views) {
+      this.noteViewOwner("views", v.id as string, v);
+      this.remove("views", v.id as string, v, true);
+    }
+  }
+
+  /** A deleted record leaves the custom link fields that point at it. */
+  private removeLinkValues(table: TableName, id: string, before: DbRow): void {
+    const target =
+      table === "custom_rows"
+        ? customTableRef(String(before.table_id))
+        : (CUSTOM_FIELD_CORE_TABLES as readonly string[]).includes(table)
+          ? table
+          : null;
+    if (!target) return;
+    if (!this.fieldDefs) this.fieldDefs = loadCustomFields(this.sql);
+    for (const defs of this.fieldDefs.values()) {
+      for (const def of defs) {
+        if (def.type !== "link" || def.options.target !== target) continue;
+        for (const { table: t, row } of this.rowsWithKey(def.table, def.key)) {
+          const custom = { ...parseJson<Record<string, unknown>>(row.custom, {}) };
+          const list = custom[def.key];
+          if (!Array.isArray(list) || !list.includes(id)) continue;
+          const next = list.filter((x) => x !== id);
+          if (next.length) custom[def.key] = next;
+          else delete custom[def.key];
+          this.write(t, row.id as string, row, { custom });
+        }
+      }
+    }
   }
 
   private link(table: TableName, id: string, field: string, targetId: string, position?: number) {
@@ -1272,6 +1739,67 @@ function linkField(spec: LinkSpec): string {
     if (s === spec) return name.slice(name.indexOf(".") + 1);
   }
   return "";
+}
+
+/** A `custom_fields` row as a definition (options parsed). */
+function toFieldDef(row: DbRow): CustomFieldDef {
+  return {
+    id: String(row.id),
+    table: String(row.table),
+    key: String(row.key),
+    label: typeof row.label === "string" ? row.label : null,
+    type: isCustomFieldType(row.type) ? row.type : "text",
+    options: parseJson(row.options, {}),
+    position: typeof row.position === "number" ? row.position : null,
+    width: typeof row.width === "number" ? row.width : null,
+  };
+}
+
+/** Every custom field, by field table, in position order. */
+export function loadCustomFields(sql: SqlStorage): Map<string, CustomFieldDef[]> {
+  const out = new Map<string, CustomFieldDef[]>();
+  const rows = sql
+    .exec<DbRow>('SELECT * FROM custom_fields ORDER BY "table", position, created_at, id')
+    .toArray();
+  for (const r of rows) {
+    const def = toFieldDef(r);
+    const list = out.get(def.table) ?? [];
+    list.push(def);
+    out.set(def.table, list);
+  }
+  return out;
+}
+
+/**
+ * Is `field` a custom attachment field of the record's table (`table` a core table, or
+ * `custom_rows` for a custom table's row)? Files of such a field are `attachments` rows
+ * with `field` = the custom field's key.
+ */
+export function isCustomAttachmentField(
+  sql: SqlStorage,
+  table: string,
+  recordId: string,
+  field: string,
+): boolean {
+  let fieldTable: string | null = null;
+  if (table === "custom_rows") {
+    const r = sql
+      .exec<{ t: string }>("SELECT table_id AS t FROM custom_rows WHERE id = ?", recordId)
+      .toArray()[0];
+    if (r) fieldTable = customTableRef(r.t);
+  } else if ((CUSTOM_FIELD_CORE_TABLES as readonly string[]).includes(table)) {
+    fieldTable = table;
+  }
+  if (!fieldTable) return false;
+  return (
+    sql
+      .exec(
+        `SELECT 1 FROM custom_fields WHERE "table" = ? AND key = ? AND type = 'attachment'`,
+        fieldTable,
+        field,
+      )
+      .toArray().length > 0
+  );
 }
 
 /** `created_by` of rows the DO writes on its own (the seeded default views). */

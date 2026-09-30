@@ -174,6 +174,8 @@ export type Joins = {
   noteAssignees: Record<string, string[]>;
   sceneSurfaces: Record<string, string[]>;
   contentSurfaces: Record<string, string[]>;
+  shotTalent: Record<string, string[]>;
+  shotContent: Record<string, string[]>;
 };
 
 export interface SnapshotResponse {
@@ -216,6 +218,11 @@ export interface ImportResponse {
     notes: number;
     persons: number;
     surfaces: number;
+    /** Custom tables made from the other CSVs (Calendar, Network, …) and their rows. */
+    custom_tables: number;
+    custom_rows: number;
+    /** Custom fields made for unmapped columns (the preview's "Create custom field"). */
+    custom_fields: number;
   };
   warnings: string[];
 }

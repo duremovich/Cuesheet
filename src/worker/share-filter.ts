@@ -2,8 +2,10 @@
 // the link's scope (src/shared/share.ts `shareScope`). Tables outside the scope come back
 // empty, views only the shared one, attachments only those on rows of the link's table,
 // links (joins) only between tables in scope. Rows are scrubbed: no user ids
-// (`created_by`, `updated_by`, `completed_by`), people only as name + role (their contact
-// details and account link never leave; a People link keeps group and custom fields).
+// (`created_by`, `updated_by`, `completed_by`), no custom field values (M5a), people
+// only as name + role (their contact details and account link never leave; a People link
+// keeps their group). Custom tables, custom field definitions and shot lists are out of
+// every scope unless a link's table list names them (src/shared/share.ts).
 // Notes presets see only their session's / person's notes. Pure; used by the ShowDO.
 import type { AnyResolvedOp, Joins, SnapshotResponse } from "../shared/ops";
 import type { ShareScope } from "../shared/share";
@@ -32,11 +34,13 @@ type Fields = Record<string, unknown>;
 export function scrubRow(table: string, row: Fields, scope: ShareScope): Fields {
   const out: Fields = { ...row };
   for (const [k, v] of Object.entries(USER_FIELDS)) if (k in out) out[k] = v;
+  // Custom field values (M5a) never go out: their definitions aren't shared and some are
+  // sensitive. Attachments' `custom` is file metadata (caption, original size): kept.
+  if (table !== "attachments" && "custom" in out) out.custom = {};
   if (table === "persons") {
     for (const k of PERSON_PRIVATE) if (k in out) out[k] = null;
     if (!scope.fullPersons) {
       for (const k of PERSON_EXTRA) if (k in out) out[k] = null;
-      if ("custom" in out) out.custom = {};
     }
   }
   return out;
@@ -46,11 +50,11 @@ export function scrubRow(table: string, row: Fields, scope: ShareScope): Fields 
 function scrubChanges(table: string, fields: Fields, scope: ShareScope): Fields {
   const out: Fields = { ...fields };
   for (const [k, v] of Object.entries(USER_FIELDS)) if (k in out) out[k] = v;
+  if (table !== "attachments") delete out.custom;
   if (table === "persons") {
     for (const k of PERSON_PRIVATE) delete out[k];
     if (!scope.fullPersons) {
       for (const k of PERSON_EXTRA) delete out[k];
-      delete out.custom;
     }
   }
   return out;

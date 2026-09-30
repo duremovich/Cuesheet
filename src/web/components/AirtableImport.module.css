@@ -38,3 +38,82 @@
   line-height: 20px;
   padding: 0 var(--space-2);
 }
+
+/* The import preview (R25, R9): what each file becomes before anything is sent. */
+.preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-height: 60vh;
+  overflow: auto;
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-2);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+}
+
+.previewTitle {
+  margin: 0;
+  font-size: 15px;
+}
+
+.file {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+  min-width: 0;
+}
+
+.fileHead {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.tableRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.tableRow label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: 13px;
+}
+
+.tableRow label.check {
+  flex-direction: row;
+  align-items: center;
+}
+
+.columns {
+  border-collapse: collapse;
+  font-size: 13px;
+  width: 100%;
+}
+
+.columns th,
+.columns td {
+  text-align: left;
+  padding: 2px var(--space-2) 2px 0;
+  overflow-wrap: anywhere;
+}
+
+.columns th {
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+.columns select {
+  max-width: 100%;
+}
+
+.previewActions {
+  display: flex;
+  gap: var(--space-2);
+}

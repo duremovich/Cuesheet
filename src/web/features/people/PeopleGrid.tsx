@@ -6,6 +6,8 @@ import { TableGrid } from "../shared/TableGrid";
 import { useWorkspace } from "../show/workspace";
 import { personColumns, personEditOps } from "./columns";
 
+const CUSTOM = { fieldTable: "persons", rowOf: (p: PersonRow) => p };
+
 export function PeopleGrid() {
   const { canEdit } = useWorkspace();
   const rows = useOrderedRows("persons");
@@ -14,6 +16,7 @@ export function PeopleGrid() {
   return (
     <TableGrid<PersonRow>
       tab="people"
+      custom={CUSTOM}
       title="People"
       label="People"
       noun="person"

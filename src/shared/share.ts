@@ -98,7 +98,12 @@ export interface ShareInfoResponse {
 
 export const MAX_SHARE_LABEL = 200;
 
-/** Tables a grid of `table` reads to label its links (scene names, content chips, …). */
+/**
+ * Tables a grid of `table` reads to label its links (scene names, content chips, …).
+ * Custom fields, custom tables (`custom_fields`, `custom_tables`, `custom_rows`) and shot
+ * lists are in no list unless named here, so share links don't see them; row `custom`
+ * values are stripped too (share-filter.ts).
+ */
 const RELATED: Record<DataTableName, readonly TableName[]> = {
   cues: ["scenes", "content", "content_versions", "persons"],
   scenes: ["surfaces", "content", "cues"],
@@ -106,6 +111,8 @@ const RELATED: Record<DataTableName, readonly TableName[]> = {
   notes: ["cues", "scenes", "content", "persons"],
   persons: [],
   surfaces: ["scenes", "content", "cues"],
+  // Talent (people) arrive as name + role only, like every link but a People link.
+  shots: ["shot_lists", "persons", "content"],
 };
 
 const PRESET_TABLES: Record<SharePreset, readonly TableName[]> = {

@@ -136,6 +136,41 @@ Things the first build had to decide; each is easy to change.
 - **Print** is the browser's print dialog / Save as PDF: no server-side PDF. The calling
   script prints the whole script; a page range isn't offered.
 
+## Custom fields, shots, export, templates (M5a decisions to confirm)
+
+- **Custom field keys** are slugs made from the name and never change; renaming a field
+  changes only its label. Formulas may name fields by label or key (`{Camera}`,
+  `camera`), so renaming a field breaks formulas that use its old label: key references
+  are the stable form.
+- **Changing a field's type** clears the values that don't fit (text ↔ long text ↔ URL
+  keep them; a single or multiple select becomes text, "A, B"), after a confirmation that
+  says how many rows have values; views drop the filters, sorts, grouping and color rules
+  that no longer apply. **Renaming a select choice** keeps it on its rows and in view
+  filters; removing a used choice asks first (with the count) and clears it. Pointing a
+  link at another table clears its links; turning off "Allow more than one" keeps each
+  row's first link.
+- **Link fields** store ids on the linking side only; the other side shows them read-only
+  (a custom row's panel lists who links to it). Two-way editable links (Airtable's
+  automatic reverse field) aren't built.
+- **Sensitive fields** are masked for everyone and revealed per panel visit; they're
+  still synced to every member (no per-role hiding), kept out of history (values written
+  while a field was sensitive stay hidden after the flag is removed), formulas (`#HIDDEN`),
+  ⌘K and exports (owners can include them in an export).
+- **CSV exports are "Excel-safe"** by default: a cell starting with `=`, `+`, `-` or `@`
+  gets a leading `'` so spreadsheets don't run it (plain numbers are left alone).
+- **Templates** are shows flagged in D1 (`is_template`): you open and edit them like any
+  show; they copy scenes (optional), surfaces, custom fields and tables (no rows), shared
+  views and the default unit. Personal views, shot lists and core select options aren't
+  copied (options are the same in every show until they become editable).
+- **Shot numbers** reuse the cue-number rules (ghost midpoint, duplicate warning) within
+  one list. A shot list's own `content` link isn't built (each shot links content).
+- **Printing a custom table** isn't offered yet (the Print view knows the core tabs); CSV
+  export works.
+- **Bulk edit Undo** puts each row's previous value back from the toast (8 s); it isn't
+  part of the grid's ⌘Z stack.
+- **CSV exports** show values as the grid does (lengths in your unit, formulas rounded as
+  displayed). "Export all" is the raw form (meters, ids, stored text).
+
 ## Sharing, security and deploy (M5b)
 
 - **Row-level scoping of share links (later hardening pass).** A view link shows the
@@ -165,15 +200,21 @@ Things the first build had to decide; each is easy to change.
 
 - A second show's base would confirm the model generalizes (especially scenes, surfaces
   and naming conventions).
-- A shot list example for the Shot table.
+- A shot list example for the Shot table (the M5a fields follow data-model.md; confirm
+  framing and status lists with a real shoot).
 
 ## Answered
+
+- **Custom field values on notes** (M5a review): commenters may edit custom values on
+  their own notes, like the notes' core fields. → CLAUDE.md "Custom fields and custom
+  tables"
 
 - **Share link tokens** (M5b): shown once (only a hash is stored); a lost or leaked link
   is replaced with **Regenerate** (a new token, same settings; the old link stops
   working). Editors and the owner manage links. → CLAUDE.md "Share links"
-- **Rate limits** (M5b), as built: failures only, 10 a minute and 50 an hour per email and
-  per IP (and per bad invite/reset/share token source). → CLAUDE.md "Account security"
+- **Rate limits** (M5b), as built: failures only; sign-in 10 a minute and 50 an hour per
+  email+IP, 100 an hour per email, 50 an hour per IP; bad invite/reset/share tokens 10 a
+  minute and 50 an hour per IP. → CLAUDE.md "Account security"
 - **Invites into a show** (M5b): a show's owner (not only admins) may invite people into
   their show with a role.
 - **Co-owners** (M5b): no; one owner per show, transfer makes the old owner an editor.
@@ -259,5 +300,5 @@ Things the first build had to decide; each is easy to change.
   lengths in the active unit.
 - **Surface calculator (M3b)**: for a region of a parent with a pixel canvas, the pixel
   size is the *default lock*, not read-only.
-- **Custom formula columns**: deferred to M5 with custom fields (the engine and the
-  built-in surface formulas are in M3b).
+- **Custom formula columns**: built in M5a as formula custom fields (see "Custom fields,
+  shots, export, templates" above).

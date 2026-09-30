@@ -2,7 +2,8 @@
 // normalisation (client), and the default view each data table starts with.
 // Filters, sorts, grouping and color rules are evaluated on the client, over the grid's
 // columns (src/web/features/views/). See CLAUDE.md "Saved views".
-import { type DataTableName, OPTION_COLORS } from "./tables";
+import { type CustomFieldDef, customColumnKey, customFieldKind } from "./custom-fields";
+import { type DataTableName, isDataTable, OPTION_COLORS, type ViewTable } from "./tables";
 import { isUnit, UNITS, type Unit } from "./units";
 
 export type OptionColor = (typeof OPTION_COLORS)[number];
@@ -263,7 +264,7 @@ export function emptyViewConfig(): ViewConfig {
  * A usable config from whatever is stored (client side): invalid parts fall back to the
  * defaults instead of failing, so an old or damaged view still opens.
  */
-export function normalizeViewConfig(raw: unknown, table?: DataTableName): ViewConfig {
+export function normalizeViewConfig(raw: unknown, table?: ViewTable): ViewConfig {
   const base = table ? defaultViewConfig(table) : emptyViewConfig();
   if (!isObject(raw)) return base;
   const pick = <K extends keyof ViewConfig>(key: K, ok: (v: unknown) => boolean): ViewConfig[K] =>
@@ -307,8 +308,9 @@ export function normalizeViewConfig(raw: unknown, table?: DataTableName): ViewCo
 }
 
 /** The config of a table's built-in default view (also the fallback when it has none). */
-export function defaultViewConfig(table: DataTableName): ViewConfig {
+export function defaultViewConfig(table: ViewTable): ViewConfig {
   const c = emptyViewConfig();
+  if (!isDataTable(table)) return c; // a custom table: show order, ungrouped
   switch (table) {
     case "cues":
     case "content":
@@ -317,6 +319,9 @@ export function defaultViewConfig(table: DataTableName): ViewConfig {
     case "notes":
       c.group = { key: "status" };
       c.frozenCount = 0;
+      break;
+    case "shots":
+      c.group = { key: "group" };
       break;
     case "scenes":
     case "persons":
@@ -334,7 +339,13 @@ export const DEFAULT_VIEW_NAMES: Record<DataTableName, string> = {
   notes: "All notes",
   persons: "Everyone",
   surfaces: "All surfaces",
+  shots: "All shots",
 };
+
+/** The default view's name for any view table ("All rows" for a custom table). */
+export function defaultViewName(table: ViewTable): string {
+  return isDataTable(table) ? DEFAULT_VIEW_NAMES[table] : "All rows";
+}
 
 // ---- Per-table fields (what a view may name), shared by server validation and client ----
 
@@ -382,10 +393,15 @@ export const GROUPABLE_KINDS: ReadonlySet<FieldKind> = new Set(["select", "multi
  * `columns.ts`; `views/viewFields.test.ts` keeps the two in step) with their kind, and
  * `extra` fields that aren't columns (filter/color only).
  */
-export const VIEW_FIELDS: Record<
-  DataTableName,
-  Record<string, { kind: FieldKind; extra?: true }>
-> = {
+export interface ViewFieldSpec {
+  kind: FieldKind;
+  /** Not a column: filter / color only. */
+  extra?: true;
+  /** A text column a view may group by anyway (the shots tab's `group`). */
+  groupable?: true;
+}
+
+export const VIEW_FIELDS: Record<DataTableName, Record<string, ViewFieldSpec>> = {
   cues: {
     number: { kind: "text" },
     description: { kind: "text" },
@@ -471,7 +487,35 @@ export const VIEW_FIELDS: Record<
     scenes: { kind: "link" },
     content: { kind: "link" },
   },
+  shots: {
+    number: { kind: "text" },
+    group: { kind: "text", groupable: true },
+    description: { kind: "text" },
+    reference: { kind: "text" },
+    framing: { kind: "select" },
+    camera: { kind: "text" },
+    lens: { kind: "text" },
+    resolution: { kind: "text" },
+    frame_rate: { kind: "number" },
+    duration: { kind: "text" },
+    status: { kind: "select" },
+    talent: { kind: "link" },
+    content: { kind: "link" },
+  },
 };
+
+/**
+ * The fields a view of `table` can name: the table's static VIEW_FIELDS (none for a custom
+ * table) plus one `custom.<key>` column per custom field on it (kind by field type).
+ */
+export function viewFieldsFor(
+  table: ViewTable,
+  customFields: readonly Pick<CustomFieldDef, "key" | "type">[],
+): Record<string, ViewFieldSpec> {
+  const out: Record<string, ViewFieldSpec> = isDataTable(table) ? { ...VIEW_FIELDS[table] } : {};
+  for (const f of customFields) out[customColumnKey(f.key)] = { kind: customFieldKind(f.type) };
+  return out;
+}
 
 const NUMERIC_OPS: ReadonlySet<FilterOp> = new Set(["gt", "gte", "lt", "lte"]);
 const DATE_OPS: ReadonlySet<FilterOp> = new Set(["before", "after"]);
@@ -484,13 +528,13 @@ const DATE_OPS: ReadonlySet<FilterOp> = new Set(["before", "after"]);
  * dropped), or the first error.
  */
 export function sanitizeViewConfig(
-  table: DataTableName,
+  table: ViewTable,
   raw: unknown,
+  known: Record<string, ViewFieldSpec> = isDataTable(table) ? VIEW_FIELDS[table] : {},
 ): { config: ViewConfig } | { error: string } {
   const structural = viewConfigError(raw);
   if (structural) return { error: structural };
-  const c = raw as ViewConfig;
-  const known = VIEW_FIELDS[table];
+  const c = dropDeletedCustomFields(raw as ViewConfig, known);
   const kindOf = (key: string) => (Object.hasOwn(known, key) ? known[key]?.kind : undefined);
   const isColumn = (key: string) => Object.hasOwn(known, key) && !known[key]?.extra;
   const columnCount = Object.values(known).filter((f) => !f.extra).length;
@@ -537,12 +581,14 @@ export function sanitizeViewConfig(
   if (groupKey !== null) {
     const kind = kindOf(groupKey);
     if (!kind || !isColumn(groupKey)) return { error: `config.group: no column "${groupKey}"` };
-    if (!GROUPABLE_KINDS.has(kind)) return { error: `config.group: can't group by ${groupKey}` };
+    if (!GROUPABLE_KINDS.has(kind) && !known[groupKey]?.groupable) {
+      return { error: `config.group: can't group by ${groupKey}` };
+    }
   }
   for (const f of c.fields) {
     if (!isColumn(f.key)) return { error: `config.fields: ${table} has no column "${f.key}"` };
   }
-  if (c.frozenCount > columnCount) {
+  if (c.frozenCount > Math.max(columnCount, 1)) {
     return { error: `config.frozenCount is more than the ${columnCount} columns` };
   }
   const colorRules: ColorRule[] = [];
@@ -587,5 +633,38 @@ export function sanitizeViewConfig(
       ...(c.layout === "gallery" ? { layout: "gallery" as const } : {}),
       ...(c.unit !== undefined ? { unit: c.unit } : {}),
     },
+  };
+}
+
+/**
+ * A config without references to custom fields that no longer exist (`custom.<key>` keys
+ * the table doesn't have): a deleted field silently leaves the views that used it, instead
+ * of making them unsavable. Other unknown keys stay (and are refused).
+ */
+function dropDeletedCustomFields(c: ViewConfig, known: Record<string, ViewFieldSpec>): ViewConfig {
+  const gone = (key: string) => key.startsWith("custom.") && !Object.hasOwn(known, key);
+  // A custom field whose type changed: filters with an operator its kind doesn't take go.
+  const keepFilter = (f: Filter) => {
+    if (gone(f.key)) return false;
+    const kind = f.key.startsWith("custom.") ? known[f.key]?.kind : undefined;
+    return !kind || OPS_BY_KIND[kind].includes(f.op);
+  };
+  const groupKey = c.group.key;
+  const staleGroup =
+    groupKey?.startsWith("custom.") &&
+    (gone(groupKey) ||
+      !(GROUPABLE_KINDS.has(known[groupKey]?.kind as FieldKind) || known[groupKey]?.groupable));
+  return {
+    ...c,
+    filters: c.filters.filter(keepFilter),
+    sorts: c.sorts.filter((s) => !gone(s.key)),
+    group: staleGroup ? { key: null } : c.group,
+    fields: c.fields.filter((f) => !gone(f.key)),
+    colorRules: c.colorRules.flatMap((r) => {
+      if (r.target !== "row" && gone(r.target.cell)) return [];
+      const when = r.when.filter(keepFilter);
+      // A rule whose every condition named a deleted field goes with it.
+      return when.length === 0 && r.when.length > 0 ? [] : [{ ...r, when }];
+    }),
   };
 }

@@ -9,9 +9,13 @@ export const GROUP_PREFIX = "grp:";
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
-export function isGroupable(f: { type: string }): boolean {
+export function isGroupable(f: { type: string; groupable?: boolean }): boolean {
   return (
-    f.type === "select" || f.type === "multiselect" || f.type === "link" || f.type === "multilink"
+    f.groupable === true ||
+    f.type === "select" ||
+    f.type === "multiselect" ||
+    f.type === "link" ||
+    f.type === "multilink"
   );
 }
 

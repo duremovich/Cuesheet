@@ -5,6 +5,7 @@ import { fieldSpec, linkSpec, type TableName } from "../../../shared/tables";
 import { formatLength, formatPixelSize, isPixelSize, type Unit } from "../../../shared/units";
 import { sceneTitle } from "../../lib/show-selectors";
 import type { ShowData } from "../../lib/show-state";
+import { customRowLabel } from "../custom/model";
 
 export interface HistoryLine {
   key: string;
@@ -70,6 +71,21 @@ export function recordLabel(data: ShowData, table: TableName, id: string): strin
     case "cue_anchors": {
       const a = data.tables.cue_anchors.get(id);
       return a ? `${recordLabel(data, "cues", a.cue_id)} in the script` : "(deleted anchor)";
+    }
+    case "custom_fields":
+      return data.tables.custom_fields.get(id)?.label || "(deleted field)";
+    case "custom_tables":
+      return data.tables.custom_tables.get(id)?.label || "(deleted table)";
+    case "custom_rows": {
+      const r = data.tables.custom_rows.get(id);
+      return r ? customRowLabel(data, r) : "(deleted row)";
+    }
+    case "shot_lists":
+      return data.tables.shot_lists.get(id)?.name || "(deleted shot list)";
+    case "shots": {
+      const s = data.tables.shots.get(id);
+      if (!s) return "(deleted shot)";
+      return s.number ? `Shot ${s.number}` : s.description?.slice(0, 40) || "(unnumbered shot)";
     }
   }
 }

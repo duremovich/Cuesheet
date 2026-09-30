@@ -7,6 +7,7 @@ import { type DrizzleSqliteDODatabase, drizzle } from "drizzle-orm/durable-sqlit
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import type { Role, ShowMetaDTO } from "../../shared/api";
 import { thumbnailKey } from "../../shared/attachments";
+import type { CustomFieldDef } from "../../shared/custom-fields";
 import type {
   AnyOp,
   AnyResolvedOp,
@@ -34,6 +35,8 @@ import {
   decodeRow,
   dueR2Deletes,
   type HistoryQuery,
+  isCustomAttachmentField,
+  loadCustomFields,
   loadFieldOptions,
   type MutationContext,
   OpError,
@@ -585,13 +588,29 @@ export class ShowDO extends DurableObject<Env> {
     return loadFieldOptions(this.ctx.storage.sql);
   }
 
+  /** Every custom field definition (the importer keeps keys unique against them). */
+  async customFields(): Promise<CustomFieldDef[]> {
+    return [...loadCustomFields(this.ctx.storage.sql).values()].flat();
+  }
+
+  async customTableCount(): Promise<number> {
+    return this.ctx.storage.sql.exec<{ n: number }>("SELECT count(*) AS n FROM custom_tables").one()
+      .n;
+  }
+
+  /** Is `field` a custom attachment field of that record's table (upload-url's check)? */
+  async isCustomAttachmentField(table: string, recordId: string, field: string): Promise<boolean> {
+    return isCustomAttachmentField(this.ctx.storage.sql, table, recordId, field);
+  }
+
   async version(): Promise<number> {
     return currentVersion(this.ctx.storage.sql);
   }
 
   /** True when any core table has rows (import refuses to run into a non-empty show). */
   async hasData(): Promise<boolean> {
-    return DATA_TABLES.some(
+    // Custom tables' rows count too (importing the Network CSV twice would duplicate it).
+    return [...DATA_TABLES, "custom_rows"].some(
       (t) => this.ctx.storage.sql.exec(`SELECT 1 FROM "${t}" LIMIT 1`).toArray().length > 0,
     );
   }

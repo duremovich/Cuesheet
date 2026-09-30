@@ -6,6 +6,7 @@ import m0003 from './0003_views.sql';
 import m0004 from './0004_surfaces_formulas.sql';
 import m0005 from './0005_versions_attachments.sql';
 import m0006 from './0006_script.sql';
+import m0007 from './0007_custom_fields_shots.sql';
 
   export default {
     journal,
@@ -16,7 +17,8 @@ m0002,
 m0003,
 m0004,
 m0005,
-m0006
+m0006,
+m0007
     }
   }
   

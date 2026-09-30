@@ -239,3 +239,9 @@ a.navButton[aria-current="page"] {
   width: 100%;
   margin-top: var(--space-1);
 }
+
+.subheading {
+  font-size: 12px;
+  margin: var(--space-3) 0 var(--space-2);
+  color: var(--color-text-muted);
+}

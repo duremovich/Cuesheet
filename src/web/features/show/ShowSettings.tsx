@@ -11,6 +11,7 @@ import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
 import { setUserUnit, useUserUnit } from "../views/units";
 import { SharingSection } from "./ShareSettings";
 import { MembersSection } from "./ShareSettingsMembers";
+import { ShowStructureSettings } from "./ShowStructureSettings";
 import styles from "./ShowWorkspace.module.css";
 import { useWorkspace } from "./workspace";
 
@@ -103,6 +104,7 @@ function SettingsBody({
         </section>
       )}
       <StorageUsage />
+      <ShowStructureSettings close={close} />
       {/* Members and Sharing: ShareSettingsMembers.tsx / ShareSettings.tsx (M5b). */}
       <MembersSection members={members} onMembersChanged={onMembersChanged} />
       {ws.canEdit && <SharingSection />}

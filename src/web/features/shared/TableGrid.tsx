@@ -1,29 +1,39 @@
 // A table tab built from a small per-table config (columns + how edits, inserts, moves and
 // deletes become ops). Scenes, Content, Notes and People use it; the cue list has its own
 // component (ghost numbers, sort menu) but the same pieces.
-import { type ReactNode, useCallback, useMemo, useRef } from "react";
+import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
+import type { FormulaRecord } from "../../../shared/formula";
 import { newId } from "../../../shared/ids";
 import type { Op } from "../../../shared/ops";
-import type { AttachmentRow } from "../../../shared/tables";
+import type { AttachmentRow, CustomValues } from "../../../shared/tables";
 import type { Unit } from "../../../shared/units";
+import type { ViewConfig } from "../../../shared/views";
 import { DataGrid } from "../../components/grid";
-import type { Column, Group, InsertPosition } from "../../components/grid/types";
+import type {
+  CellDecoration,
+  Column,
+  Group,
+  InsertPosition,
+  MenuItem,
+} from "../../components/grid/types";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
 import { openLightbox } from "../attachments/state";
+import { useCustomColumns } from "../custom/useCustomColumns";
 import { usePrintMode } from "../print/PrintShell";
 import { PrintTable, PrintViewLink } from "../print/PrintTable";
-import { type TabKey, tabInfo } from "../show/tabs";
+import { type AnyTabKey, isCustomTab, tabInfo } from "../show/tabs";
 import { useWorkspace } from "../show/workspace";
 import type { FieldDef } from "../views/evaluate";
 import { Gallery } from "../views/Gallery";
 import { DATE_FIELDS, NATIVE_GROUP_KEY } from "../views/tableDefaults";
 import { useViewConfig } from "../views/useViewConfig";
+import { BulkEditDialog, type BulkEditRequest, bulkOps, rowIdsOf } from "./BulkEdit";
 import { type PanelSection, type PanelTab, RowPanel } from "./RowPanel";
 import { TableFrame, ToolbarButton } from "./TableFrame";
 import { GRID_ACTIONS, useTableChrome } from "./useTableChrome";
 
 export interface TableConfig<V> {
-  tab: TabKey;
+  tab: AnyTabKey;
   title: string;
   /** Grid name for screen readers ("Scene list"). */
   label: string;
@@ -76,7 +86,29 @@ export interface TableConfig<V> {
     title: (v: V) => string;
     image: (v: V) => AttachmentRow | undefined;
   };
+  /**
+   * Custom fields (R9): the field table (`scenes`, `custom:<id>`) and each view's row (id +
+   * `custom`). Their columns follow the tab's own; edits update `custom`.
+   */
+  custom?: {
+    fieldTable: string;
+    rowOf: (v: V) => { id: string; custom: CustomValues };
+    /** Names formulas may use besides the columns (a surface's storage fields). */
+    fallbackRecord?: (v: V) => FormulaRecord;
+    /** Who may edit the values (default: editors); notes: commenters on their own notes. */
+    editable?: (v: V) => boolean;
+  };
+  /** Per-cell warnings and ghosts (shot numbers). Keep it stable. */
+  cellDecoration?: (v: V, key: string) => CellDecoration | undefined;
+  /** More row-menu entries. */
+  extraMenuItems?: (ctx: { rowId: string; selectedRowIds: string[] }) => MenuItem[];
+  /** One-click personal views (e.g. a print layout). */
+  viewPresets?: { name: string; config: ViewConfig }[];
+  /** Rows left out of exports. */
+  isSection?: (v: V) => boolean;
 }
+
+const noRow = (): { id: string; custom: CustomValues } => ({ id: "", custom: {} });
 
 export function TableGrid<V>(config: TableConfig<V>) {
   const ws = useWorkspace();
@@ -93,29 +125,47 @@ export function TableGrid<V>(config: TableConfig<V>) {
   const cfg = useRef(config);
   cfg.current = config;
 
+  const info = tabInfo(config.tab);
+  const table = info.viewTable;
+  const custom = config.custom;
+  const cc = useCustomColumns<V>({
+    fieldTable: custom?.fieldTable ?? "",
+    table: info.table,
+    rowOf: custom?.rowOf ?? noRow,
+    editable: custom?.editable ?? ws.canEdit,
+    baseColumns: config.columns,
+    rows: all,
+    ...(custom?.fallbackRecord ? { fallbackRecord: custom.fallbackRecord } : {}),
+  });
+  const columns = cc.columns;
+  const customEdit = cc.editOps;
+  const editOps = useCallback(
+    (v: V, key: string, value: unknown) =>
+      customEdit(v, key, value) ?? cfg.current.editOps(v, key, value),
+    [customEdit],
+  );
+
   // The saved view (below) decides whether a row is shown; the chrome asks it first.
   const revealRef = useRef<((id: string) => "shown" | "pending" | "missing") | null>(null);
   const chrome = useTableChrome({
     tab: config.tab,
-    columns: config.columns,
+    columns,
     ready: status === "ready",
     hasRow: useCallback((id: string) => byIdRef.current.has(id), []),
     reveal: useCallback((id: string) => revealRef.current?.(id) ?? "shown", []),
   });
 
-  const table = tabInfo(config.tab).table;
-  const nativeGroupKey = config.nativeGroupKey ?? NATIVE_GROUP_KEY[table];
-  const dateFields = config.dateFields ?? DATE_FIELDS[table];
+  const dataTable = isCustomTab(config.tab) ? null : info.table;
+  const nativeGroupKey =
+    config.nativeGroupKey ?? (dataTable ? NATIVE_GROUP_KEY[dataTable as never] : undefined);
+  const dateFields = config.dateFields ?? (dataTable ? DATE_FIELDS[dataTable as never] : undefined);
   const view = useViewConfig<V>({
     table,
     focusRow: useCallback((id: string) => chrome.grid.current?.focusRow(id), [chrome.grid]),
-    columns: config.columns,
+    columns,
     rowId: config.rowId,
     rows: all,
-    editOps: useCallback(
-      (v: V, key: string, value: unknown) => cfg.current.editOps(v, key, value),
-      [],
-    ),
+    editOps,
     ...(config.groups ? { groups: config.groups } : {}),
     ...(nativeGroupKey ? { nativeGroupKey } : {}),
     ...(config.defaultCollapsed ? { defaultCollapsed: config.defaultCollapsed } : {}),
@@ -123,6 +173,10 @@ export function TableGrid<V>(config: TableConfig<V>) {
     ...(config.extraFields ? { extraFields: config.extraFields } : {}),
     ...(dateFields ? { dateFields } : {}),
     ...(config.gallery ? { gallery: { presetName: config.gallery.presetName } } : {}),
+    ...(custom ? { fieldTable: custom.fieldTable } : {}),
+    ...(config.viewPresets ? { viewPresets: config.viewPresets } : {}),
+    ...(config.isSection ? { isSection: config.isSection } : {}),
+    exportTitle: config.title,
   });
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -141,10 +195,53 @@ export function TableGrid<V>(config: TableConfig<V>) {
     (id: string, key: string, value: unknown) => {
       const v = byIdRef.current.get(id);
       if (!v) return;
-      return store.mutate(cfg.current.editOps(v, key, value));
+      return store.mutate(editOps(v, key, value));
     },
-    [store],
+    [store, editOps],
   );
+
+  // --- Bulk edit (S8): "Set field for selection…" ---
+  const [bulk, setBulk] = useState<BulkEditRequest | null>(null);
+  const extraMenu = config.extraMenuItems;
+  const canBulk = ws.canEdit;
+  const extraMenuItems = useCallback(
+    (ctx: { rowId: string; selectedRowIds: string[] }): MenuItem[] => [
+      ...(extraMenu?.(ctx) ?? []),
+      ...(canBulk && byIdRef.current.has(ctx.rowId)
+        ? [
+            {
+              label: "Set field for selection…",
+              onSelect: () => setBulk({ rowIds: rowIdsOf(ctx) }),
+            },
+          ]
+        : []),
+    ],
+    [extraMenu, canBulk],
+  );
+  const applyBulk = (column: Column<V>, value: unknown) => {
+    const rows = (bulk?.rowIds ?? []).flatMap((id) => byIdRef.current.get(id) ?? []);
+    const { ops, undo } = bulkOps<V>({ rows, rowId: config.rowId, column, value, editOps });
+    if (ops.length === 0) return;
+    store
+      .mutate(ops)
+      .then(() =>
+        ws.toast(
+          `Set ${column.title} on ${rows.length} ${rows.length === 1 ? "row" : "rows"}`,
+          "info",
+          {
+            action: {
+              label: "Undo",
+              run: () =>
+                send(
+                  undo((id) => byIdRef.current.get(id)),
+                  "undo the change",
+                ),
+            },
+          },
+        ),
+      )
+      .catch((e: unknown) => report(e, "change the rows"));
+  };
 
   const insert = useCallback(
     (pos: InsertPosition) => {
@@ -205,10 +302,12 @@ export function TableGrid<V>(config: TableConfig<V>) {
     [onActiveRowChange],
   );
 
-  if (print) {
+  const printTab = isCustomTab(config.tab) ? null : config.tab;
+  if (print && printTab) {
     return (
       <PrintTable<V>
-        tab={config.tab}
+        tab={printTab}
+        title={config.title}
         columns={view.columns}
         rows={view.rows}
         groups={view.groups}
@@ -231,7 +330,7 @@ export function TableGrid<V>(config: TableConfig<V>) {
           </span>
           {view.toolbar}
           {config.toolbar}
-          <PrintViewLink tab={config.tab} viewId={view.viewId} />
+          {printTab && <PrintViewLink tab={printTab} viewId={view.viewId} />}
           {canInsert && <ToolbarButton onClick={addAtEnd}>+ Add {config.noun}</ToolbarButton>}
         </>
       }
@@ -242,7 +341,7 @@ export function TableGrid<V>(config: TableConfig<V>) {
             title={config.panelTitle(panelView)}
             row={panelView}
             columns={view.sortColumns}
-            table={tabInfo(config.tab).table}
+            table={info.table}
             recordId={config.rowId(panelView)}
             onEdit={(key, value) => onEdit(config.rowId(panelView), key, value)}
             sections={config.panelSections?.(panelView) ?? []}
@@ -270,7 +369,7 @@ export function TableGrid<V>(config: TableConfig<V>) {
             onOpenRow={chrome.onOpenRow}
             onOpenImage={(v, file) =>
               openLightbox({
-                table,
+                table: info.table,
                 recordId: config.rowId(v),
                 field: file.field,
                 attachmentId: file.id,
@@ -289,6 +388,9 @@ export function TableGrid<V>(config: TableConfig<V>) {
             sortColumns={view.sortColumns}
             rowHeight={view.rowHeight}
             colorRules={view.colorRules}
+            {...(config.cellDecoration ? { cellDecoration: config.cellDecoration } : {})}
+            {...(config.isSection ? { isSection: config.isSection } : {})}
+            extraMenuItems={extraMenuItems}
             collapsed={view.collapsed}
             onCollapsedChange={view.onCollapsedChange}
             onColumnResize={view.onColumnResize}
@@ -304,6 +406,15 @@ export function TableGrid<V>(config: TableConfig<V>) {
           />
         )}
       </div>
+      {bulk && (
+        <BulkEditDialog<V>
+          request={bulk}
+          columns={columns}
+          rows={bulk.rowIds.flatMap((id) => byId.get(id) ?? [])}
+          onApply={applyBulk}
+          onClose={() => setBulk(null)}
+        />
+      )}
     </TableFrame>
   );
 }

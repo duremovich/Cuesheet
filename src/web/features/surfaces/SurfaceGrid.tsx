@@ -11,7 +11,7 @@ import { TableGrid } from "../shared/TableGrid";
 import { useWorkspace } from "../show/workspace";
 import { SurfaceCalculator } from "./Calculator";
 import { type SurfaceView, surfaceColumns, surfaceEditOps } from "./columns";
-import { computeSurface } from "./formulas";
+import { computeSurface, surfaceRecord } from "./formulas";
 
 const NONE: string[] = [];
 /** Channel hides at phone width unless the view shows it (Fields). */
@@ -92,10 +92,20 @@ export function SurfaceGrid() {
     () => surfaceColumns({ store, editable: canEdit, showId }),
     [store, canEdit, showId],
   );
+  // Custom fields (R9); formulas may also read the storage fields (`pixel_width`, `parent`).
+  const custom = useMemo(
+    () => ({
+      fieldTable: "surfaces",
+      rowOf: (v: SurfaceView) => v.surface,
+      fallbackRecord: (v: SurfaceView) => surfaceRecord(store.getState(), v.surface),
+    }),
+    [store],
+  );
 
   return (
     <TableGrid<SurfaceView>
       tab="surfaces"
+      custom={custom}
       title="Surfaces"
       label="Surface list"
       noun="surface"

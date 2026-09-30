@@ -7,6 +7,7 @@ import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { UploadUrlResponse } from "../../src/shared/api";
+import { customTableRef } from "../../src/shared/custom-fields";
 import { newId } from "../../src/shared/ids";
 import type { Op, SnapshotResponse } from "../../src/shared/ops";
 import type {
@@ -479,6 +480,107 @@ describe("share links", () => {
     expect(sent).not.toContain(me);
     expect(sent).toContain("ASM");
     viewer.ws.close();
+  });
+
+  it("M5a data: custom tables, fields and values stay hidden; shot talent is name + role", async () => {
+    const { admin, showId, ids } = await setup();
+    const table = newId();
+    const row = newId();
+    const list = newId();
+    const shot = newId();
+    const person = newId();
+    expect(
+      (
+        await mutate(showId, admin, [
+          {
+            op: "create",
+            table: "custom_tables",
+            id: table,
+            fields: { label: "Gear", position: 1 },
+          },
+          {
+            op: "create",
+            table: "custom_fields",
+            id: newId(),
+            fields: {
+              table: customTableRef(table),
+              key: "device",
+              label: "device",
+              type: "text",
+              options: {},
+            },
+          },
+          {
+            op: "create",
+            table: "custom_fields",
+            id: newId(),
+            fields: {
+              table: "cues",
+              key: "secret_note",
+              label: "secret note",
+              type: "text",
+              options: {},
+            },
+          },
+          {
+            op: "create",
+            table: "custom_rows",
+            id: row,
+            fields: { table_id: table, custom: { device: "Switch" } },
+          },
+          {
+            op: "update",
+            table: "cues",
+            id: ids.cue,
+            fields: { custom: { secret_note: "hush-hush" } },
+          },
+          { op: "create", table: "shot_lists", id: list, fields: { name: "Day 1" } },
+          {
+            op: "create",
+            table: "persons",
+            id: person,
+            fields: { name: "Alex", role: "Actor", email: "alex@secret.test" },
+          },
+          { op: "create", table: "shots", id: shot, fields: { shot_list_id: list, number: "1" } },
+          { op: "link", table: "shots", id: shot, field: "talent", targetId: person },
+        ])
+      ).status,
+    ).toBe(200);
+    // A cue list link: none of it.
+    const cues = await openLink(
+      (await createLink(showId, admin, { kind: "view", table: "cues" })).path,
+    );
+    const text = await (await api(`/api/shows/${showId}/snapshot`, { cookie: cues.cookie })).text();
+    const snap = JSON.parse(text) as SnapshotResponse;
+    for (const t of [
+      "custom_tables",
+      "custom_fields",
+      "custom_rows",
+      "shot_lists",
+      "shots",
+    ] as const) {
+      expect(snap.tables[t], t).toEqual([]);
+    }
+    expect(snap.joins.shotTalent).toEqual({});
+    expect(text).not.toContain("hush-hush");
+    expect(text).not.toContain("Switch");
+    // A shots link: shots and talent, the people as name + role only.
+    const shots = await openLink(
+      (await createLink(showId, admin, { kind: "view", table: "shots" })).path,
+    );
+    const shotText = await (
+      await api(`/api/shows/${showId}/snapshot`, { cookie: shots.cookie })
+    ).text();
+    const shotSnap = JSON.parse(shotText) as SnapshotResponse;
+    expect(shotSnap.tables.shots.map((s) => s.id)).toEqual([shot]);
+    expect(shotSnap.joins.shotTalent).toEqual({ [shot]: [person] });
+    expect(shotSnap.tables.persons.find((p) => p.id === person)).toMatchObject({
+      name: "Alex",
+      role: "Actor",
+      email: null,
+    });
+    expect(shotText).not.toContain("secret.test");
+    expect(shotSnap.tables.custom_rows).toEqual([]);
   });
 
   it("a member can't forge the share header: a normal member socket, closed on logout-all", async () => {

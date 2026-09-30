@@ -31,7 +31,7 @@ import type {
   MutateResponse,
   SnapshotResponse,
 } from "../../shared/ops";
-import type { DataTableName, OrderedTableName, Row, TableName, ViewRow } from "../../shared/tables";
+import type { OrderedTableName, Row, TableName, ViewRow, ViewTable } from "../../shared/tables";
 import { isOrderedTable } from "../../shared/tables";
 import type { ServerMessage } from "../../shared/ws";
 import { api } from "./api";
@@ -445,7 +445,7 @@ export interface TableViews {
 /** The saved views of one data table: shared ones, then the user's own. */
 export function viewsFor(
   views: ReadonlyMap<string, ViewRow>,
-  table: DataTableName,
+  table: ViewTable,
   userId: string,
 ): TableViews {
   const byOrder = (a: ViewRow, b: ViewRow) =>
@@ -460,7 +460,7 @@ export function viewsFor(
 }
 
 /** `viewsFor` on the live store (other users' personal views are left out). */
-export function useViewsFor(table: DataTableName, userId: string): TableViews {
+export function useViewsFor(table: ViewTable, userId: string): TableViews {
   const views = useShowStore((s) => s.tables.views);
   return useMemo(() => viewsFor(views, table, userId), [views, table, userId]);
 }

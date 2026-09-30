@@ -78,6 +78,8 @@ export function cueNumberHints(
   display: readonly NumberedRow[],
   anchors: ReadonlyMap<string, InsertAnchor> = new Map(),
   pattern: RegExp = CUE_NUMBER_PATTERN,
+  /** What the numbers number, for the messages ("shot"). */
+  noun = "cue",
 ): Map<string, CellDecoration> {
   const rows = display.filter((r) => !r.isSection);
   const numbered = rows.filter((r) => r.number?.trim());
@@ -102,10 +104,10 @@ export function cueNumberHints(
         const desc = other.description?.trim();
         const short = desc && desc.length > 40 ? `${desc.slice(0, 39)}…` : desc;
         out.set(r.id, {
-          warning: `Duplicate of cue ${other.number?.trim()}${short ? ` (${short})` : ""}`,
+          warning: `Duplicate of ${noun} ${other.number?.trim()}${short ? ` (${short})` : ""}`,
         });
       } else if (!pattern.test(num)) {
-        out.set(r.id, { warning: "Unusual cue number (expected e.g. 14.25 or 8.5A)" });
+        out.set(r.id, { warning: `Unusual ${noun} number (expected e.g. 14.25 or 8.5A)` });
       }
       continue;
     }
