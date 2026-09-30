@@ -1,9 +1,15 @@
 // Content list columns (data-model.md §Content) and edit → ops.
 
 import type { Op } from "../../../shared/ops";
-import type { ContentRow, FieldOptions } from "../../../shared/tables";
+import type {
+  AttachmentRow,
+  ContentRow,
+  ContentVersionRow,
+  FieldOptions,
+} from "../../../shared/tables";
 import type { Column, PickerItem } from "../../components/grid/types";
 import type { ShowStore } from "../../lib/show-store";
+import { attachmentColumn } from "../attachments/Attachments";
 import { selectOptions } from "../cues/columns";
 import { textField } from "../shared/ops";
 import { createPerson, createScene, searchPersons, searchScenes } from "../shared/pickers";
@@ -16,6 +22,10 @@ export interface ContentView {
   creator: PickerItem | null;
   cues: PickerItem[];
   noteCount: number;
+  /** The current version (R10), shown as "V03". */
+  version: ContentVersionRow | null;
+  /** Attachments in order; the first image is the thumbnail (S4). */
+  files: AttachmentRow[];
   /** Linked surfaces (content.surfaces), in chip order (M3b). */
   surfaces?: PickerItem[];
 }
@@ -26,11 +36,27 @@ export function contentColumns(opts: {
   store: ShowStore;
   fieldOptions: FieldOptions;
   editable: boolean;
+  /** For the attachment column's file URLs and uploads. */
+  showId?: string;
 }): Column<ContentView>[] {
   const { store } = opts;
   const text = (key: (typeof TEXT)[number]) => (v: ContentView) => v.content[key] ?? "";
   const cols: Column<ContentView>[] = [
     { key: "name", title: "Name", type: "text", width: 260, frozen: true, getValue: text("name") },
+    {
+      key: "version",
+      title: "Version",
+      type: "readonly",
+      width: 80,
+      getValue: (v) => v.version?.version ?? "",
+    },
+    attachmentColumn<ContentView>({
+      table: "content",
+      showId: opts.showId ?? "",
+      files: (v) => v.files,
+      recordId: (v) => v.id,
+      editable: opts.editable,
+    }),
     {
       key: "scene",
       title: "Scene",

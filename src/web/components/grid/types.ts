@@ -11,6 +11,7 @@ export type ColumnType =
   | "link"
   | "multilink"
   | "readonly"
+  | "attachment"
   /** A length in meters (`number | null`), shown and typed in `Column.unit`. */
   | "measurement"
   /** `{w, h} | null`, shown as 1920×1080. */
@@ -50,6 +51,10 @@ export interface PickerItem {
    * of them doesn't offer "Create" (e.g. content "105-003-LOOK" has the alias "LOOK").
    */
   aliases?: string[];
+  /** Shown after the label in chips ("V03"); display only (not searched or matched). */
+  badge?: string;
+  /** A tiny image before the label in chips (a thumbnail URL). */
+  thumb?: string;
 }
 
 export interface Column<Row> {
@@ -81,6 +86,14 @@ export interface Column<Row> {
   compare?: (a: unknown, b: unknown) => number;
   /** Defaults to true for everything but readonly and formula. */
   editable?: boolean | ((row: Row) => boolean);
+  /**
+   * attachment: the cell's content (e.g. a thumbnail strip). Attachment cells are never
+   * edited as text: Enter / F2 / double-click call `onOpen`; files dropped or pasted onto
+   * the cell go to `onFiles` when the cell is `editable`.
+   */
+  renderCell?: (row: Row) => React.ReactNode;
+  onOpen?: (row: Row) => void;
+  onFiles?: (row: Row, files: File[]) => void;
   /**
    * measurement (and formula lengths): the display/input unit (default m). Views set it
    * from the active unit (view → user → show), see features/views/units.ts.

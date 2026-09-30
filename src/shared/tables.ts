@@ -13,6 +13,8 @@ export const TABLE_NAMES = [
   "persons",
   "surfaces",
   "views",
+  "content_versions",
+  "attachments",
 ] as const;
 export type TableName = (typeof TABLE_NAMES)[number];
 
@@ -32,6 +34,7 @@ export type OrderedTableName = (typeof ORDERED_TABLES)[number];
 
 /**
  * `json`: any JSON value stored as text, validated per field by the op engine.
+ * `attachment`: files in R2, one `attachments` row each (not a column; see ATTACHMENT_FIELDS).
  * `measurement`: a length in meters (REAL, ≥ 0; displayed in the active unit, see
  * ./units.ts). `pixel_size`: `{w, h}` positive whole pixels, stored as JSON text.
  */
@@ -43,6 +46,7 @@ export type FieldType =
   | "multiselect"
   | "ref"
   | "json"
+  | "attachment"
   | "measurement"
   | "pixel_size";
 
@@ -50,6 +54,8 @@ export interface FieldSpec {
   type: FieldType;
   /** For `ref`: the table the id points into. */
   ref?: TableName;
+  /** For `ref`: deleting the target deletes this row (instead of clearing the reference). */
+  cascade?: boolean;
   /** Maintained by the server; clients can't write it. */
   auto?: boolean;
   /** Settable on create only (a view's table and owner). */
@@ -138,7 +144,8 @@ export const FIELDS = {
   },
   /**
    * data-model.md §Surface. PPI, pixel pitch, aspect and throw width are computed columns
-   * (formulas on the client). TODO(M3a): `images` (attachment, many) once that type exists.
+   * (formulas on the client). `images` (set photos / renders) is an attachment field
+   * (ATTACHMENT_FIELDS); the first image is the gallery card's picture.
    */
   surfaces: {
     name: text,
@@ -166,6 +173,36 @@ export const FIELDS = {
     position: number,
     /** A ViewConfig (JSON). */
     config: { type: "json" },
+  },
+  /** Content versions (R10). Setting `is_current` clears it on the content's other versions. */
+  content_versions: {
+    content_id: { type: "ref", ref: "content", cascade: true, immutable: true },
+    version: text,
+    /** `YYYY-MM-DD`. */
+    date: text,
+    rendered_by: ref("persons"),
+    changes: text,
+    file_path: text,
+    is_current: bool,
+    status: select,
+    position: number,
+  },
+  /**
+   * Files in R2 (R13). Created only by the upload route (PUT /attachments/:id); clients may
+   * reorder (`position`) and delete. `table`.`field` is one of ATTACHMENT_FIELDS.
+   */
+  attachments: {
+    table: { type: "text", immutable: true },
+    record_id: { type: "text", immutable: true },
+    field: { type: "text", immutable: true },
+    filename: { type: "text", auto: true },
+    content_type: { type: "text", auto: true },
+    size: { type: "number", auto: true },
+    r2_key: { type: "text", auto: true },
+    width: { type: "number", auto: true },
+    height: { type: "number", auto: true },
+    thumb_key: { type: "text", auto: true },
+    position: number,
   },
 } as const satisfies Record<TableName, Record<string, FieldSpec>>;
 
@@ -306,6 +343,32 @@ export interface ViewRow extends CommonRow {
   config: Json;
 }
 
+export interface ContentVersionRow extends CommonRow {
+  content_id: string;
+  version: string | null;
+  date: string | null;
+  rendered_by: string | null;
+  changes: string | null;
+  file_path: string | null;
+  is_current: boolean;
+  status: string | null;
+  position: number | null;
+}
+
+export interface AttachmentRow extends CommonRow {
+  table: string;
+  record_id: string;
+  field: string;
+  filename: string;
+  content_type: string;
+  size: number;
+  r2_key: string;
+  width: number | null;
+  height: number | null;
+  thumb_key: string | null;
+  position: number | null;
+}
+
 export interface RowTypes {
   scenes: SceneRow;
   cues: CueRow;
@@ -314,6 +377,26 @@ export interface RowTypes {
   persons: PersonRow;
   surfaces: SurfaceRow;
   views: ViewRow;
+  content_versions: ContentVersionRow;
+  attachments: AttachmentRow;
+}
+
+/**
+ * Attachment fields per table (`attachments.table` → field names → spec). Files live in the
+ * `attachments` table (one row per file, `field` naming which of these it belongs to);
+ * deleting the record deletes them. Adding one: CLAUDE.md "Attachments".
+ */
+export const ATTACHMENT_FIELDS: Partial<Record<TableName, Record<string, FieldSpec>>> = {
+  content: { attachments: { type: "attachment" } },
+  notes: { attachments: { type: "attachment" } },
+  surfaces: { images: { type: "attachment" } },
+};
+
+export function isAttachmentField(table: string, field: string): boolean {
+  const fields = Object.hasOwn(ATTACHMENT_FIELDS, table)
+    ? ATTACHMENT_FIELDS[table as TableName]
+    : undefined;
+  return !!fields && Object.hasOwn(fields, field);
 }
 
 export type Row<T extends TableName> = RowTypes[T];

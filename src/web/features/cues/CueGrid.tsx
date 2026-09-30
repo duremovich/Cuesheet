@@ -44,15 +44,18 @@ export function CueGrid() {
   const cache = useRef(new ViewCache<CueView>()).current;
   // biome-ignore lint/correctness/useExhaustiveDependencies: recomputed when the inputs change
   const views = useMemo(
-    () => buildCueViews(state, cache),
+    () => buildCueViews(state, cache, ws.showId),
     [
       tables.cues,
       tables.content,
       tables.persons,
       tables.scenes,
+      tables.content_versions,
+      tables.attachments,
       order.cues,
       joins.cueContent,
       joins.cueAssignees,
+      ws.showId,
     ],
   );
   const viewsById = useMemo(() => new Map(views.map((v) => [v.id, v])), [views]);

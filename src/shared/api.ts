@@ -127,3 +127,35 @@ export interface ErrorResponse {
 
 export const MIN_PASSWORD_LENGTH = 10;
 export const MAX_NAME_LENGTH = 200;
+
+// ---- Attachments (src/shared/attachments.ts; CLAUDE.md "Attachments") ----
+
+/** POST /api/shows/:id/attachments/upload-url: reserve an attachment for a record's field. */
+export interface UploadUrlRequest {
+  table: string;
+  recordId: string;
+  /** Default "attachments". */
+  field?: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  /**
+   * The picture's size before the client scaled it down (images over 16 MP are resized to
+   * ≤ 4096 px before upload); kept in the attachment's `custom.original_size`.
+   */
+  originalSize?: { width: number; height: number };
+}
+
+export interface UploadUrlResponse {
+  attachmentId: string;
+  /** PUT the file's bytes here (same origin; streamed into R2 by the Worker). */
+  uploadUrl: string;
+  /** The content type to send (the declared one, or the one inferred from the name). */
+  contentType: string;
+}
+
+/** GET /api/shows/:id/storage */
+export interface StorageResponse {
+  usedBytes: number;
+  limitBytes: number;
+}

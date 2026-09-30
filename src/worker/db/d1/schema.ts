@@ -38,6 +38,8 @@ export const shows = sqliteTable("shows", {
   createdAt: integer("created_at").notNull().default(now),
   /** The rehearsal/session new notes are stamped with ("Tech 2"); shared by the team. */
   currentSession: text("current_session"),
+  /** Bytes of attachments in R2 (thumbnails not counted); kept by the Worker, max 2 GB. */
+  storageBytes: integer("storage_bytes").notNull().default(0),
 });
 
 export const memberships = sqliteTable(

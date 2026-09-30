@@ -2,9 +2,10 @@
 // edit → ops.
 
 import type { Op } from "../../../shared/ops";
-import type { FieldOptions, NoteRow } from "../../../shared/tables";
+import type { AttachmentRow, FieldOptions, NoteRow } from "../../../shared/tables";
 import type { Column, PickerItem } from "../../components/grid/types";
 import type { ShowStore } from "../../lib/show-store";
+import { attachmentColumn } from "../attachments/Attachments";
 import { selectOptions } from "../cues/columns";
 import { linkDiffOps, textField } from "../shared/ops";
 import {
@@ -26,6 +27,8 @@ export interface NoteView {
   author: string;
   /** Can the current user edit this note? */
   editable: boolean;
+  /** Photos and files (R13). */
+  files: AttachmentRow[];
 }
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
@@ -52,6 +55,8 @@ export function noteColumns(opts: {
   fieldOptions: FieldOptions;
   /** Editors may create people from the assignee picker. */
   canCreateRecords: boolean;
+  /** For the attachment column's file URLs and uploads. */
+  showId?: string;
 }): Column<NoteView>[] {
   const { store } = opts;
   const editable = (v: NoteView) => v.editable;
@@ -65,6 +70,15 @@ export function noteColumns(opts: {
       editable,
       getValue: (v) => v.note.body ?? "",
     },
+    attachmentColumn<NoteView>({
+      table: "notes",
+      showId: opts.showId ?? "",
+      title: "Photos",
+      width: 120,
+      files: (v) => v.files,
+      recordId: (v) => v.id,
+      editable,
+    }),
     {
       key: "type",
       title: "Type",

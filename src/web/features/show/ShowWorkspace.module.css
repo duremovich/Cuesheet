@@ -233,3 +233,9 @@ a.navButton[aria-current="page"] {
     display: inline-flex;
   }
 }
+
+.storageMeter {
+  display: block;
+  width: 100%;
+  margin-top: var(--space-1);
+}

@@ -1,9 +1,10 @@
 // The Surfaces tab (R8, R11, R12): surfaces in show order (insert, drag), lengths in the
 // active unit, computed PPI / pitch / aspect / image width, and the calculator in the row
-// panel. TODO(M3a): the gallery view and `images` thumbnails arrive with attachments.
+// panel; `images` (set photos) with thumbnails, and the gallery layout (R13, R19).
 import { useMemo, useRef } from "react";
 import { reverseJoin, ViewCache } from "../../lib/show-selectors";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
+import { attachmentsOf, isImage } from "../attachments/selectors";
 import { placementFor } from "../shared/ops";
 import { contentItem, sceneItem, surfaceItem } from "../shared/pickers";
 import { TableGrid } from "../shared/TableGrid";
@@ -15,9 +16,17 @@ import { computeSurface } from "./formulas";
 const NONE: string[] = [];
 /** Channel hides at phone width unless the view shows it (Fields). */
 const NARROW_HIDDEN = ["channel"] as const;
+/** Gallery cards (R19): the first image (the set photo), titled by name or channel. */
+const GALLERY = {
+  presetName: "Surface gallery",
+  titleKey: "name",
+  title: (v: SurfaceView) => v.surface.name || v.surface.channel || "(unnamed surface)",
+  image: (v: SurfaceView) => v.files.find(isImage),
+};
 
 export function SurfaceGrid() {
-  const { canEdit } = useWorkspace();
+  const { canEdit, showId } = useWorkspace();
+  const files = useShowStore((s) => s.tables.attachments);
   const store = useShowStoreInstance();
   const surfaces = useShowStore((s) => s.tables.surfaces);
   const scenesTable = useShowStore((s) => s.tables.scenes);
@@ -49,15 +58,17 @@ export function SurfaceGrid() {
           );
           const scenes = sceneIds.map((s) => scenesTable.get(s));
           const content = contentIds.map((c) => contentTable.get(c));
+          const images = attachmentsOf(files, "surfaces", id, "images");
           return [
             // The built-in formulas read the surface and its parent only.
-            get(id, [surface, parent, ...scenes, "|", ...content], () => ({
+            get(id, [surface, parent, images, ...scenes, "|", ...content], () => ({
               id,
               surface,
               parent: parent ? surfaceItem(parent) : null,
               scenes: scenes.flatMap((s) => (s ? [sceneItem(s)] : [])),
               content: content.flatMap((c) => (c ? [contentItem(c, scenesTable)] : [])),
               computed: computeSurface(store.getState(), surface),
+              files: images,
             })),
           ];
         }),
@@ -73,10 +84,14 @@ export function SurfaceGrid() {
       sceneRank,
       contentRank,
       store,
+      files,
     ],
   );
 
-  const columns = useMemo(() => surfaceColumns({ store, editable: canEdit }), [store, canEdit]);
+  const columns = useMemo(
+    () => surfaceColumns({ store, editable: canEdit, showId }),
+    [store, canEdit, showId],
+  );
 
   return (
     <TableGrid<SurfaceView>
@@ -90,6 +105,7 @@ export function SurfaceGrid() {
       rows={rows}
       editOps={surfaceEditOps}
       narrowHidden={NARROW_HIDDEN}
+      gallery={GALLERY}
       {...(canEdit
         ? {
             createOps: (id, pos) => [

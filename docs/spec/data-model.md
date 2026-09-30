@@ -148,7 +148,7 @@ separate records (below).
 | `duration` | duration | from the current version, or entered |
 | `resolution` | pixel size | w × h |
 | `frame_rate` | number | |
-| `thumbnail` | attachment | a still, shown in grid and pickers |
+| `attachments` / `thumbnail` | attachment (many) | stills, PDFs, clips; the first image is the thumbnail (S4), shown in the grid, cue chips, cards and the gallery |
 | `file_path` | text / URL | where the master lives (server path or Drive link). Cuesheet does not store the media |
 | `cues` | link → Cue (many) | reverse of Cue.content |
 | `order_key` | order | |
@@ -163,7 +163,7 @@ become version records.
 | --- | --- | --- |
 | `content` | link → Content | |
 | `version` | text | "V03" — text so "V03a" works |
-| `date` | datetime | |
+| `date` | date | `YYYY-MM-DD` (a day) |
 | `rendered_by` | link → Person | |
 | `changes` | long text | what changed from the previous version |
 | `file_path` | text / URL | |

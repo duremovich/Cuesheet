@@ -41,3 +41,16 @@
   background: transparent;
   opacity: 0.7;
 }
+
+.thumb {
+  width: 14px;
+  height: 14px;
+  margin-left: -4px;
+  border-radius: 3px;
+  object-fit: cover;
+  flex: none;
+}
+
+.badge {
+  color: var(--color-text-muted);
+}

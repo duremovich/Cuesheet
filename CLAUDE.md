@@ -4,10 +4,10 @@ The project has left the spec-only phase: M0 (the application scaffold), M1a (th
 data layer: core tables, ops, sync, history, members, Airtable import), M1b (the generic
 `DataGrid`), M1c (the show workspace: a grid tab per core table on the live store, ⌘K),
 M2a (saved views and conditional formatting), M2b (notes panel, editable row panel with
-history, tech mode, phone quick-add, the show's current session) and M3b (surfaces,
-measurement / pixel-size / formula fields with unit conversion, the surface calculator)
-are built. The stack
-is decided in `docs/decisions/0005-cloudflare-platform.md`; don't relitigate it without a
+history, tech mode, phone quick-add, the show's current session), M3a (content versions,
+attachments in R2 with thumbnails, the gallery layout) and M3b (surfaces, measurement /
+pixel-size / formula fields with unit conversion, the surface calculator) are built. The
+stack is decided in `docs/decisions/0005-cloudflare-platform.md`; don't relitigate it without a
 new decision record. Build milestone by milestone; don't pull later-milestone features
 (e.g. the cue grid) into an earlier one.
 
@@ -213,7 +213,9 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   content's scene when all agree (content's scene: its Scene column, else its `SSS-` name
   prefix); a cue still without one takes the scene when the nearest scene-bearing cues
   before and after it (CSV order) agree, else stays Unassigned. Note `created by` names go
-  to `custom.created_by_name`; `Created Time` is read as UTC.
+  to `custom.created_by_name`; `Created Time` is read as UTC. A content row's `Version`
+  ("2.0") becomes one current `content_versions` record labelled "V02" (`versionLabel`),
+  status Available.
 - **Writing an e2e test.** Add `e2e/<feature>.spec.ts`. Use helpers in `e2e/helpers.ts`
   (`login`, `createShow`, `uniqueName`). Tests run in parallel against one server whose DB
   persists for the run, so make data unique (`uniqueName`) and don't assume an empty DB.
@@ -301,8 +303,11 @@ views" below).
   decides editability from `column.editable` and skips unchanged or unparsable values; a
   text draft is local while focused, so remote edits don't clobber it; Enter or blur
   commits, Escape reverts), **Notes** (cues, content, scenes: `NotesPanel`), **Content**
-  (cues: `CueContentCards`, link/unlink through the content picker), a table's own tabs
-  after Fields (`extraTabs` / TableGrid's `panelTabs`: the Surfaces **Calculator**) and **History**
+  (cues: `CueContentCards`, link/unlink through the content picker; cards show the
+  content's thumbnail and current version), **Versions** (content: see "Content
+  versions"; attachment columns show full width in Fields with add / remove / reorder,
+  see "Attachments"), a table's own tabs after Fields (`extraTabs` / TableGrid's
+  `panelTabs`: the Surfaces **Calculator**) and **History**
   (`PanelHistory`: `GET /history?table=&id=&limit=`, newest first, formatted by
   `history.ts`; "Load more" raises the limit by 50 up to the server's 1000; "Refresh"
   refetches; otherwise it refetches 400 ms after a change touches this record, i.e. its
@@ -325,7 +330,8 @@ views" below).
   author · time; ✎ or double-click edits the body in place (Enter saves, Escape cancels;
   if someone else deletes the note meanwhile, a toast says the edit was discarded and
   focus goes to `NoteFocusContext`, the tech compose box), × deletes at once with an
-  "Undo" toast for 8 s (`noteRestoreOps`: recreate with the same id, fields and links). A note's session defaults to the show's current session and is editable per
+  "Undo" toast for 8 s (`noteRestoreOps`: recreate with the same id, fields and links,
+  plus `attachmentRestoreOps` for its photos, whose files the server still keeps). A note's session defaults to the show's current session and is editable per
   note (the Session column / the note's Fields tab). Editability is `canEditNote` (editors: all notes; commenters: their own;
   viewers: none), mirroring the server; viewers get no compose box.
 - **Compose grammar** (`parseNoteText` in `features/notes/compose.ts`): Enter saves,
@@ -343,7 +349,11 @@ views" below).
   ⌥1–5 (read from `KeyboardEvent.code`) or the P select sets priority. Saving waits for
   the server: the box (text, types, priority, assignees) clears and "Saved to …" shows
   only once `store.mutate` resolves; on failure everything stays and the error shows
-  under the box. Bodies are capped at 100,000 characters (a counter appears near the
+  under the box. Images (any allowed file) pasted or dropped into the box wait as chips
+  under it (a file of a type the server refuses, e.g. HEIC, or an empty one is refused
+  there with the reason under the box) and are uploaded to the note once it's saved; a
+  note may be just photos (its body is then null) (`NoteComposeHandle.addFiles` for
+  the quick-add camera); note cards show their photos as a thumbnail strip. Bodies are capped at 100,000 characters (a counter appears near the
   limit). `requireTarget` (quick-add) only saves an unattached note when it says where it
   goes (`*` or a cue prefix). A new note is one batch (`noteCreateOps`: create with status Open and the show's current session, then
   `link` ops for cues and assignees); links come from `subjectLinks` / `resolveLinks` (a
@@ -387,9 +397,11 @@ views" below).
   (linked to the scene or to any of its cues). Viewers: list only; commenters: compose.
 - **Quick-add** (`features/quick/QuickAddPage.tsx`), `/shows/:id/quick?cue=<id>`: the
   header's "＋" link on phones, ⌘K "Quick add a note". Cue search (recent picks first,
-  per user and show), the compose box, the session control, and a disabled camera button
-  ("Attachments arrive in M3"); saving shows "Saved to Cue …" and keeps the cue. With no
-  cue picked, Add note is disabled unless the note starts with `*` (or a cue prefix). The
+  per user and show), the compose box, the session control, and a camera button (`<input
+  type=file accept=image/* capture=environment>`: the photos are attached to the next
+  saved note); saving shows "Saved to Cue …" and keeps the cue. A photo with no text
+  is a note. With no cue picked, Add note is disabled unless the note starts with `*`
+  (or a cue prefix). The
   type chips are one horizontally scrolling row at ≤ 600 px.
 - **E2E**: set up data through the API (`apiLogin`, `apiCreateShow`, `importExamples` in
   `e2e/helpers.ts`); the grid virtualizes rows, so open a far-down row with `?cue=<id>`
@@ -468,6 +480,21 @@ views" below).
   fields, row height, color) goes to their personal copy of that view, made once ("<name>
   (mine)", `config.forkedFrom` = the shared view's id; later changes reuse it). An
   editor's overlay (from migrated M1c widths) gives way for columns they size in the view.
+- **Layout** (R19): `config.layout` is `"gallery"` or absent (the grid). Tables that pass
+  `gallery` to `TableGrid` (Content: the first image, titled by name) get a **Gallery**
+  toggle in the view bar and a "+ Content gallery" preset under My views
+  (`actions.createPersonal`). `views/Gallery.tsx` renders the same rows/groups, filters,
+  sorts and row colors as cards: the image large (or a placeholder with the name), the
+  view's first four visible fields beneath, virtualized rows of cards, columns from
+  `galleryColumns(width)` (`views/gallery.ts`: 160 px minimum, so 390 px phones get two).
+  Keys: arrows / Home / End, Enter opens the image in the lightbox (else the panel), Space
+  or a click opens the row panel. It implements the grid's handle, so URL focus and the
+  panel work unchanged. The grid stays the default.
+- **Switching views is immediate** (`select`): the router applies `?view=` in a
+  transition, so the view just picked wins until the URL catches up (`picked` in
+  `useViewConfig`). Without it a change that switched views (a viewer's edit going to
+  their copy) rendered once with the old view's config and a controlled checkbox/radio in
+  the open panel snapped back under the click.
 - **Filter holds.** A row you insert or are editing stays visible while it's the active row
   even if it no longer matches (including after a remote change); when you leave it
   (another row, Enter moving down, or focus moving to another control outside the grid and
@@ -494,6 +521,121 @@ views" below).
 - **Migration of M1c prefs** (`legacy.ts`): on first open per table, old localStorage
   column widths become your layout overlay on the shared view you're on, collapsed groups
   move to the per-view key, the old live sort is dropped, and the old keys are removed.
+
+## Content versions (R10)
+
+- **Data.** ShowDO table `content_versions` (migration `0005_versions_attachments`, which
+  also seeds `content_versions.status`: Rendering / Available / In Millumin / Superseded):
+  `content_id` (ref, `cascade: true`, immutable: deleting the content deletes its versions
+  as explicit delete ops), `version` (text, "V03"), `date` (`YYYY-MM-DD`), `rendered_by`
+  (ref → persons, cleared when the person goes), `changes`, `file_path`, `is_current`,
+  `status`, `position`. **Exactly one current version per content item whenever it has
+  any** (none when it has none), kept by the engine like `views.is_default`: a create or
+  update that sets `is_current` clears it on the content's other versions in the same
+  batch; the first version of a content item is made current; deleting the current
+  version, or setting `is_current: false` on it, makes the newest other one (highest
+  `position`) current, and un-currenting the only version is refused (400).
+  `show-state.ts` mirrors all of this optimistically. Editors and the owner only.
+- **Client** (`features/content/versions.ts`): `currentVersions(table)` (content id →
+  current row, cached per map, so it's a stable memo dep), `versionsOf` (newest first),
+  `nextVersionLabel` ("V03" → "V04"), `addVersionOps` (next Vnn, today, your person when a
+  person's `user_id` is you, Available, current), `restoreVersionOps` (Undo). Shown as the
+  Content grid's read-only **Version** column, `105-001-VAMP · V03` on the cue list's
+  content chips (`PickerItem.badge`; display only, never matched), the cue panel's content
+  cards and the content panel's **Versions** tab (`ContentVersions.tsx`: add, set current,
+  edit in place, delete with an Undo toast).
+
+## Attachments (R13, S4)
+
+- **Data.** ShowDO table `attachments`: `table`, `record_id`, `field` (default
+  "attachments"), `filename`, `content_type`, `size`, `r2_key`, `width`, `height`,
+  `thumb_key`, `position`. Which fields exist is `ATTACHMENT_FIELDS` in
+  `src/shared/tables.ts` (`content.attachments`, `notes.attachments`, `surfaces.images`;
+  field type `attachment`, not a column), plus `custom` (`original_size`, `caption`). Rows
+  go through the op engine (history, broadcast), but **only the upload route creates new
+  ones** (`MutationContext.upload`; a client `create` gets 403, except a restore, below);
+  clients may update `position` (reorder) and `custom.caption`, and delete. `/history`
+  never shows `r2_key`/`thumb_key` (stripped from attachment rows' old/new values).
+  Permissions follow the record: editors/owner anything, commenters only files on notes
+  they created, viewers nothing. Deleting a record deletes its attachments (explicit
+  delete ops).
+- **Deletes are deferred in R2, so Undo works.** Deleting an attachment row (directly or
+  by cascade) never deletes its R2 objects synchronously: the engine records it in the DO
+  table `pending_r2_deletes` (`attachment_id`, `r2_key`, `size`, `deleted_at`, and `row`:
+  the whole deleted row as JSON) and the ShowDO schedules its alarm. **Undo** (of a file
+  delete, or of a note delete with photos) is a client `create` of the attachment with
+  its old id (`attachmentRestoreOps`); the engine accepts it only while the id is pending,
+  **rebuilds the row from the stored one** (whatever fields the client sent are ignored,
+  so a restore can't point a row at another object, record or size), checks the role
+  against the original record (a commenter can only restore files on their own notes),
+  and removes it from the list. The alarm (`ShowDO.alarm` → `purgeDeletedFiles(now)`,
+  `dueR2Deletes`) takes entries older than **24 h** (`R2_DELETE_DELAY_MS`) off the list
+  first (so a concurrent restore can no longer claim them), then deletes the file and its
+  thumbnail from R2, gives their bytes back to D1 `shows.storage_bytes` (only then), and
+  reschedules itself for the next one. So clients send deletes at once; Undo is offered for 8 s (the toast), and the
+  server would accept it for a day.
+- **Routes** (`routes/attachments.ts`, registered in `shows.ts` behind
+  `requireMembership`): `POST /api/shows/:id/attachments/upload-url {table, recordId,
+  field?, filename, contentType, size, originalSize?}` checks role, record, type, size
+  (0 bytes: 400) and the storage cap, cleans the name (`cleanFilename`: path parts,
+  control and bidi-override characters) and makes its extension match the stored type
+  (`withExtension`: `photo` → `photo.jpg`, `a.exe` as text → `a.exe.txt`), and reserves
+  an id in the DO (`reserveUpload`, 1 h, only for that user) with the file's **position
+  fixed at reserve time** (after the record's files and live reservations), so a
+  multi-file drop keeps its order however the PUTs finish → `{attachmentId, uploadUrl,
+  contentType}`. R2 presigned URLs need API credentials we
+  don't have locally, so `uploadUrl` is our own `PUT /api/shows/:id/attachments/:aid`,
+  which claims the reservation, atomically adds `Content-Length` to D1
+  `shows.storage_bytes` (413 over **2 GB per show**; D1 migration `0003_storage_bytes`),
+  streams the body into R2 through a `FixedLengthStream` (**25 MB** max, 411 without a
+  length, 413 over the limit, 400 unless it is exactly the size reserved), reads an image's size from its first 64 KB (`imageSize`; for a JPEG whose EXIF
+  Orientation turns it a quarter, the upright size), then creates the row
+  (and undoes the put and the bytes if that fails, e.g. the record was deleted meanwhile).
+  `GET …/attachments/:aid` streams the file (`?download=1`: as a download; ETag / 304,
+  byte ranges (`Range: bytes=…` → 206 + `Content-Range`, 416 when unsatisfiable; always
+  `Accept-Ranges: bytes`) for video seeking and PDF viewers, `private, immutable` caching, `nosniff`, a sandboxing CSP except for PDFs); `GET
+  …/:aid/thumb` the thumbnail; `GET /api/shows/:id/storage` → `{usedBytes, limitBytes}` (Show settings shows
+  it). **Types** (`checkAttachmentType` in `src/shared/attachments.ts`): PNG, JPEG, GIF,
+  WebP (thumbnailed), PDF, MP4/MOV, plain text/CSV/Markdown; HEIC gets 415 "export as JPEG
+  or PNG"; SVG/HTML and anything else 415. **R2 keys**: `shows/<showId>/<attachmentId>/
+  <filename>`; thumbnail `shows/<showId>/<attachmentId>/__thumb`.
+- **Thumbnails** are made **in the Worker on first request** with Photon
+  (`@cf-wasm/photon`, Rust → WASM with a workerd build; bundled as a WASM module by the
+  Vite plugin): longest side 320 px (`THUMB_MAX`), JPEG for JPEG sources, PNG otherwise,
+  stored in R2 and recorded with `ShowDO.setThumbKey` (not an edit: no history, no version
+  bump; clients derive the URL from the id). EXIF orientation is applied (`orient` in
+  `routes/thumbnail.ts`), so a sideways phone photo's thumbnail is upright. Images
+  already ≤ 320 px are served as their own thumbnail. The Worker decodes at most 4096 × 4096 px (`MAX_DECODE_PIXELS`, ≈ 64 MB;
+  a Worker has 128 MB), so **the client scales bigger photos down before upload**
+  (`resize.ts` `shrinkLargeImage`, the queue's `prepare`: PNG/JPEG/WebP over 16.7 MP →
+  longest side ≤ 4096 px via `OffscreenCanvas`, `resizeTarget` in `shared/attachments.ts`)
+  and sends the original dimensions (`originalSize` → the row's `custom.original_size`).
+  The browser draws it upright (`imageOrientation: "from-image"`), so the re-encoded file
+  needs no EXIF. GIFs and animated WebP are never resized (that would drop the
+  animation); they upload as they are under the 25 MB cap. **Not every image has a
+  thumbnail**: GIFs and animated images get their first frame only if Photon decodes
+  them, and anything too large to decode (an unresized GIF, a raw API upload) or
+  undecodable gets 404 from the thumb route. The client asks for `/thumb` only when
+  `hasThumbnail(row)` (`selectors.ts`: `thumb_key` set, or known dimensions within
+  `MAX_DECODE_PIXELS`); otherwise, or if the thumb fails to load, `Thumb` shows the
+  original.
+- **Client** (`features/attachments/`): `selectors.ts` (`attachmentsOf`, `thumbnailOf` =
+  the first image, cached per map), `uploads.ts` (`UploadQueue`: client-side type/size
+  checks, `prepare` (the resize above), reserve + PUT with progress through `putFile`
+  (XMLHttpRequest), two at a time, optional `ready` promise), `state.ts` (the page's queue
+  and the open lightbox; `useDeleteFile` deletes at once and offers Undo),
+  `Attachments.tsx` (`Thumb`, `AttachmentStrip`, `attachmentColumn`, `AttachmentsField`,
+  the lightbox and `AttachmentsHost`, mounted once in `ShowWorkspace`). Upload errors
+  toast; empty files are refused before reserving. In the row panel (`AttachmentsField`,
+  ux.md §Images) images show full width with a **caption** under each (`custom.caption`,
+  the file name until set; editable: Enter or blur saves, Escape reverts; shown in the
+  lightbox too), other files as a row; ↑/↓ reorder, × deletes.
+- **Adding an attachment field to a table**: add it to `ATTACHMENT_FIELDS` (e.g.
+  `surfaces: { images: { type: "attachment" } }`), give the tab's view object the files
+  (`attachmentsOf(tables.attachments, table, id, field)`, in the ViewCache deps) and a
+  column from `attachmentColumn({table, field, showId, files, recordId, editable})`, and
+  list the key in `VIEW_FIELDS` (kind `text`: filters match file names; sort by count).
+  The row panel shows it full width automatically; deletes cascade automatically.
 
 ## Units, formulas and surfaces (M3b: R11, R12, S2)
 
@@ -576,7 +718,8 @@ views" below).
   **Surfaces** columns on Scenes and Content (`surfaceLinkColumn`/`surfaceLinkOps`) and as
   editable reverse columns on Surfaces (link/unlink from the scene/content side). The
   Parent picker leaves out the surface and its regions. `images` (attachments) and the
-  gallery come with M3a. At ≤ 480 px the Channel column hides unless the view lists it
+  gallery come with M3a: the Surfaces **Images** column and a "+ Surface gallery"
+  preset. At ≤ 480 px the Channel column hides unless the view lists it
   (`narrowHidden` on `TableGrid`/`useViewConfig`); Name is 140 px wide. The importer warns
   about header units it doesn't know (read as meters) and about regions whose parent
   channel isn't in the file.

@@ -1,7 +1,13 @@
 // "Show settings" popover: Airtable import (editors) and members (everyone sees them; the
 // owner adds, changes and removes).
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import { GRANTABLE_ROLES, type MemberDTO, type Role } from "../../../shared/api";
+import {
+  GRANTABLE_ROLES,
+  type MemberDTO,
+  type Role,
+  type StorageResponse,
+} from "../../../shared/api";
+import { formatBytes } from "../../../shared/attachments";
 import { isUnit, UNIT_LABELS, UNITS } from "../../../shared/units";
 import { IMPORT_LABEL } from "../../components/AirtableImport";
 import { api } from "../../lib/api";
@@ -126,6 +132,7 @@ function SettingsBody({
           </button>
         </section>
       )}
+      <StorageUsage />
       <section>
         <h3>Members</h3>
         {members === null && <p className="muted">Loading…</p>}
@@ -198,6 +205,43 @@ function SettingsBody({
         )}
       </section>
     </div>
+  );
+}
+
+/** Attachment storage used by the show, of its 2 GB (R13). */
+function StorageUsage() {
+  const ws = useWorkspace();
+  const [usage, setUsage] = useState<StorageResponse | null>(null);
+  useEffect(() => {
+    let live = true;
+    api
+      .storage(ws.showId)
+      .then((u) => {
+        if (live) setUsage(u);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [ws.showId]);
+  return (
+    <section>
+      <h3>Storage</h3>
+      {usage ? (
+        <p data-testid="storage-usage">
+          {formatBytes(usage.usedBytes)} of {formatBytes(usage.limitBytes)} used for attachments
+          <meter
+            className={styles.storageMeter}
+            min={0}
+            max={usage.limitBytes}
+            value={usage.usedBytes}
+            aria-label="Attachment storage used"
+          />
+        </p>
+      ) : (
+        <p className="muted">Loading…</p>
+      )}
+    </section>
   );
 }
 

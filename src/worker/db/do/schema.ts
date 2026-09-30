@@ -269,6 +269,74 @@ export const views = sqliteTable(
   (t) => [index("views_table_idx").on(t.table)],
 );
 
+/**
+ * Content versions (R10): "V03" records per content item. Exactly one per content item has
+ * `is_current` (the op engine clears the others in the same batch). Deleting the content
+ * deletes its versions. Migration 0004 also seeds `content_versions.status` options.
+ */
+export const content_versions = sqliteTable(
+  "content_versions",
+  {
+    ...common(),
+    content_id: text("content_id")
+      .notNull()
+      .references(() => content.id, { onDelete: "cascade" }),
+    /** Text so "V03a" works. */
+    version: text("version"),
+    /** `YYYY-MM-DD`. */
+    date: text("date"),
+    rendered_by: text("rendered_by").references(() => persons.id, { onDelete: "set null" }),
+    changes: text("changes"),
+    file_path: text("file_path"),
+    is_current: integer("is_current").notNull().default(0),
+    status: text("status"),
+    position: real("position"),
+  },
+  (t) => [index("content_versions_content_idx").on(t.content_id)],
+);
+
+/**
+ * Files attached to a record's attachment field (R13), stored in R2 under `r2_key`
+ * (`shows/<showId>/<id>/<filename>`). Rows are created by the upload route, never by
+ * clients; deleting the row (or its record) deletes the R2 objects after commit.
+ */
+export const attachments = sqliteTable(
+  "attachments",
+  {
+    ...common(),
+    table: text("table").notNull(),
+    record_id: text("record_id").notNull(),
+    field: text("field").notNull().default("attachments"),
+    filename: text("filename").notNull(),
+    content_type: text("content_type").notNull(),
+    size: integer("size").notNull(),
+    r2_key: text("r2_key").notNull(),
+    width: integer("width"),
+    height: integer("height"),
+    thumb_key: text("thumb_key"),
+    position: real("position"),
+  },
+  (t) => [index("attachments_record_idx").on(t.table, t.record_id)],
+);
+
+/**
+ * R2 objects of deleted attachments, kept for 24 h so Undo can bring a file back (a
+ * restore recreates the row with the same id and removes it from here). The DO's alarm
+ * purges older ones from R2 and only then gives the bytes back to `shows.storage_bytes`.
+ */
+export const pending_r2_deletes = sqliteTable(
+  "pending_r2_deletes",
+  {
+    attachment_id: text("attachment_id").primaryKey(),
+    r2_key: text("r2_key").notNull(),
+    size: integer("size").notNull(),
+    deleted_at: integer("deleted_at").notNull(),
+    /** The deleted row (JSON, as stored): a restore recreates exactly this. */
+    row: text("row").notNull(),
+  },
+  (t) => [index("pending_r2_deletes_at_idx").on(t.deleted_at)],
+);
+
 /** Per-show select options (`table.field` → values). Seeded by migration 0002. */
 export const field_options = sqliteTable(
   "field_options",

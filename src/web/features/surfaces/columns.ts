@@ -4,10 +4,11 @@
 // (./formulas.ts).
 import type { Value } from "../../../shared/formula";
 import type { Op } from "../../../shared/ops";
-import type { SurfaceRow } from "../../../shared/tables";
+import type { AttachmentRow, SurfaceRow } from "../../../shared/tables";
 import { type PixelSize, parseLensRatio } from "../../../shared/units";
 import type { Column, PickerItem } from "../../components/grid/types";
 import type { ShowStore } from "../../lib/show-store";
+import { attachmentColumn } from "../attachments/Attachments";
 import { linkDiffOps, textField } from "../shared/ops";
 import {
   createScene,
@@ -26,6 +27,8 @@ export interface SurfaceView {
   scenes: PickerItem[];
   content: PickerItem[];
   computed: SurfaceComputed;
+  /** `images` (R13): set photos; the first is the gallery card's picture. */
+  files: AttachmentRow[];
 }
 
 const TEXT = ["name", "channel", "description"] as const;
@@ -62,12 +65,23 @@ function formulaColumn(key: SurfaceFormulaKey, width: number): Column<SurfaceVie
 export function surfaceColumns(opts: {
   store: ShowStore;
   editable: boolean;
+  /** For the Images column's file URLs and uploads. */
+  showId?: string;
 }): Column<SurfaceView>[] {
   const { store } = opts;
   const text = (key: (typeof TEXT)[number]) => (v: SurfaceView) => v.surface[key] ?? "";
   const cols: Column<SurfaceView>[] = [
     { key: "name", title: "Name", type: "text", width: 140, frozen: true, getValue: text("name") },
     { key: "channel", title: "Channel", type: "text", width: 100, getValue: text("channel") },
+    attachmentColumn<SurfaceView>({
+      table: "surfaces",
+      field: "images",
+      title: "Images",
+      showId: opts.showId ?? "",
+      files: (v) => v.files,
+      recordId: (v) => v.id,
+      editable: opts.editable,
+    }),
     {
       key: "parent",
       title: "Region of",

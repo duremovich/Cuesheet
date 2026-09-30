@@ -1,12 +1,12 @@
 // Phone quick-add (R7; ux.md §Tech mode), /shows/:id/quick: one-thumb note taking at
 // 390px. A big searchable cue picker (recent cues first), the compose box, type chips,
-// priority, the session label, and a camera button that waits for attachments (M3). The
-// picked cue stays picked after saving.
-import { useMemo, useState } from "react";
+// priority, the session label, and a camera button (photos attach to the next saved note,
+// R13). The picked cue stays picked after saving.
+import { useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import type { CueRow } from "../../../shared/tables";
 import { useShowStore } from "../../lib/show-store";
-import { NoteCompose } from "../notes/NoteCompose";
+import { NoteCompose, type NoteComposeHandle } from "../notes/NoteCompose";
 import { SessionControl } from "../notes/SessionControl";
 import { isStringArray, usePref } from "../shared/prefs";
 import { rankItems } from "../shared/search";
@@ -34,6 +34,8 @@ export function quickCueList(cues: readonly CueRow[], recent: readonly string[],
 
 export function QuickAddPage() {
   const ws = useWorkspace();
+  const compose = useRef<NoteComposeHandle>(null);
+  const camera = useRef<HTMLInputElement>(null);
   const status = useShowStore((s) => s.status);
   const cuesMap = useShowStore((s) => s.tables.cues);
   const order = useShowStore((s) => s.order.cues);
@@ -128,6 +130,7 @@ export function QuickAddPage() {
       {ws.canComment ? (
         <div className={styles.compose}>
           <NoteCompose
+            ref={compose}
             subject={picked ? { table: "cues", id: picked.id } : null}
             requireTarget
             label="Quick note"
@@ -137,16 +140,32 @@ export function QuickAddPage() {
                 : "Pick a cue, or type * for a general note"
             }
             extra={
-              <button
-                type="button"
-                className={styles.camera}
-                aria-disabled="true"
-                aria-label="Add a photo"
-                title="Attachments arrive in M3"
-                onClick={(e) => e.preventDefault()}
-              >
-                📷
-              </button>
+              <>
+                <button
+                  type="button"
+                  className={styles.camera}
+                  aria-label="Add a photo"
+                  title="Take or pick a photo (attached when the note is saved)"
+                  onClick={() => camera.current?.click()}
+                >
+                  📷
+                </button>
+                <input
+                  ref={camera}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  multiple
+                  className={styles.cameraInput}
+                  tabIndex={-1}
+                  aria-label="Photo to attach"
+                  data-testid="camera-input"
+                  onChange={(e) => {
+                    compose.current?.addFiles([...(e.target.files ?? [])]);
+                    e.target.value = "";
+                  }}
+                />
+              </>
             }
           />
         </div>

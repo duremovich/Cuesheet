@@ -346,3 +346,22 @@
     flex-shrink: 0;
   }
 }
+
+/* A note's photos (R13): the same thumbnail strip as the grid. */
+.photos {
+  height: 32px;
+}
+
+.compose[data-drop] {
+  outline: 2px dashed var(--color-accent);
+  outline-offset: 2px;
+}
+
+.pendingFiles {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}

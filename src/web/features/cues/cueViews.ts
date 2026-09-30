@@ -2,11 +2,14 @@
 // by scene. Built with a ViewCache so a cue's view object only changes when the cue, its
 // link lists or the linked records change (the grid re-renders exactly those rows).
 
+import { thumbnailUrl } from "../../../shared/attachments";
 import type { CueRow, SceneRow } from "../../../shared/tables";
 import { sortRows } from "../../components/grid/ordering";
 import type { Column, Group, PickerItem, SortSpec } from "../../components/grid/types";
 import { groupByScene, sceneTitle, UNASSIGNED, type ViewCache } from "../../lib/show-selectors";
 import type { ShowData } from "../../lib/show-state";
+import { thumbnailOf } from "../attachments/selectors";
+import { currentVersions } from "../content/versions";
 import { contentItem, personItem, sceneItem } from "../shared/pickers";
 
 export interface CueView {
@@ -19,8 +22,17 @@ export interface CueView {
 
 const NONE: string[] = [];
 
-export function buildCueViews(data: ShowData, cache: ViewCache<CueView>): CueView[] {
+/**
+ * With `showId`, content chips carry the content's current version ("· V03") and a tiny
+ * thumbnail (its first image).
+ */
+export function buildCueViews(
+  data: ShowData,
+  cache: ViewCache<CueView>,
+  showId?: string,
+): CueView[] {
   const { tables, order, joins } = data;
+  const versions = currentVersions(tables.content_versions);
   return cache.pass((get) =>
     order.cues.flatMap((id) => {
       const cue = tables.cues.get(id);
@@ -34,15 +46,34 @@ export function buildCueViews(data: ShowData, cache: ViewCache<CueView>): CueVie
       const contentScenes = content.map((c) =>
         c?.scene_id ? tables.scenes.get(c.scene_id) : null,
       );
+      // Chips show the current version and thumbnail, so those are deps too.
+      const extras = showId
+        ? content.flatMap((c) =>
+            c ? [versions.get(c.id), thumbnailOf(tables.attachments, "content", c.id)] : [],
+          )
+        : [];
       return [
         get(
           id,
-          [cue, scene, contentIds, personIds, ...content, ...contentScenes, ...persons],
+          [cue, scene, contentIds, personIds, ...content, ...contentScenes, ...persons, ...extras],
           () => ({
             id,
             cue,
             scene: scene ? sceneItem(scene) : null,
-            content: content.flatMap((c) => (c ? [contentItem(c, tables.scenes)] : [])),
+            content: content.flatMap((c) => {
+              if (!c) return [];
+              const item = contentItem(c, tables.scenes);
+              if (!showId) return [item];
+              const version = versions.get(c.id)?.version?.trim();
+              const thumb = thumbnailOf(tables.attachments, "content", c.id);
+              return [
+                {
+                  ...item,
+                  ...(version ? { badge: version } : {}),
+                  ...(thumb ? { thumb: thumbnailUrl(showId, thumb.id) } : {}),
+                },
+              ];
+            }),
             assignees: persons.flatMap((p) => (p ? [personItem(p)] : [])),
           }),
         ),

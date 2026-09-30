@@ -155,7 +155,15 @@ export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions
   }
 
   const ops: Op[] = [];
-  const created = { scenes: 0, cues: 0, content: 0, notes: 0, persons: 0, surfaces: 0 };
+  const created = {
+    scenes: 0,
+    cues: 0,
+    content: 0,
+    content_versions: 0,
+    notes: 0,
+    persons: 0,
+    surfaces: 0,
+  };
 
   // ---- surfaces (first: scenes link to them) ----
   // Name, Channel Name, Width/Height (<unit>); a region's parent comes from its channel
@@ -303,9 +311,13 @@ export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions
     sceneByText.get(text.toLowerCase()) ?? sceneByNumber.get(/\d+/.exec(text)?.[0] ?? "") ?? null;
 
   // ---- content ----
+  const availableStatus = fieldOptions["content_versions.status"]?.some(
+    (o) => o.value === "Available",
+  )
+    ? "Available"
+    : null;
   const contentByName = new Map<string, string>();
   const contentScene = new Map<string, string | null>();
-  let versions = 0;
   for (const r of byKind.get("content") ?? []) {
     if (!Object.values(r).some((v) => v.trim())) continue;
     const name = clean(r.Name);
@@ -317,7 +329,6 @@ export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions
     if (sceneText && !sceneId) warnings.add(`Content: scene "${sceneText}" not found`);
     if (!sceneId && name) sceneId = sceneByNumber.get(/^(\d+)-/.exec(name)?.[1] ?? "") ?? null;
     contentScene.set(id, sceneId);
-    if (clean(r.Version)) versions++;
     const creator = clean(r.Creator);
     ops.push({
       op: "create",
@@ -332,9 +343,24 @@ export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions
       },
     });
     created.content++;
+    // Airtable's single Version ("2.0") becomes one current version record ("V02").
+    const version = versionLabel(clean(r.Version));
+    if (version) {
+      ops.push({
+        op: "create",
+        table: "content_versions",
+        id: newId(),
+        fields: {
+          content_id: id,
+          version,
+          is_current: true,
+          // The current render: Available (when the show has that status option).
+          status: availableStatus,
+        },
+      });
+      created.content_versions++;
+    }
   }
-  if (versions)
-    warnings.add(`Content: ${versions} Version values not imported (content versions come later)`);
   const contentId = (name: string, what: string): string | null => {
     const id = contentByName.get(name.toLowerCase());
     if (!id) warnings.add(`${what}: content "${name}" not found; link skipped`);
@@ -481,4 +507,14 @@ export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions
   }
 
   return { ops, created, warnings: warnings.list() };
+}
+
+/** Airtable's Version ("2.0", "4", "v3") as a version label ("V02", "V04", "V03"); "2.5" → "V02.5". */
+export function versionLabel(raw: string | null): string | null {
+  if (!raw) return null;
+  const m = /^v?(\d+)(?:\.(\d+))?$/i.exec(raw.trim());
+  if (!m) return raw.trim();
+  const major = `V${(m[1] ?? "").replace(/^0+(?=\d)/, "").padStart(2, "0")}`;
+  const minor = m[2] && !/^0+$/.test(m[2]) ? `.${m[2]}` : "";
+  return major + minor;
 }

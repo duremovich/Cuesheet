@@ -14,10 +14,12 @@ import {
   useRef,
   useState,
 } from "react";
+import { checkAttachmentType } from "../../../shared/attachments";
 import type { FieldOption } from "../../../shared/tables";
 import { Chip, type PickerItem, RecordPicker } from "../../components/grid";
 import { optionColor } from "../../components/grid/Chip";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
+import { uploadQueue } from "../attachments/state";
 import { createPerson, searchPersons } from "../shared/pickers";
 import { isStringArray, readPref, writePref } from "../shared/prefs";
 import { useWorkspace } from "../show/workspace";
@@ -43,6 +45,8 @@ export interface NoteComposeHandle {
   focus(): void;
   /** The text typed so far. */
   text(): string;
+  /** Photos / files to attach to the next saved note (the quick-add camera button). */
+  addFiles(files: File[]): void;
 }
 
 export interface SavedNote {
@@ -111,6 +115,25 @@ export const NoteCompose = forwardRef<NoteComposeHandle, NoteComposeProps>(funct
   const [flash, setFlash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  /** Pasted / dropped / photographed files, uploaded once the note is saved (R13). */
+  const [files, setFiles] = useState<{ key: number; file: File }[]>([]);
+  const fileSeq = useRef(0);
+  const [dropping, setDropping] = useState(false);
+  const addFiles = useCallback((list: File[]) => {
+    // Refused here, before the note is saved (HEIC, empty, unsupported types).
+    const ok: File[] = [];
+    const refused: string[] = [];
+    for (const file of list) {
+      const type = checkAttachmentType(file.type, file.name);
+      if ("error" in type) refused.push(`${file.name || "file"}: ${type.error}`);
+      else if (file.size === 0) refused.push(`${file.name || "file"} is empty`);
+      else ok.push(file);
+    }
+    setError(refused.length ? `Can't attach ${refused.join("; ")}` : null);
+    if (ok.length) {
+      setFiles((f) => [...f, ...ok.map((file) => ({ key: ++fileSeq.current, file }))]);
+    }
+  }, []);
   const savingRef = useRef(false);
   /** Caret position where `@` opened the person picker (Escape puts the `@` back there). */
   const mentionAt = useRef(0);
@@ -124,8 +147,9 @@ export const NoteCompose = forwardRef<NoteComposeHandle, NoteComposeProps>(funct
     () => ({
       focus: () => input.current?.focus({ preventScroll: true }),
       text: () => input.current?.value ?? "",
+      addFiles,
     }),
-    [],
+    [addFiles],
   );
 
   useLayoutEffect(() => {
@@ -148,8 +172,11 @@ export const NoteCompose = forwardRef<NoteComposeHandle, NoteComposeProps>(funct
   );
   // Only offer types the show has (options are editable per show).
   const activeTypes = types.filter((t) => typeValues.includes(t));
+  // A photo alone is a note too (quick-add: snap, save).
   const canSave =
-    !!parsed.body && !saving && !(requireTarget && !subject && parsed.target.kind === "current");
+    (!!parsed.body || files.length > 0) &&
+    !saving &&
+    !(requireTarget && !subject && parsed.target.kind === "current");
 
   const describe = useCallback(
     (target: NoteTarget): string => {
@@ -183,10 +210,10 @@ export const NoteCompose = forwardRef<NoteComposeHandle, NoteComposeProps>(funct
       currentCueId,
       persons: [...data.tables.persons.values()],
     });
-    if (!p.body) return;
+    if (!p.body && files.length === 0) return;
     const links = resolveLinks(data, p.target, subjectLinks(data, subject));
     const ops = noteCreateOps({
-      body: p.body,
+      body: p.body || null,
       types: activeTypes,
       priority,
       session: data.show?.currentSession ?? null,
@@ -207,6 +234,15 @@ export const NoteCompose = forwardRef<NoteComposeHandle, NoteComposeProps>(funct
     } finally {
       savingRef.current = false;
       setSaving(false);
+    }
+    // The note exists now: its files go up (a commenter's own note, so they may attach).
+    if (files.length) {
+      uploadQueue.add(
+        ws.showId,
+        { table: "notes", recordId: id },
+        files.map((f) => f.file),
+      );
+      setFiles([]);
     }
     writePref(typesPrefKey(ws.userId), activeTypes);
     // Only clear what's still the saved text (typing may have continued meanwhile).
@@ -257,7 +293,28 @@ export const NoteCompose = forwardRef<NoteComposeHandle, NoteComposeProps>(funct
   const errorId = useId();
 
   return (
-    <div className={styles.compose} ref={wrap} data-testid="note-compose">
+    // biome-ignore lint/a11y/noStaticElementInteractions: a drop target around the compose controls
+    <div
+      className={styles.compose}
+      ref={wrap}
+      data-testid="note-compose"
+      data-drop={dropping || undefined}
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+        setDropping(true);
+      }}
+      onDragLeave={() => setDropping(false)}
+      onDrop={(e) => {
+        setDropping(false);
+        const list = [...e.dataTransfer.files];
+        if (list.length === 0) return;
+        e.preventDefault();
+        addFiles(list);
+        refocus();
+      }}
+    >
       <textarea
         ref={input}
         className={styles.composeInput}
@@ -277,7 +334,26 @@ export const NoteCompose = forwardRef<NoteComposeHandle, NoteComposeProps>(funct
           if (flash) setFlash(null);
         }}
         onKeyDown={onKeyDown}
+        onPaste={(e) => {
+          const list = [...e.clipboardData.files];
+          if (list.length === 0) return;
+          e.preventDefault();
+          addFiles(list);
+        }}
       />
+      {files.length > 0 && (
+        <ul className={styles.pendingFiles} aria-label="Files to attach">
+          {files.map(({ key, file }) => (
+            <li key={key} data-testid="pending-file">
+              <Chip
+                label={file.name || "photo"}
+                onRemove={() => setFiles(files.filter((x) => x.key !== key))}
+                removeLabel={`Don't attach ${file.name || "photo"}`}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
       {error && (
         <p className={styles.error} role="alert" id={errorId} data-testid="compose-error">
           {error}

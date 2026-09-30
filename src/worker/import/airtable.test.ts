@@ -10,6 +10,7 @@ import {
   parseAirtableTime,
   splitMulti,
   splitSceneName,
+  versionLabel,
 } from "./airtable";
 
 describe("Airtable import helpers", () => {
@@ -35,6 +36,34 @@ describe("Airtable import helpers", () => {
       name: "Scene One: Hottest Speakeasy",
     });
     expect(splitSceneName("Intermission")).toEqual({ number: null, name: "Intermission" });
+  });
+
+  it("turns Airtable versions into version labels", () => {
+    expect(versionLabel("2.0")).toBe("V02");
+    expect(versionLabel("4")).toBe("V04");
+    expect(versionLabel("v3")).toBe("V03");
+    expect(versionLabel("12.0")).toBe("V12");
+    expect(versionLabel("2.5")).toBe("V02.5");
+    expect(versionLabel("final")).toBe("final");
+    expect(versionLabel("")).toBeNull();
+    expect(versionLabel(null)).toBeNull();
+  });
+
+  it("imports a content row's Version as its current version", () => {
+    const csv = [
+      "Name,Version,Scene,Cue List,Content Notes,Creator,LOOP IN,LOOP OUT",
+      "105-001-VAMP,2.0,,,,,,",
+      "105-002-X,,,,,,,",
+    ].join("\n");
+    const plan = buildAirtableImport([{ name: "Content-Grid view.csv", text: csv }], {
+      "content_versions.status": [{ value: "Available", color: "green" }],
+    });
+    expect(plan.created).toMatchObject({ content: 2, content_versions: 1 });
+    const vamp = plan.ops.find((o) => o.op === "create" && o.table === "content");
+    const version = plan.ops.find((o) => o.op === "create" && o.table === "content_versions");
+    expect(version).toMatchObject({
+      fields: { content_id: vamp?.id, version: "V02", is_current: true, status: "Available" },
+    });
   });
 
   it("detects the table from the file name or headers", () => {

@@ -230,7 +230,8 @@ export function resolveLinks(data: ShowData, target: NoteTarget, base: NoteLinks
 }
 
 export interface NewNote {
-  body: string;
+  /** null: a note that is only its photos (quick-add). */
+  body: string | null;
   types: readonly string[];
   priority: string | null;
   session: string | null;

@@ -27,6 +27,7 @@ import { RESERVED_KEYS } from "../do/ops-engine";
 import { USER_ID_HEADER } from "../do/ShowDO";
 import { buildAirtableImport, type CsvFile } from "../import/airtable";
 import type { AppEnv } from "../types";
+import * as attachments from "./attachments";
 import {
   declaredTooLarge,
   jsonBody,
@@ -43,7 +44,7 @@ export function showStub(env: Env, showId: string) {
   return env.SHOW.get(env.SHOW.idFromName(showId));
 }
 
-type ShowEnv = AppEnv & {
+export type ShowEnv = AppEnv & {
   Variables: AppEnv["Variables"] & {
     show: { id: string; name: string; currentSession: string | null };
     role: Role;
@@ -51,7 +52,7 @@ type ShowEnv = AppEnv & {
 };
 
 /** 404 unless the show exists and the signed-in user is a member of it. */
-const requireMembership = createMiddleware<ShowEnv>(async (c, next) => {
+export const requireMembership = createMiddleware<ShowEnv>(async (c, next) => {
   const showId = c.req.param("id") ?? "";
   const row = await c.var.db
     .select({
@@ -313,6 +314,13 @@ export const showRoutes = new Hono<ShowEnv>()
     }
     return c.json({ created: plan.created, warnings: plan.warnings } satisfies ImportResponse);
   })
+
+  // ---- attachments (routes/attachments.ts) ----
+  .post("/shows/:id/attachments/upload-url", requireMembership, attachments.uploadUrl)
+  .put("/shows/:id/attachments/:aid", requireMembership, attachments.upload)
+  .get("/shows/:id/attachments/:aid", requireMembership, attachments.download)
+  .get("/shows/:id/attachments/:aid/thumb", requireMembership, attachments.thumbnail)
+  .get("/shows/:id/storage", requireMembership, attachments.storage)
 
   // ---- members ----
   .get("/shows/:id/members", requireMembership, async (c) => {

@@ -23,6 +23,7 @@
     "seed:example": "node scripts/seed-example.ts"
   },
   "dependencies": {
+    "@cf-wasm/photon": "^0.4.0",
     "@tanstack/react-virtual": "^3.14.13",
     "drizzle-orm": "^0.45.3",
     "fractional-indexing": "^4.0.0",

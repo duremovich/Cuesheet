@@ -18,12 +18,14 @@ import type {
 } from "../../shared/ops";
 import { effectivePlacement, orderKeyFor, PlacementError } from "../../shared/order";
 import {
+  ATTACHMENT_FIELDS,
   DATA_TABLES,
   type DataTableName,
   FIELDS,
   type FieldOptions,
   type FieldSpec,
   fieldSpec,
+  isAttachmentField,
   isDataTable,
   isOrderedTable,
   isTableName,
@@ -49,7 +51,15 @@ export interface MutationContext {
   clientId: string | null;
   /** Import only: accept `created_at` in create fields. */
   allowCreatedAt?: boolean;
+  /**
+   * The upload route only: may create `attachments` rows (with their server-set fields).
+   * Clients can't, except to restore a deleted one (Undo) whose file is still kept.
+   */
+  upload?: boolean;
 }
+
+/** How long a deleted attachment's R2 objects are kept (for Undo) before the alarm purges them. */
+export const R2_DELETE_DELAY_MS = 24 * 60 * 60 * 1000;
 
 export class OpError extends Error {
   constructor(
@@ -168,6 +178,8 @@ export class Batch {
    * sends them only to that owner's sockets.
    */
   readonly viewOwners = new Map<string, string>();
+  /** Attachments this batch deleted (directly or by cascade): their files wait for purge. */
+  filesDeleted = 0;
   private options: Map<string, Set<string>> | null = null;
   private opIndex = 0;
   private readonly now: number;
@@ -282,12 +294,22 @@ export class Batch {
   /**
    * Commenters may only touch notes they created. Views: anyone (viewers too) may manage
    * their own personal views; only editors/owners shared ones; nobody someone else's.
-   * `owner` is the view's owner_user_id (for a create: the requested one).
+   * `created` holds a create's requested fields (a view's owner_user_id). Attachments follow
+   * their record: editors any; commenters only on notes they created.
    */
-  private checkRole(table: TableName, existing: DbRow | null, owner?: unknown): void {
+  private checkRole(table: TableName, existing: DbRow | null, created?: FieldValues): void {
     const { role, userId } = this.ctx;
+    if (table === "attachments") {
+      if (role === "owner" || role === "editor") return;
+      const parentTable = existing ? existing.table : created?.table;
+      const parentId = existing ? existing.record_id : created?.record_id;
+      if (role === "commenter" && parentTable === "notes" && typeof parentId === "string") {
+        if (this.getRow("notes", parentId)?.created_by === userId) return;
+        this.fail("Commenters can only attach files to their own notes", 403);
+      }
+    }
     if (table === "views") {
-      const viewOwner = existing ? existing.owner_user_id : (owner ?? null);
+      const viewOwner = existing ? existing.owner_user_id : (created?.owner_user_id ?? null);
       if (viewOwner === userId) return;
       if (viewOwner !== null) this.fail("That view belongs to someone else", 403);
       if (role === "owner" || role === "editor") return;
@@ -358,9 +380,15 @@ export class Batch {
   // ---- validation ----
 
   /** Validate and normalise one field value from a client. */
-  private validate(table: TableName, field: string, spec: FieldSpec, value: unknown): unknown {
+  private validate(
+    table: TableName,
+    field: string,
+    spec: FieldSpec,
+    value: unknown,
+    allowAuto = false,
+  ): unknown {
     const label = `${table}.${field}`;
-    if (spec.auto) this.fail(`${label} is set automatically`);
+    if (spec.auto && !allowAuto) this.fail(`${label} is set automatically`);
     if ((spec.type === "select" || spec.type === "ref") && value === "") value = null;
     if (table === "views") this.validateViewField(field, value);
     if (value === null) {
@@ -573,8 +601,16 @@ export class Batch {
 
   // ---- ops ----
 
-  private create(table: TableName, id: string, fields: FieldValues, placement: Placement) {
-    this.checkRole(table, null, fields.owner_user_id);
+  private create(table: TableName, id: string, requested: FieldValues, placement: Placement) {
+    let fields = requested;
+    const restoring = table === "attachments" && !this.ctx.upload ? this.pendingFile(id) : null;
+    if (table === "attachments" && !this.ctx.upload) {
+      if (!restoring) this.fail("Files are attached by uploading them", 403);
+      // Undo of a delete: the row comes back exactly as it was (the client's fields are
+      // ignored), pointing at the same R2 file, which is kept until purged.
+      fields = restoring;
+    }
+    this.checkRole(table, null, fields);
     if (this.getRow(table, id)) this.fail(`${table} ${id} already exists`);
     const row: WireRow = { id };
     for (const [name, spec] of Object.entries(FIELDS[table]) as [string, FieldSpec][]) {
@@ -593,9 +629,14 @@ export class Batch {
       } else {
         const spec = fieldSpec(table, name);
         if (!spec) this.fail(`unknown field ${table}.${name}`);
-        row[name] = this.validate(table, name, spec, value);
+        row[name] = this.validate(table, name, spec, value, table === "attachments");
       }
     }
+    if (table === "attachments") {
+      if (restoring) this.sql.exec("DELETE FROM pending_r2_deletes WHERE attachment_id = ?", id);
+      this.prepareAttachment(row);
+    }
+    if (table === "content_versions") this.prepareVersion(row);
     if (table === "surfaces") this.checkParent(id, row.parent_id);
     if (table === "views") {
       if (!isDataTable(row.table)) this.fail("views.table is required");
@@ -638,6 +679,93 @@ export class Batch {
       if (typeof row.owner_user_id === "string") this.viewOwners.set(id, row.owner_user_id);
       this.afterViewWrite(id);
     }
+    if (table === "content_versions") this.afterVersionWrite(id);
+  }
+
+  /**
+   * A deleted attachment whose file is still kept (restorable): the fields to recreate it
+   * with (as it was stored), or null.
+   */
+  private pendingFile(id: string): FieldValues | null {
+    const found = this.sql
+      .exec<{ row: string }>("SELECT row FROM pending_r2_deletes WHERE attachment_id = ?", id)
+      .toArray()[0];
+    if (!found) return null;
+    const stored = parseJson<Record<string, unknown>>(found.row, {});
+    const out: FieldValues = {};
+    for (const k of Object.keys(FIELDS.attachments)) if (k in stored) out[k] = stored[k];
+    if (isPlainObject(stored.custom)) out.custom = stored.custom;
+    return out;
+  }
+
+  /** A new attachment: its record must exist and have that attachment field. */
+  private prepareAttachment(row: WireRow): void {
+    const { table, field, record_id } = row;
+    if (
+      typeof table !== "string" ||
+      typeof field !== "string" ||
+      !isAttachmentField(table, field)
+    ) {
+      this.fail(`${String(table)}.${String(field)} is not an attachment field`);
+    }
+    if (typeof record_id !== "string" || !this.getRow(table as TableName, record_id)) {
+      this.fail(`${table} ${String(record_id)} not found`);
+    }
+    for (const k of ["filename", "content_type", "size", "r2_key"]) {
+      if (row[k] === null || row[k] === undefined) this.fail(`attachments.${k} is required`);
+    }
+    if (row.position === null) {
+      const { p } = this.sql
+        .exec<{ p: number | null }>(
+          'SELECT max(position) AS p FROM attachments WHERE "table" = ? AND record_id = ? AND field = ?',
+          table,
+          record_id,
+          field,
+        )
+        .one();
+      row.position = (p ?? 0) + 1;
+    }
+  }
+
+  /** A new version: after the content's others; current when the content has none yet. */
+  private prepareVersion(row: WireRow): void {
+    const contentId = row.content_id;
+    if (typeof contentId !== "string") this.fail("content_versions.content_id is required");
+    const { p, current } = this.sql
+      .exec<{ p: number | null; current: number }>(
+        "SELECT max(position) AS p, coalesce(max(is_current), 0) AS current FROM content_versions WHERE content_id = ?",
+        contentId,
+      )
+      .one();
+    if (row.position === null) row.position = (p ?? 0) + 1;
+    if (!current) row.is_current = true;
+  }
+
+  /** Setting `is_current` on a version clears it on the content's other versions. */
+  private afterVersionWrite(id: string): void {
+    const row = this.getRow("content_versions", id);
+    if (row?.is_current !== 1) return;
+    const others = this.sql
+      .exec<DbRow>(
+        "SELECT * FROM content_versions WHERE content_id = ? AND is_current = 1 AND id != ?",
+        row.content_id,
+        id,
+      )
+      .toArray();
+    for (const o of others)
+      this.write("content_versions", o.id as string, o, { is_current: false });
+  }
+
+  /** The current version was deleted: the newest remaining one becomes current. */
+  private afterVersionDelete(before: DbRow): void {
+    if (before.is_current !== 1) return;
+    const next = this.sql
+      .exec<DbRow>(
+        "SELECT * FROM content_versions WHERE content_id = ? ORDER BY position DESC, created_at DESC, id DESC LIMIT 1",
+        before.content_id,
+      )
+      .toArray()[0];
+    if (next) this.write("content_versions", next.id as string, next, { is_current: true });
   }
 
   /** The placement a create really gets (neighbours may have been deleted meanwhile). */
@@ -740,8 +868,30 @@ export class Batch {
       changes.config = this.sanitizeConfig(before.table as DataTableName, changes.config);
     }
     if (table === "surfaces" && "parent_id" in changes) this.checkParent(id, changes.parent_id);
+    // Un-currenting the current version hands "current" to the newest other one.
+    const successor =
+      table === "content_versions" && before.is_current === 1 && changes.is_current === false
+        ? this.newestVersion(before.content_id as string, id)
+        : undefined;
+    if (successor === null) this.fail("The only version of a content item stays current");
     this.write(table, id, before, changes);
     if (table === "views") this.afterViewWrite(id);
+    if (table === "content_versions") this.afterVersionWrite(id);
+    if (successor)
+      this.write("content_versions", successor.id as string, successor, { is_current: true });
+  }
+
+  /** The content's newest version other than `except` (highest position), or null. */
+  private newestVersion(contentId: string, except: string): DbRow | null {
+    return (
+      this.sql
+        .exec<DbRow>(
+          "SELECT * FROM content_versions WHERE content_id = ? AND id != ? ORDER BY position DESC, created_at DESC, id DESC LIMIT 1",
+          contentId,
+          except,
+        )
+        .toArray()[0] ?? null
+    );
   }
 
   private move(table: TableName, id: string, placement: Placement) {
@@ -758,6 +908,16 @@ export class Batch {
     const before = this.mustGet(table, id);
     this.noteViewOwner(table, id, before);
     this.checkRole(table, before);
+    this.remove(table, id, before);
+    if (table === "content_versions") this.afterVersionDelete(before);
+  }
+
+  /**
+   * Delete a row and what depends on it: its links, rows referencing it through a
+   * `cascade` ref (a content's versions) and its attachments are deleted; other references
+   * to it are cleared. Roles are checked on the row the client named; dependents go with it.
+   */
+  private remove(table: TableName, id: string, before: DbRow) {
     if (table === "views" && before.owner_user_id === null) {
       const { n } = this.sql
         .exec<{ n: number }>(
@@ -794,8 +954,33 @@ export class Batch {
         const refs = this.sql
           .exec<DbRow>(`SELECT * FROM ${q(other)} WHERE ${q(name)} = ?`, id)
           .toArray();
-        for (const r of refs) this.write(other, r.id as string, r, { [name]: null });
+        for (const r of refs) {
+          if (spec.cascade) this.remove(other, r.id as string, r);
+          else this.write(other, r.id as string, r, { [name]: null });
+        }
       }
+    }
+    if (ATTACHMENT_FIELDS[table]) {
+      const files = this.sql
+        .exec<DbRow>(
+          'SELECT * FROM attachments WHERE "table" = ? AND record_id = ? ORDER BY position, id',
+          table,
+          id,
+        )
+        .toArray();
+      for (const f of files) this.remove("attachments", f.id as string, f);
+    }
+    if (table === "attachments") {
+      // The file stays in R2 for a day so Undo can bring it back; the DO's alarm purges it.
+      this.sql.exec(
+        "INSERT OR REPLACE INTO pending_r2_deletes (attachment_id, r2_key, size, deleted_at, row) VALUES (?, ?, ?, ?, ?)",
+        id,
+        before.r2_key,
+        Number(before.size) || 0,
+        this.now,
+        JSON.stringify(decodeRow("attachments", before)),
+      );
+      this.filesDeleted++;
     }
     this.sql.exec(`DELETE FROM ${q(table)} WHERE id = ?`, id);
     this.log(table, id, "*", decodeRow(table, before), undefined);
@@ -1005,6 +1190,9 @@ export function readHistory(sql: SqlStorage, query: HistoryQuery, userId?: strin
       limit,
     )
     .toArray()
+    .map((r) =>
+      r.table === "attachments" ? { ...r, old: hideKey(r.old), new: hideKey(r.new) } : r,
+    )
     .map((r) => ({
       version: r.version,
       ts: r.ts,
@@ -1017,4 +1205,34 @@ export function readHistory(sql: SqlStorage, query: HistoryQuery, userId?: strin
       new: r.new,
       clientId: r.client_id,
     }));
+}
+
+/** Deleted attachments' files due for purge at `now`, and when the next one is due. */
+export function dueR2Deletes(
+  sql: SqlStorage,
+  now: number,
+): { due: { attachment_id: string; r2_key: string; size: number }[]; next: number | null } {
+  const cutoff = now - R2_DELETE_DELAY_MS;
+  const due = sql
+    .exec<{ attachment_id: string; r2_key: string; size: number }>(
+      "SELECT attachment_id, r2_key, size FROM pending_r2_deletes WHERE deleted_at <= ? ORDER BY deleted_at LIMIT 500",
+      cutoff,
+    )
+    .toArray();
+  const later = sql
+    .exec<{ t: number | null }>(
+      "SELECT min(deleted_at) AS t FROM pending_r2_deletes WHERE deleted_at > ?",
+      cutoff,
+    )
+    .one().t;
+  return { due, next: later === null ? null : later + R2_DELETE_DELAY_MS };
+}
+
+/** History never shows where a file lives in R2 (an attachment row's `r2_key`/`thumb_key`). */
+function hideKey(v: string | null): string | null {
+  if (v === null) return v;
+  const parsed = parseJson<unknown>(v, null);
+  if (!isPlainObject(parsed) || !("r2_key" in parsed || "thumb_key" in parsed)) return v;
+  const { r2_key: _k, thumb_key: _t, ...rest } = parsed;
+  return JSON.stringify(rest);
 }

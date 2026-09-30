@@ -15,6 +15,8 @@ import {
 import { compareOrder, effectivePlacement, orderKeyFor } from "../../shared/order";
 import {
   type AnyRow,
+  ATTACHMENT_FIELDS,
+  type ContentVersionRow,
   FIELDS,
   type FieldOptions,
   type FieldSpec,
@@ -60,6 +62,8 @@ export function emptyData(): ShowData {
       persons: new Map(),
       surfaces: new Map(),
       views: new Map(),
+      content_versions: new Map(),
+      attachments: new Map(),
     },
     order: { scenes: [], cues: [], content: [], surfaces: [] },
     joins: {
@@ -198,8 +202,75 @@ export function resolveLocal(data: ShowData, ops: AnyOp[], ctx: LocalContext): A
       state = applyResolved(state, cleared);
       out.push(...cleared);
     }
+    if (op.table === "content_versions") {
+      const more = versionFollowUps(state, op, ctx);
+      state = applyResolved(state, more);
+      out.push(...more);
+    }
   }
   return out;
+}
+
+/**
+ * Like the server: a version that became current un-currents its siblings (deleting the
+ * current version promotes the newest remaining one: see the delete case).
+ */
+function versionFollowUps(data: ShowData, op: Op, ctx: LocalContext): ResolvedOp[] {
+  if (op.op !== "create" && op.op !== "update") return [];
+  const stamp = { updated_at: ctx.now, updated_by: ctx.userId };
+  const versions = data.tables.content_versions;
+  const v = versions.get(op.id);
+  if (v && !v.is_current && op.op === "update" && op.fields.is_current === false) {
+    // Un-currented: the newest other version takes over (the server refuses it when
+    // there's no other).
+    const others = [...versions.values()].filter(
+      (o) => o.id !== v.id && o.content_id === v.content_id,
+    );
+    if (others.some((o) => o.is_current)) return [];
+    const next = others.sort((a, b) => compareVersionAge(b, a))[0];
+    return next
+      ? [
+          {
+            op: "update",
+            table: "content_versions",
+            id: next.id,
+            fields: { is_current: true, ...stamp },
+          },
+        ]
+      : [];
+  }
+  if (!v?.is_current) return [];
+  const out: ResolvedOp[] = [];
+  for (const o of versions.values()) {
+    if (o.id !== v.id && o.content_id === v.content_id && o.is_current) {
+      out.push({
+        op: "update",
+        table: "content_versions",
+        id: o.id,
+        fields: { is_current: false, ...stamp },
+      });
+    }
+  }
+  return out;
+}
+
+/** The content's version that becomes current when `deleted` (the current one) goes. */
+function promotedVersion(data: ShowData, deleted: ContentVersionRow): ContentVersionRow | null {
+  let best: ContentVersionRow | null = null;
+  for (const o of data.tables.content_versions.values()) {
+    if (o.id === deleted.id || o.content_id !== deleted.content_id) continue;
+    if (!best || compareVersionAge(o, best) > 0) best = o;
+  }
+  return best;
+}
+
+/** Newer = higher position, then later created_at, then higher id (the server's order). */
+export function compareVersionAge(a: ContentVersionRow, b: ContentVersionRow): number {
+  return (
+    (a.position ?? 0) - (b.position ?? 0) ||
+    a.created_at - b.created_at ||
+    (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+  );
 }
 
 /** Like the server: a shared view that became the default un-defaults the table's others. */
@@ -247,6 +318,17 @@ function resolveOne(data: ShowData, op: Op, ctx: LocalContext): ResolvedOp[] {
         created_by: ctx.userId,
         ...stamp,
       });
+      if (op.table === "content_versions") {
+        let max = 0;
+        let hasCurrent = false;
+        for (const v of data.tables.content_versions.values()) {
+          if (v.content_id !== fields.content_id) continue;
+          max = Math.max(max, v.position ?? 0);
+          hasCurrent ||= v.is_current;
+        }
+        if (fields.position === null || fields.position === undefined) fields.position = max + 1;
+        if (!hasCurrent) fields.is_current = true;
+      }
       if (isOrderedTable(op.table)) {
         const rows = keyed(data, op.table);
         const hasScene = "scene_id" in FIELDS[op.table];
@@ -292,8 +374,21 @@ function resolveOne(data: ShowData, op: Op, ctx: LocalContext): ResolvedOp[] {
       return (data.joins[spec.key].get(op.id) ?? []).includes(op.targetId) ? [op] : [];
     }
     case "delete": {
-      if (!rows.has(op.id)) throw new LocalOpError(`${op.table} ${op.id} not found`);
-      return [...cascade(data, op.table, op.id, stamp), op];
+      const row = rows.get(op.id);
+      if (!row) throw new LocalOpError(`${op.table} ${op.id} not found`);
+      const out = [...cascade(data, op.table, op.id, stamp), op];
+      if (op.table === "content_versions" && (row as ContentVersionRow).is_current) {
+        const next = promotedVersion(data, row as ContentVersionRow);
+        if (next) {
+          out.push({
+            op: "update",
+            table: "content_versions",
+            id: next.id,
+            fields: { is_current: true, ...stamp },
+          });
+        }
+      }
+      return out;
     }
   }
 }
@@ -325,10 +420,29 @@ function cascade(
       if (spec.type !== "ref" || spec.ref !== table) continue;
       for (const row of (data.tables[other] as RowMap).values()) {
         if ((row as unknown as Record<string, unknown>)[name] === id) {
-          out.push({ op: "update", table: other, id: row.id, fields: { [name]: null, ...stamp } });
+          if (spec.cascade) {
+            out.push(...cascade(data, other, row.id, stamp), {
+              op: "delete",
+              table: other,
+              id: row.id,
+            });
+          } else {
+            out.push({
+              op: "update",
+              table: other,
+              id: row.id,
+              fields: { [name]: null, ...stamp },
+            });
+          }
         }
       }
     }
+  }
+  if (ATTACHMENT_FIELDS[table]) {
+    const files = [...data.tables.attachments.values()]
+      .filter((a) => a.table === table && a.record_id === id)
+      .sort((a, b) => (a.position ?? 0) - (b.position ?? 0) || (a.id < b.id ? -1 : 1));
+    for (const f of files) out.push({ op: "delete", table: "attachments", id: f.id });
   }
   return out;
 }

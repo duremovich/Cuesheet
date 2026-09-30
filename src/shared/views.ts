@@ -95,12 +95,16 @@ export interface ViewConfig {
    * changes reuse the copy instead of making another.
    */
   forkedFrom?: string;
+  /** How rows are shown (R19): the grid (default, stored as absent) or gallery cards. */
+  layout?: ViewLayout;
   /**
    * The view's unit override for measurement columns (set only in Fields → Unit override;
    * the toolbar toggle sets the user's own unit). Unset: the user's unit, else the show's default (R11).
    */
   unit?: Unit;
 }
+
+export type ViewLayout = "grid" | "gallery";
 
 export const MAX_FILTERS = 50;
 export const MAX_COLOR_RULES = 50;
@@ -232,6 +236,9 @@ export function viewConfigError(raw: unknown): string | null {
   if (c.forkedFrom !== undefined && !isKey(c.forkedFrom)) {
     return "config.forkedFrom must be a view id";
   }
+  if (c.layout !== undefined && c.layout !== "grid" && c.layout !== "gallery") {
+    return 'config.layout must be "grid" or "gallery"';
+  }
   if (c.unit !== undefined && !isUnit(c.unit)) {
     return `config.unit must be one of ${UNITS.join(", ")}`;
   }
@@ -294,6 +301,7 @@ export function normalizeViewConfig(raw: unknown, table?: DataTableName): ViewCo
         ),
     ),
     ...(isKey(raw.forkedFrom) ? { forkedFrom: raw.forkedFrom } : {}),
+    ...(raw.layout === "gallery" ? { layout: "gallery" as const } : {}),
     ...(isUnit(raw.unit) ? { unit: raw.unit } : {}),
   };
 }
@@ -398,6 +406,7 @@ export const VIEW_FIELDS: Record<
   },
   notes: {
     body: { kind: "text" },
+    attachments: { kind: "text" },
     type: { kind: "multi" },
     priority: { kind: "select" },
     status: { kind: "select" },
@@ -411,6 +420,8 @@ export const VIEW_FIELDS: Record<
   },
   content: {
     name: { kind: "text" },
+    version: { kind: "text" },
+    attachments: { kind: "text" },
     scene: { kind: "link" },
     status: { kind: "select" },
     creator: { kind: "link" },
@@ -445,6 +456,7 @@ export const VIEW_FIELDS: Record<
   surfaces: {
     name: { kind: "text" },
     channel: { kind: "text" },
+    images: { kind: "text" },
     parent: { kind: "link" },
     width: { kind: "measurement" },
     height: { kind: "measurement" },
@@ -572,6 +584,7 @@ export function sanitizeViewConfig(
       frozenCount: c.frozenCount,
       colorRules,
       ...(c.forkedFrom !== undefined ? { forkedFrom: c.forkedFrom } : {}),
+      ...(c.layout === "gallery" ? { layout: "gallery" as const } : {}),
       ...(c.unit !== undefined ? { unit: c.unit } : {}),
     },
   };

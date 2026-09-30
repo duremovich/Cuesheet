@@ -4,6 +4,7 @@ import { useMemo, useRef } from "react";
 import type { Group } from "../../components/grid/types";
 import { ViewCache } from "../../lib/show-selectors";
 import { type ShowState, useShowStore, useShowStoreInstance } from "../../lib/show-store";
+import { attachmentsOf } from "../attachments/selectors";
 import { contentItem, cueItem, personItem, sceneItem } from "../shared/pickers";
 import { TableGrid } from "../shared/TableGrid";
 import { useWorkspace } from "../show/workspace";
@@ -48,16 +49,22 @@ export function NotesGrid() {
           ws.memberNames.get(note.created_by) ??
           (typeof custom.created_by_name === "string" ? custom.created_by_name : "");
         const editable = canEditNote(ws.role, ws.userId, note);
-        return get(id, [note, content, scene, author, editable, ...persons, ...cues], () => ({
+        const files = attachmentsOf(tables.attachments, "notes", id);
+        return get(
           id,
-          note,
-          assignees: persons.flatMap((p) => (p ? [personItem(p)] : [])),
-          cues: cues.flatMap((c) => (c ? [cueItem(c)] : [])),
-          content: content ? contentItem(content, tables.scenes) : null,
-          scene: scene ? sceneItem(scene) : null,
-          author,
-          editable,
-        }));
+          [note, content, scene, author, editable, files, ...persons, ...cues],
+          () => ({
+            id,
+            note,
+            assignees: persons.flatMap((p) => (p ? [personItem(p)] : [])),
+            cues: cues.flatMap((c) => (c ? [cueItem(c)] : [])),
+            content: content ? contentItem(content, tables.scenes) : null,
+            scene: scene ? sceneItem(scene) : null,
+            author,
+            editable,
+            files,
+          }),
+        );
       }),
     );
   }, [cache, tables, joins, ws.memberNames, ws.role, ws.userId]);
@@ -76,8 +83,8 @@ export function NotesGrid() {
   }, [views, statusOptions]);
 
   const columns = useMemo(
-    () => noteColumns({ store, fieldOptions, canCreateRecords: ws.canEdit }),
-    [store, fieldOptions, ws.canEdit],
+    () => noteColumns({ store, fieldOptions, canCreateRecords: ws.canEdit, showId: ws.showId }),
+    [store, fieldOptions, ws.canEdit, ws.showId],
   );
 
   return (

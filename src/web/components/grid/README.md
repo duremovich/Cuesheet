@@ -64,7 +64,7 @@ underlined; an unnumbered cue suggests the midpoint number). Source: `src/web/pa
 | Field | Notes |
 | --- | --- |
 | `key`, `title` | `key` is what `onEdit` receives |
-| `type` | `text`, `longtext`, `number`, `checkbox`, `select`, `multiselect`, `link`, `multilink`, `readonly`, `measurement`, `pixelsize`, `formula` |
+| `type` | `text`, `longtext`, `number`, `checkbox`, `select`, `multiselect`, `link`, `multilink`, `readonly`, `measurement`, `pixelsize`, `formula`, `attachment` |
 | `getValue(row)` | See value shapes below |
 | `format(v)` | Display text for text-like and readonly cells (also used for copy) |
 | `width`, `minWidth` | Default 160 / 60 |
@@ -74,6 +74,9 @@ underlined; an unnumbered cue suggests the midpoint number). Source: `src/web/pa
 | `search(q, row)` | link/multilink: return `PickerItem[]` (sync or async). Called debounced 100 ms with the row being edited: rank same-scene records first here; the grid adds recently picked ones on top |
 | `create(name, row)` | link/multilink: create a record from the typed name in the row's context (e.g. its scene), return its `PickerItem`. Enables the "Create '…'" row |
 | `compare(a, b)` | Custom sort for non-empty values |
+| `renderCell(row)` | attachment: the cell's content (a thumbnail strip) |
+| `onOpen(row)` | attachment: Enter, F2 or double-click (open a lightbox) |
+| `onFiles(row, files)` | attachment: files dropped or pasted onto the cell, when it's `editable` (the cell shows a drop outline while dragging) |
 | `unit` | measurement (and length formulas): display/input unit (`m cm mm ft-in ft in`, default m). The view layer sets it from the active unit |
 | `resultType` | formula: `number`, `text` or `measurement`, for filtering and sorting |
 
@@ -86,8 +89,9 @@ underlined; an unnumbered cue suggests the midpoint number). Source: `src/web/pa
 | checkbox | `boolean` | `false` |
 | select | option `value` or `null` | `null` |
 | multiselect | option `value[]` | `[]` |
-| link | `PickerItem \| null` (`{id, label, secondary?, color?}`) | `null` |
+| link | `PickerItem \| null` (`{id, label, secondary?, color?, badge?, thumb?}`; `badge`/`thumb` are display only: "· V03", a tiny image) | `null` |
 | multilink | `PickerItem[]` | `[]` |
+| attachment | anything (e.g. the files); shown by `renderCell`, filtered/copied via `format` | never cleared: attachment cells aren't edited as text, pasted text or Backspace skip them |
 | measurement | meters `number \| null`; shown and typed in `unit` (`14'9"`, `450cm`, a bare number = `unit`) | `null` |
 | pixelsize | `{w, h} \| null` (`1920x1080`) | `null` |
 | formula | a formula `Value` (`src/shared/formula`); read-only; errors show red | — |

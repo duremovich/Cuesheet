@@ -20,6 +20,7 @@ import {
 } from "../../lib/show-store";
 import { setTheme } from "../../lib/theme";
 import pageStyles from "../../pages/pages.module.css";
+import { AttachmentsHost } from "../attachments/Attachments";
 import { planSortNow } from "../cues/sortNow";
 import { SessionControl } from "../notes/SessionControl";
 import { CommandPalette, goToCommands, type PaletteCommand } from "../search/CommandPalette";
@@ -295,6 +296,7 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
           commands={commands}
           onPick={onPick}
         />
+        <AttachmentsHost />
         <Toasts items={toasts} dismiss={dismiss} />
       </div>
     </WorkspaceContext.Provider>

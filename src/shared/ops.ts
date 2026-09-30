@@ -212,6 +212,7 @@ export interface ImportResponse {
     scenes: number;
     cues: number;
     content: number;
+    content_versions: number;
     notes: number;
     persons: number;
     surfaces: number;

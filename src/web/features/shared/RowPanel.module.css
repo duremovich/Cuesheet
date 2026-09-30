@@ -203,6 +203,16 @@
   min-height: 28px;
 }
 
+/* A full-width field (attachments): label above, value across both columns. */
+.field[data-wide] dt,
+.field[data-wide] dd {
+  grid-column: 1 / -1;
+}
+
+.field[data-wide] dd {
+  display: block;
+}
+
 .input,
 .textarea {
   width: 100%;
