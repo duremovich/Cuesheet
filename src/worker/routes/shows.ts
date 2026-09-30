@@ -28,6 +28,7 @@ import { USER_ID_HEADER } from "../do/ShowDO";
 import { buildAirtableImport, type CsvFile } from "../import/airtable";
 import type { AppEnv } from "../types";
 import * as attachments from "./attachments";
+import * as script from "./script";
 import {
   declaredTooLarge,
   jsonBody,
@@ -321,6 +322,11 @@ export const showRoutes = new Hono<ShowEnv>()
   .get("/shows/:id/attachments/:aid", requireMembership, attachments.download)
   .get("/shows/:id/attachments/:aid/thumb", requireMembership, attachments.thumbnail)
   .get("/shows/:id/storage", requireMembership, attachments.storage)
+
+  // ---- script (routes/script.ts) ----
+  .post("/shows/:id/script/versions", requireMembership, script.createVersion)
+  .get("/shows/:id/script/versions/:vid/text", requireMembership, script.versionText)
+  .post("/shows/:id/script/versions/:vid/reanchor", requireMembership, script.reanchorVersion)
 
   // ---- members ----
   .get("/shows/:id/members", requireMembership, async (c) => {

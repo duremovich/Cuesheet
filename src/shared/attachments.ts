@@ -11,7 +11,10 @@ export const THUMB_MAX = 320;
 /** Longest filename kept (the rest is cut, keeping the extension). */
 export const MAX_FILENAME = 120;
 
-export type AttachmentKind = "image" | "pdf" | "video" | "text";
+export type AttachmentKind = "image" | "pdf" | "video" | "text" | "document";
+
+/** Word documents (script imports, R20). */
+export const DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 /** Allowed content types → kind. Images get thumbnails; the rest don't. */
 const TYPES: Record<string, AttachmentKind> = {
@@ -25,6 +28,7 @@ const TYPES: Record<string, AttachmentKind> = {
   "text/plain": "text",
   "text/csv": "text",
   "text/markdown": "text",
+  [DOCX_TYPE]: "document",
 };
 
 /** Extension → content type, for files the browser gives no (or a generic) type. */
@@ -41,6 +45,8 @@ const BY_EXTENSION: Record<string, string> = {
   txt: "text/plain",
   csv: "text/csv",
   md: "text/markdown",
+  markdown: "text/markdown",
+  docx: DOCX_TYPE,
 };
 
 const HEIC = /^image\/hei[cf](-sequence)?$/;
@@ -70,7 +76,7 @@ export function checkAttachmentType(
     return { contentType: byExt, kind: TYPES[byExt] as AttachmentKind };
   }
   return {
-    error: "That file type isn't supported (images, PDF, MP4/MOV video and text files are)",
+    error: "That file type isn't supported (images, PDF, Word, MP4/MOV video and text files are)",
   };
 }
 
@@ -252,7 +258,8 @@ const EXTENSIONS: Record<string, string[]> = {
   "video/quicktime": ["mov"],
   "text/plain": ["txt"],
   "text/csv": ["csv"],
-  "text/markdown": ["md"],
+  "text/markdown": ["md", "markdown"],
+  [DOCX_TYPE]: ["docx"],
 };
 
 /**

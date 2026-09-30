@@ -28,6 +28,13 @@ import type {
   MutateResponse,
   SnapshotResponse,
 } from "../../shared/ops";
+import type {
+  CreateScriptVersionRequest,
+  CreateScriptVersionResponse,
+  ReanchorRequest,
+  ReanchorResponse,
+  ScriptText,
+} from "../../shared/script";
 
 export class ApiError extends Error {
   constructor(
@@ -122,6 +129,26 @@ export const api = {
   uploadUrl: (id: string, body: UploadUrlRequest) =>
     request<UploadUrlResponse>("POST", showPath(id, "/attachments/upload-url"), body),
   storage: (id: string) => request<StorageResponse>("GET", showPath(id, "/storage")),
+  /**
+   * Import a script version (text extracted in the browser: `extractScript`); re-anchors
+   * every cue from the current version. Then upload the original file to
+   * `{table: "script_versions", recordId: versionId, field: SCRIPT_SOURCE_FIELD}` and set
+   * the version's `attachment_id` with an update op.
+   */
+  createScriptVersion: (id: string, body: CreateScriptVersionRequest) =>
+    request<CreateScriptVersionResponse>("POST", showPath(id, "/script/versions"), body),
+  reanchorScriptVersion: (id: string, versionId: string, body: ReanchorRequest) =>
+    request<ReanchorResponse>(
+      "POST",
+      showPath(id, `/script/versions/${encodeURIComponent(versionId)}/reanchor`),
+      body,
+    ),
+  /** A version's extracted text (immutable; the browser caches it). */
+  scriptText: (id: string, versionId: string) =>
+    request<ScriptText>(
+      "GET",
+      showPath(id, `/script/versions/${encodeURIComponent(versionId)}/text`),
+    ),
   members: (id: string) => request<MembersResponse>("GET", showPath(id, "/members")),
   addMember: (id: string, body: AddMemberRequest) =>
     request<{ member: MemberDTO }>("POST", showPath(id, "/members"), body),

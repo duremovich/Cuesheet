@@ -70,6 +70,8 @@ export function fileLabel(f: Pick<AttachmentRow, "content_type" | "filename">): 
       return "Video";
     case "text":
       return "Text";
+    case "document":
+      return "Word";
     case "image":
       return "Image";
     default:

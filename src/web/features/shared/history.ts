@@ -63,6 +63,14 @@ export function recordLabel(data: ShowData, table: TableName, id: string): strin
       return data.tables.content_versions.get(id)?.version || "(deleted version)";
     case "attachments":
       return data.tables.attachments.get(id)?.filename || "(deleted file)";
+    case "scripts":
+      return data.tables.scripts.get(id)?.title || "Script";
+    case "script_versions":
+      return data.tables.script_versions.get(id)?.label || "(deleted script version)";
+    case "cue_anchors": {
+      const a = data.tables.cue_anchors.get(id);
+      return a ? `${recordLabel(data, "cues", a.cue_id)} in the script` : "(deleted anchor)";
+    }
   }
 }
 
