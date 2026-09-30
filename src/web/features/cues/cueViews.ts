@@ -66,6 +66,18 @@ export function openNotesByScene(data: ShowData): Map<string, number> {
   return out;
 }
 
+/** Open (not Done) notes linked to each cue (the "Open notes" view field). */
+export function openNotesByCue(data: Pick<ShowData, "tables" | "joins">): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const note of data.tables.notes.values()) {
+    if (note.status === "Done") continue;
+    for (const cueId of data.joins.noteCues.get(note.id) ?? []) {
+      out.set(cueId, (out.get(cueId) ?? 0) + 1);
+    }
+  }
+  return out;
+}
+
 function groupSubtitle(scene: SceneRow, showAct: boolean, openNotes: number): string | undefined {
   const parts = [
     showAct ? scene.act : null,

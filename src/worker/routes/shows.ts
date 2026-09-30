@@ -173,9 +173,8 @@ export const showRoutes = new Hono<ShowEnv>()
         400,
       );
     }
-    if (c.var.role === "viewer") {
-      return c.json({ error: "Viewers can't make changes" } satisfies MutateError, 403);
-    }
+    // Viewers get through to the DO: they may manage their own personal views, and the op
+    // engine refuses everything else per op (403).
     const res = await showStub(c.env, c.var.show.id).mutate(
       { userId: c.var.user.id, role: c.var.role, clientId: clientId || null },
       ops,

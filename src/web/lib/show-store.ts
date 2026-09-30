@@ -31,7 +31,7 @@ import type {
   ResolvedOp,
   SnapshotResponse,
 } from "../../shared/ops";
-import type { OrderedTableName, Row, TableName } from "../../shared/tables";
+import type { DataTableName, OrderedTableName, Row, TableName, ViewRow } from "../../shared/tables";
 import { isOrderedTable } from "../../shared/tables";
 import type { ServerMessage } from "../../shared/ws";
 import { api } from "./api";
@@ -374,6 +374,36 @@ export function useOrderedRows<T extends TableName>(table: T): Row<T>[] {
       a.created_at !== b.created_at ? a.created_at - b.created_at : a.id < b.id ? -1 : 1,
     );
   }, [rows, order]);
+}
+
+export interface TableViews {
+  /** Shared views (owner_user_id null), by position then creation. */
+  shared: ViewRow[];
+  /** `userId`'s personal views, same order. */
+  mine: ViewRow[];
+}
+
+/** The saved views of one data table: shared ones, then the user's own. */
+export function viewsFor(
+  views: ReadonlyMap<string, ViewRow>,
+  table: DataTableName,
+  userId: string,
+): TableViews {
+  const byOrder = (a: ViewRow, b: ViewRow) =>
+    (a.position ?? 0) - (b.position ?? 0) ||
+    a.created_at - b.created_at ||
+    (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  const rows = [...views.values()].filter((v) => v.table === table).sort(byOrder);
+  return {
+    shared: rows.filter((v) => v.owner_user_id === null),
+    mine: rows.filter((v) => v.owner_user_id !== null && v.owner_user_id === userId),
+  };
+}
+
+/** `viewsFor` on the live store (other users' personal views are left out). */
+export function useViewsFor(table: DataTableName, userId: string): TableViews {
+  const views = useShowStore((s) => s.tables.views);
+  return useMemo(() => viewsFor(views, table, userId), [views, table, userId]);
 }
 
 export function useMutate(): ShowStore["mutate"] {

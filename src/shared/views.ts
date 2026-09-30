@@ -1,0 +1,285 @@
+// Saved views (R16, R17): the config a `views` row stores, its validation (server) and
+// normalisation (client), and the default view each data table starts with.
+// Filters, sorts, grouping and color rules are evaluated on the client, over the grid's
+// columns (src/web/features/views/). See CLAUDE.md "Saved views".
+import { type DataTableName, OPTION_COLORS } from "./tables";
+
+export type OptionColor = (typeof OPTION_COLORS)[number];
+
+export const FILTER_OPS = [
+  "is",
+  "isNot",
+  "contains",
+  "notContains",
+  "isEmpty",
+  "isNotEmpty",
+  "gt",
+  "lt",
+  "gte",
+  "lte",
+  "before",
+  "after",
+  "anyOf",
+  "noneOf",
+  "isTrue",
+  "isFalse",
+] as const;
+export type FilterOp = (typeof FILTER_OPS)[number];
+
+/** Ops that take no value. */
+export const VALUELESS_OPS: ReadonlySet<FilterOp> = new Set([
+  "isEmpty",
+  "isNotEmpty",
+  "isTrue",
+  "isFalse",
+]);
+/** Ops whose value is a list of strings. */
+export const LIST_OPS: ReadonlySet<FilterOp> = new Set(["anyOf", "noneOf"]);
+
+export interface Filter {
+  /** A column key of the table's grid (or one of its extra filter fields). */
+  key: string;
+  op: FilterOp;
+  /** string (text, select value, link label, date `YYYY-MM-DD`), number, or string[]. */
+  value?: unknown;
+}
+
+export type MatchMode = "and" | "or";
+
+export interface ColorRule {
+  when: Filter[];
+  mode: MatchMode;
+  target: "row" | { cell: string };
+  color: OptionColor;
+}
+
+export interface ViewSort {
+  key: string;
+  dir: "asc" | "desc";
+}
+
+export interface ViewField {
+  key: string;
+  width?: number;
+  hidden?: boolean;
+}
+
+export type RowHeightName = "compact" | "normal" | "tall";
+
+export interface ViewConfig {
+  filters: Filter[];
+  filterMode: MatchMode;
+  sorts: ViewSort[];
+  /** `live`: the grid keeps rows sorted by `sorts` (R2); `none`: show order. */
+  sortMode: "live" | "none";
+  /** A select/link column key, or null for no grouping. */
+  group: { key: string | null; collapsedByDefault?: boolean };
+  /**
+   * Column order, widths and hidden flags. Columns not listed keep their default place
+   * (after the listed ones) and are shown, so new fields appear in old views.
+   */
+  fields: ViewField[];
+  rowHeight: RowHeightName;
+  /** The first N visible columns stay put on horizontal scroll. */
+  frozenCount: number;
+  /** In order: the first matching row rule wins; cell rules stack. */
+  colorRules: ColorRule[];
+}
+
+export const MAX_FILTERS = 50;
+export const MAX_COLOR_RULES = 50;
+export const MAX_FIELDS = 200;
+const MAX_KEY = 64;
+const MAX_VALUE_CHARS = 1000;
+const MAX_LIST = 200;
+
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+const isKey = (v: unknown): v is string =>
+  typeof v === "string" && v.length > 0 && v.length <= MAX_KEY;
+const isColor = (v: unknown): v is OptionColor =>
+  typeof v === "string" && (OPTION_COLORS as readonly string[]).includes(v);
+const isMode = (v: unknown): v is MatchMode => v === "and" || v === "or";
+
+function filterError(f: unknown, where: string): string | null {
+  if (!isObject(f)) return `${where} must be an object`;
+  if (!isKey(f.key)) return `${where}.key must be a field key`;
+  if (!(FILTER_OPS as readonly string[]).includes(f.op as string)) {
+    return `${where}.op is not a filter operator`;
+  }
+  const v = f.value;
+  if (v === undefined || v === null) return null;
+  if (typeof v === "string")
+    return v.length <= MAX_VALUE_CHARS ? null : `${where}.value is too long`;
+  if (typeof v === "number") return Number.isFinite(v) ? null : `${where}.value must be finite`;
+  if (typeof v === "boolean") return null;
+  if (Array.isArray(v)) {
+    if (v.length > MAX_LIST) return `${where}.value has too many entries`;
+    return v.every((x) => typeof x === "string" && x.length <= MAX_VALUE_CHARS)
+      ? null
+      : `${where}.value must be a list of text`;
+  }
+  return `${where}.value must be text, a number or a list`;
+}
+
+/** Strict check for the server: null when `raw` is a valid ViewConfig, else the reason. */
+export function viewConfigError(raw: unknown): string | null {
+  if (!isObject(raw)) return "config must be an object";
+  const c = raw;
+  if (!Array.isArray(c.filters) || c.filters.length > MAX_FILTERS) {
+    return `config.filters must be a list of at most ${MAX_FILTERS}`;
+  }
+  for (const [i, f] of c.filters.entries()) {
+    const e = filterError(f, `config.filters[${i}]`);
+    if (e) return e;
+  }
+  if (!isMode(c.filterMode)) return 'config.filterMode must be "and" or "or"';
+  if (!Array.isArray(c.sorts) || c.sorts.length > 20) return "config.sorts must be a short list";
+  for (const s of c.sorts) {
+    if (!isObject(s) || !isKey(s.key) || (s.dir !== "asc" && s.dir !== "desc")) {
+      return "config.sorts entries need a key and a dir (asc/desc)";
+    }
+  }
+  if (c.sortMode !== "live" && c.sortMode !== "none") {
+    return 'config.sortMode must be "live" or "none"';
+  }
+  if (!isObject(c.group) || !(c.group.key === null || isKey(c.group.key))) {
+    return "config.group.key must be a field key or null";
+  }
+  if (c.group.collapsedByDefault !== undefined && typeof c.group.collapsedByDefault !== "boolean") {
+    return "config.group.collapsedByDefault must be true or false";
+  }
+  if (!Array.isArray(c.fields) || c.fields.length > MAX_FIELDS) {
+    return `config.fields must be a list of at most ${MAX_FIELDS}`;
+  }
+  const seen = new Set<string>();
+  for (const f of c.fields) {
+    if (!isObject(f) || !isKey(f.key)) return "config.fields entries need a key";
+    if (seen.has(f.key)) return `config.fields lists ${f.key} twice`;
+    seen.add(f.key);
+    if (
+      f.width !== undefined &&
+      !(typeof f.width === "number" && Number.isFinite(f.width) && f.width > 0 && f.width < 5000)
+    ) {
+      return "config.fields width must be a positive number";
+    }
+    if (f.hidden !== undefined && typeof f.hidden !== "boolean") {
+      return "config.fields hidden must be true or false";
+    }
+  }
+  if (c.rowHeight !== "compact" && c.rowHeight !== "normal" && c.rowHeight !== "tall") {
+    return "config.rowHeight must be compact, normal or tall";
+  }
+  if (
+    !(typeof c.frozenCount === "number" && Number.isInteger(c.frozenCount)) ||
+    c.frozenCount < 0 ||
+    c.frozenCount > 10
+  ) {
+    return "config.frozenCount must be an integer from 0 to 10";
+  }
+  if (!Array.isArray(c.colorRules) || c.colorRules.length > MAX_COLOR_RULES) {
+    return `config.colorRules must be a list of at most ${MAX_COLOR_RULES}`;
+  }
+  for (const [i, r] of c.colorRules.entries()) {
+    const where = `config.colorRules[${i}]`;
+    if (!isObject(r)) return `${where} must be an object`;
+    if (!Array.isArray(r.when) || r.when.length > MAX_FILTERS)
+      return `${where}.when must be a list`;
+    for (const [j, f] of r.when.entries()) {
+      const e = filterError(f, `${where}.when[${j}]`);
+      if (e) return e;
+    }
+    if (!isMode(r.mode)) return `${where}.mode must be "and" or "or"`;
+    if (!(r.target === "row" || (isObject(r.target) && isKey(r.target.cell)))) {
+      return `${where}.target must be "row" or {cell: key}`;
+    }
+    if (!isColor(r.color)) return `${where}.color must be an option color`;
+  }
+  return null;
+}
+
+export function emptyViewConfig(): ViewConfig {
+  return {
+    filters: [],
+    filterMode: "and",
+    sorts: [],
+    sortMode: "none",
+    group: { key: null },
+    fields: [],
+    rowHeight: "normal",
+    frozenCount: 1,
+    colorRules: [],
+  };
+}
+
+/**
+ * A usable config from whatever is stored (client side): invalid parts fall back to the
+ * defaults instead of failing, so an old or damaged view still opens.
+ */
+export function normalizeViewConfig(raw: unknown, table?: DataTableName): ViewConfig {
+  const base = table ? defaultViewConfig(table) : emptyViewConfig();
+  if (!isObject(raw)) return base;
+  const pick = <K extends keyof ViewConfig>(key: K, ok: (v: unknown) => boolean): ViewConfig[K] =>
+    ok(raw[key]) ? (raw[key] as ViewConfig[K]) : base[key];
+  const filtersOk = (v: unknown) =>
+    Array.isArray(v) && v.every((f, i) => filterError(f, `f${i}`) === null);
+  return {
+    filters: pick("filters", filtersOk),
+    filterMode: pick("filterMode", isMode),
+    sorts: pick(
+      "sorts",
+      (v) =>
+        Array.isArray(v) &&
+        v.every((s) => isObject(s) && isKey(s.key) && (s.dir === "asc" || s.dir === "desc")),
+    ),
+    sortMode: pick("sortMode", (v) => v === "live" || v === "none"),
+    group: pick("group", (v) => isObject(v) && (v.key === null || isKey(v.key))),
+    fields: pick("fields", (v) => Array.isArray(v) && v.every((f) => isObject(f) && isKey(f.key))),
+    rowHeight: pick("rowHeight", (v) => v === "compact" || v === "normal" || v === "tall"),
+    frozenCount: pick(
+      "frozenCount",
+      (v) => typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 10,
+    ),
+    colorRules: pick(
+      "colorRules",
+      (v) =>
+        Array.isArray(v) &&
+        v.every(
+          (r) =>
+            isObject(r) &&
+            filtersOk(r.when) &&
+            isMode(r.mode) &&
+            (r.target === "row" || (isObject(r.target) && isKey(r.target.cell))) &&
+            isColor(r.color),
+        ),
+    ),
+  };
+}
+
+/** The config of a table's built-in default view (also the fallback when it has none). */
+export function defaultViewConfig(table: DataTableName): ViewConfig {
+  const c = emptyViewConfig();
+  switch (table) {
+    case "cues":
+    case "content":
+      c.group = { key: "scene" };
+      break;
+    case "notes":
+      c.group = { key: "status" };
+      c.frozenCount = 0;
+      break;
+    case "scenes":
+    case "persons":
+      break;
+  }
+  return c;
+}
+
+/** Name of the shared default view each data table gets. */
+export const DEFAULT_VIEW_NAMES: Record<DataTableName, string> = {
+  cues: "All cues",
+  scenes: "All scenes",
+  content: "All content",
+  notes: "All notes",
+  persons: "Everyone",
+};

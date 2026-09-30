@@ -7,7 +7,7 @@ import { type DrizzleSqliteDODatabase, drizzle } from "drizzle-orm/durable-sqlit
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import type { Role, ShowMetaDTO } from "../../shared/api";
 import type { HistoryEntry, MutateResponse, SnapshotResponse } from "../../shared/ops";
-import { type FieldOptions, TABLE_NAMES } from "../../shared/tables";
+import { DATA_TABLES, type FieldOptions } from "../../shared/tables";
 import { PING_FRAME, PONG_FRAME, type ServerMessage } from "../../shared/ws";
 import migrations from "../db/do/migrations/migrations.js";
 import * as schema from "../db/do/schema";
@@ -20,6 +20,7 @@ import {
   OpError,
   readHistory,
   readSnapshot,
+  seedDefaultViews,
 } from "./ops-engine";
 
 /** Header the Worker uses to tell the DO who opened a WebSocket. */
@@ -54,6 +55,7 @@ export class ShowDO extends DurableObject<Env> {
     // Nothing else runs until migrations have been applied.
     ctx.blockConcurrencyWhile(async () => {
       await migrate(this.db, migrations);
+      seedDefaultViews(ctx.storage.sql);
     });
   }
 
@@ -147,7 +149,7 @@ export class ShowDO extends DurableObject<Env> {
 
   /** True when any core table has rows (import refuses to run into a non-empty show). */
   async hasData(): Promise<boolean> {
-    return TABLE_NAMES.some(
+    return DATA_TABLES.some(
       (t) => this.ctx.storage.sql.exec(`SELECT 1 FROM "${t}" LIMIT 1`).toArray().length > 0,
     );
   }

@@ -2,7 +2,7 @@
 // docs/decisions/0006-mutation-ops-and-sync.md). Runs synchronously inside
 // `ctx.storage.transactionSync`, so any thrown OpError rolls the whole batch back.
 import type { Role } from "../../shared/api";
-import { isValidId } from "../../shared/ids";
+import { isValidId, newId } from "../../shared/ids";
 import type {
   DeleteOp,
   FieldValues,
@@ -16,10 +16,12 @@ import type {
 } from "../../shared/ops";
 import { effectivePlacement, orderKeyFor, PlacementError } from "../../shared/order";
 import {
+  DATA_TABLES,
   FIELDS,
   type FieldOptions,
   type FieldSpec,
   fieldSpec,
+  isDataTable,
   isOrderedTable,
   isTableName,
   LINKS,
@@ -28,6 +30,7 @@ import {
   TABLE_NAMES,
   type TableName,
 } from "../../shared/tables";
+import { DEFAULT_VIEW_NAMES, defaultViewConfig, viewConfigError } from "../../shared/views";
 
 export interface MutationContext {
   userId: string;
@@ -97,6 +100,7 @@ export function decodeRow(table: TableName, row: DbRow): WireRow {
   for (const [name, spec] of Object.entries(FIELDS[table]) as [string, FieldSpec][]) {
     if (spec.type === "bool") out[name] = row[name] === 1;
     else if (spec.type === "multiselect") out[name] = parseJson(row[name], []);
+    else if (spec.type === "json") out[name] = parseJson(row[name], null);
   }
   return out;
 }
@@ -118,13 +122,16 @@ function encodeValue(spec: FieldSpec | undefined, value: unknown): SqlStorageVal
     return null;
   }
   if (spec?.type === "bool") return value ? 1 : 0;
-  if (spec?.type === "multiselect" || typeof value === "object") return JSON.stringify(value);
+  if (spec?.type === "multiselect" || spec?.type === "json" || typeof value === "object") {
+    return JSON.stringify(value);
+  }
   return value as SqlStorageValue;
 }
 
 function defaultValue(spec: FieldSpec): unknown {
   if (spec.type === "bool") return false;
   if (spec.type === "multiselect") return [];
+  if (spec.type === "json") return {};
   return null;
 }
 
@@ -158,9 +165,7 @@ export class Batch {
 
   run(ops: unknown): BatchResult {
     if (!Array.isArray(ops)) throw new OpError("ops must be an array", undefined);
-    if (this.ctx.role === "viewer" && ops.length > 0) {
-      throw new OpError("Viewers can't make changes", 0, 403);
-    }
+    // Roles are checked per op (checkRole): viewers may still manage their own views.
     const prevVersion = currentVersion(this.sql);
     ops.forEach((raw, i) => {
       this.opIndex = i;
@@ -250,9 +255,20 @@ export class Batch {
 
   // ---- permissions ----
 
-  /** Commenters may only touch notes they created. */
-  private checkRole(table: TableName, existing: DbRow | null): void {
+  /**
+   * Commenters may only touch notes they created. Views: anyone (viewers too) may manage
+   * their own personal views; only editors/owners shared ones; nobody someone else's.
+   * `owner` is the view's owner_user_id (for a create: the requested one).
+   */
+  private checkRole(table: TableName, existing: DbRow | null, owner?: unknown): void {
     const { role, userId } = this.ctx;
+    if (table === "views") {
+      const viewOwner = existing ? existing.owner_user_id : (owner ?? null);
+      if (viewOwner === userId) return;
+      if (viewOwner !== null) this.fail("That view belongs to someone else", 403);
+      if (role === "owner" || role === "editor") return;
+      this.fail("Only editors can change shared views", 403);
+    }
     if (role === "owner" || role === "editor") return;
     if (role === "commenter" && table === "notes") {
       if (!existing || existing.created_by === userId) return;
@@ -293,11 +309,16 @@ export class Batch {
     const label = `${table}.${field}`;
     if (spec.auto) this.fail(`${label} is set automatically`);
     if ((spec.type === "select" || spec.type === "ref") && value === "") value = null;
+    if (table === "views") this.validateViewField(field, value);
     if (value === null) {
       if (spec.type === "bool") this.fail(`${label} must be true or false`);
+      if (spec.type === "json") this.fail(`${label} can't be empty`);
       return spec.type === "multiselect" ? [] : null;
     }
     switch (spec.type) {
+      case "json":
+        if (byteLength(value) > MAX_TEXT) this.fail(`${label} is too large`);
+        return value;
       case "text":
         if (typeof value !== "string") this.fail(`${label} must be text`);
         if (value.length > MAX_TEXT) this.fail(`${label} is too long`);
@@ -337,6 +358,44 @@ export class Batch {
         return value;
       }
     }
+  }
+
+  /** Extra checks for `views` fields (beyond their FieldSpec type). */
+  private validateViewField(field: string, value: unknown): void {
+    switch (field) {
+      case "table":
+        if (!isDataTable(value)) this.fail(`views.table must be one of ${DATA_TABLES.join(", ")}`);
+        break;
+      case "name":
+        if (typeof value === "string" && value.length > 100) this.fail("views.name is too long");
+        break;
+      case "owner_user_id":
+        // Only yourself (a personal view) or null (shared); checkRole does the role part.
+        if (value !== null && value !== this.ctx.userId) {
+          this.fail("A personal view must belong to you", 403);
+        }
+        break;
+      case "config": {
+        const error = viewConfigError(value);
+        if (error) this.fail(`views.${error}`);
+        break;
+      }
+    }
+  }
+
+  /** Setting `is_default` on a shared view clears it on the table's other shared views. */
+  private afterViewWrite(id: string): void {
+    const row = this.getRow("views", id);
+    if (row?.is_default !== 1) return;
+    if (row.owner_user_id !== null) this.fail("Only a shared view can be the default");
+    const others = this.sql
+      .exec<DbRow>(
+        'SELECT * FROM views WHERE "table" = ? AND owner_user_id IS NULL AND is_default = 1 AND id != ?',
+        row.table,
+        id,
+      )
+      .toArray();
+    for (const o of others) this.write("views", o.id as string, o, { is_default: false });
   }
 
   private validateCustom(value: unknown): Record<string, unknown> {
@@ -396,7 +455,7 @@ export class Batch {
   // ---- ops ----
 
   private create(table: TableName, id: string, fields: FieldValues, placement: Placement) {
-    this.checkRole(table, null);
+    this.checkRole(table, null, fields.owner_user_id);
     if (this.getRow(table, id)) this.fail(`${table} ${id} already exists`);
     const row: WireRow = { id };
     for (const [name, spec] of Object.entries(FIELDS[table]) as [string, FieldSpec][]) {
@@ -417,6 +476,10 @@ export class Batch {
         if (!spec) this.fail(`unknown field ${table}.${name}`);
         row[name] = this.validate(table, name, spec, value);
       }
+    }
+    if (table === "views") {
+      if (!isDataTable(row.table)) this.fail("views.table is required");
+      if (!("config" in fields)) row.config = defaultViewConfig(row.table);
     }
     row.created_by = this.ctx.userId;
     row.updated_at = this.now;
@@ -446,6 +509,7 @@ export class Batch {
       fields: rest,
       ...(used ? { placement: used } : {}),
     });
+    if (table === "views") this.afterViewWrite(id);
   }
 
   /** The placement a create really gets (neighbours may have been deleted meanwhile). */
@@ -537,10 +601,14 @@ export class Batch {
       } else {
         const spec = fieldSpec(table, name);
         if (!spec) this.fail(`unknown field ${table}.${name}`);
+        if (spec.immutable && !sameValue(decodeRow(table, before)[name], value)) {
+          this.fail(`${table}.${name} can't be changed`);
+        }
         changes[name] = this.validate(table, name, spec, value);
       }
     }
     this.write(table, id, before, changes);
+    if (table === "views") this.afterViewWrite(id);
   }
 
   private move(table: TableName, id: string, placement: Placement) {
@@ -664,6 +732,39 @@ function linkField(spec: LinkSpec): string {
     if (s === spec) return name.slice(name.indexOf(".") + 1);
   }
   return "";
+}
+
+/** `created_by` of rows the DO writes on its own (the seeded default views). */
+export const SYSTEM_USER = "system";
+
+/**
+ * Gives every data table without a shared view one shared default view (the built-in
+ * config from `defaultViewConfig`). Runs when the DO starts, so shows created before views
+ * existed get them on first open. Not logged in `changes` and doesn't bump the version: it
+ * is the table's initial state, like the seeded select options. Returns how many it made.
+ */
+export function seedDefaultViews(sql: SqlStorage, now = Date.now()): number {
+  let made = 0;
+  for (const table of DATA_TABLES) {
+    const has = sql
+      .exec('SELECT 1 FROM views WHERE "table" = ? AND owner_user_id IS NULL LIMIT 1', table)
+      .toArray();
+    if (has.length > 0) continue;
+    sql.exec(
+      'INSERT INTO views (id, custom, created_at, created_by, updated_at, updated_by, "table", name, owner_user_id, is_default, position, config) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, 0, ?)',
+      newId(),
+      "{}",
+      now,
+      SYSTEM_USER,
+      now,
+      SYSTEM_USER,
+      table,
+      DEFAULT_VIEW_NAMES[table],
+      JSON.stringify(defaultViewConfig(table)),
+    );
+    made++;
+  }
+  return made;
 }
 
 // ---- reads for the snapshot / history endpoints ----
