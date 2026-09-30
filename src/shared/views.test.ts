@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { defaultViewConfig, normalizeViewConfig, viewConfigError } from "./views";
+import {
+  defaultViewConfig,
+  normalizeViewConfig,
+  sanitizeViewConfig,
+  viewConfigError,
+} from "./views";
 
 describe("view config", () => {
   it("defaults per table", () => {
@@ -54,5 +59,22 @@ describe("view config", () => {
     expect(n.group).toEqual({ key: "status" });
     expect(n.colorRules).toEqual([]);
     expect(normalizeViewConfig(undefined, "cues")).toEqual(defaultViewConfig("cues"));
+  });
+});
+
+describe("view layout (R19)", () => {
+  it("grid by default (stored as absent); gallery kept; anything else refused", () => {
+    const ok = defaultViewConfig("content");
+    expect(ok.layout).toBeUndefined();
+    expect(viewConfigError({ ...ok, layout: "gallery" })).toBeNull();
+    expect(viewConfigError({ ...ok, layout: "grid" })).toBeNull();
+    expect(viewConfigError({ ...ok, layout: "kanban" })).toMatch(/layout/);
+    expect(normalizeViewConfig({ ...ok, layout: "gallery" }, "content").layout).toBe("gallery");
+    expect(normalizeViewConfig({ ...ok, layout: "grid" }, "content")).not.toHaveProperty("layout");
+    expect(normalizeViewConfig({ ...ok, layout: 7 }, "content")).not.toHaveProperty("layout");
+    const s = sanitizeViewConfig("content", { ...ok, layout: "gallery" });
+    expect("config" in s && s.config.layout).toBe("gallery");
+    const g = sanitizeViewConfig("content", { ...ok, layout: "grid" });
+    expect("config" in g && g.config).not.toHaveProperty("layout");
   });
 });

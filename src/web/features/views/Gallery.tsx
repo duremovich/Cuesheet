@@ -121,8 +121,18 @@ export function Gallery<V>(p: GalleryProps<V>) {
     [onActiveRowChange],
   );
   const pendingFocus = useRef<string | null>(null);
+  /** A card to bring into view once the layout is known (the first render has no width). */
+  const pendingScroll = useRef<string | null>(null);
+  const [, rerender] = useState(0);
+  const widthRef = useRef(width);
+  widthRef.current = width;
   const scrollTo = useCallback(
     (id: string) => {
+      if (widthRef.current === 0) {
+        pendingScroll.current = id;
+        rerender((n) => n + 1);
+        return;
+      }
       const at = byIdRef.current.get(id);
       if (at) virtualizer.scrollToIndex(at.item, { align: "auto" });
     },
@@ -131,22 +141,21 @@ export function Gallery<V>(p: GalleryProps<V>) {
   const focusCard = useCallback(
     (id: string) => {
       activate(id);
-      scrollTo(id);
       pendingFocus.current = id;
-      requestAnimationFrame(() => {
-        const el = scrollRef.current?.querySelector<HTMLElement>(
-          `[data-card-id="${CSS.escape(id)}"]`,
-        );
-        if (el && pendingFocus.current === id) {
-          pendingFocus.current = null;
-          el.focus({ preventScroll: true });
-        }
-      });
+      scrollTo(id);
+      rerender((n) => n + 1);
     },
     [activate, scrollTo],
   );
-  // A card rendered later (virtualized) takes the focus it was promised.
+  // After each render: a scroll that waited for the width, then the focus a card was
+  // promised once it's rendered (virtualized rows appear after the scroll).
   useEffect(() => {
+    const scrollId = pendingScroll.current;
+    if (scrollId && width > 0) {
+      pendingScroll.current = null;
+      const at = byIdRef.current.get(scrollId);
+      if (at) virtualizer.scrollToIndex(at.item, { align: "auto" });
+    }
     const id = pendingFocus.current;
     if (!id) return;
     const el = scrollRef.current?.querySelector<HTMLElement>(`[data-card-id="${CSS.escape(id)}"]`);

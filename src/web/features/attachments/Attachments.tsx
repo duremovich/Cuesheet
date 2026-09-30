@@ -444,11 +444,30 @@ function Lightbox() {
     if (!open) return;
     returnTo.current = document.activeElement;
     dialog.current?.focus();
+    // Focus can drop to <body> (a button that became disabled, e.g. "Previous" on the
+    // first file): keys still reach the lightbox, and focus goes back into it.
+    const onKey = (e: KeyboardEvent) => {
+      if (dialog.current?.contains(e.target as Node)) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        close();
+      } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        e.preventDefault();
+        goRef.current(e.key === "ArrowLeft" ? -1 : 1);
+      } else if (e.key === "Tab") {
+        e.preventDefault();
+        dialog.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
     return () => {
+      document.removeEventListener("keydown", onKey, true);
       const el = returnTo.current as HTMLElement | null;
       if (el?.isConnected) el.focus({ preventScroll: true });
     };
-  }, [open]);
+  }, [open, close]);
+  const goRef = useRef(go);
+  goRef.current = go;
   // Nothing left to show (the record or its last file went): close.
   useEffect(() => {
     if (target && files.length === 0) close();
