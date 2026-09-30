@@ -2414,7 +2414,9 @@ function GridRowImpl<Row>(p: GridRowProps<Row>) {
           data-frozen={c.frozen || undefined}
           data-colored={cc ? true : undefined}
           data-editing={isEditingText || isEditingPicker || undefined}
-          data-warning={deco?.warning ? true : undefined}
+          data-warning={
+            deco?.warning ? (deco.warningStyle === "dashed" ? "dashed" : true) : undefined
+          }
           title={deco?.warning}
           style={style}
         >

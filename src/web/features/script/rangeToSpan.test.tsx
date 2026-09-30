@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { render } from "../../test/dom";
-import { rangeToSpan, textOffsetIn } from "./placement";
+import { rangeToSpan, spanAnchor, spanLength, textOffsetIn } from "./placement";
 import { BlockText } from "./ScriptBlocks";
 
 const block = (i: number, text: string) => ({ i, page: 1, kind: "dialogue" as const, text });
@@ -35,18 +35,43 @@ describe("rangeToSpan (selection → anchor span)", () => {
     const r = document.createRange();
     r.setStart(before as Text, 12); // "the train!…"
     r.setEnd(after as Text, 6); // " needs"
-    expect(rangeToSpan(r)).toEqual({ block: 4, offset: 12, length: 25 });
+    expect(rangeToSpan(r)).toEqual({ block: 4, offset: 12, endBlock: 4, endOffset: 37 });
     expect(textOffsetIn(text, after as Text, 0)).toBe(31);
   });
 
-  it("trims whitespace and cuts a selection spanning blocks at the first block's end", () => {
+  it("keeps a selection across blocks (a quote over two lines), trimming whitespace", () => {
     const c = mount();
     const first = textNodes(c.querySelector('[data-block="4"] [data-text]') as Element);
     const second = textNodes(c.querySelector('[data-block="5"] [data-text]') as Element);
     const r = document.createRange();
     r.setStart(first[2] as Text, 0); // " needs a sax."
     r.setEnd(second[0] as Text, 4);
-    expect(rangeToSpan(r)).toEqual({ block: 4, offset: 32, length: 12 });
+    expect(rangeToSpan(r)).toEqual({ block: 4, offset: 32, endBlock: 5, endOffset: 4 });
+    // Its length in the joined text: the rest of line 4, the separator, 4 characters.
+    const text = {
+      blocks: [0, 1, 2, 3]
+        .map((i) => ({ i, page: 1, kind: "other" as const, text: "x" }))
+        .concat([
+          {
+            i: 4,
+            page: 1,
+            kind: "other" as const,
+            text: "Ladies, on the train! Sweet Sue needs a sax.",
+          },
+          { i: 5, page: 1, kind: "other" as const, text: "Then Sweet Sue is in luck." },
+        ]),
+      pages: [{ page: 1, label: "1" }],
+      source: "txt" as const,
+      confidence: 1,
+    };
+    const span = rangeToSpan(r);
+    expect(span && spanLength(text, span)).toBe(12 + 1 + 4);
+    expect(span && spanAnchor(text, span).quote).toBe("needs a sax. Then");
+    // Ending at the very start of the next line: just the first line's rest.
+    const r4 = document.createRange();
+    r4.setStart(first[2] as Text, 0);
+    r4.setEnd(second[0] as Text, 0);
+    expect(rangeToSpan(r4)).toEqual({ block: 4, offset: 32, endBlock: 4, endOffset: 44 });
   });
 
   it("ignores selections outside script text or of whitespace only", () => {
@@ -55,7 +80,7 @@ describe("rangeToSpan (selection → anchor span)", () => {
     const r = document.createRange();
     r.selectNodeContents(btn);
     // A badge inside the block: counts from the start of the block's text.
-    expect(rangeToSpan(r)).toEqual({ block: 4, offset: 0, length: 44 });
+    expect(rangeToSpan(r)).toEqual({ block: 4, offset: 0, endBlock: 4, endOffset: 44 });
     const outside = document.createElement("p");
     outside.textContent = "nope";
     document.body.append(outside);

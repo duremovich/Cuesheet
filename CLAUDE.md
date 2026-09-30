@@ -839,7 +839,9 @@ views" below).
   on the current version sets its cue's `page` to the page label in the same batch;
   changing `scripts.current_version_id` re-derives it for every cue anchored in the new
   current version; deleting the current version makes the newest other version (highest
-  `position`) current. Cues without an anchor there keep their page. Deleting a cue deletes
+  `position`) current. Cues without an anchor there keep their page; a cue whose anchor
+  there is `missing` (no position: unplaced, or skipped on the Resolve screen) has no page
+  (`page` null, `currentPageLabel` → null; not current → undefined, no change). Deleting a cue deletes
   its anchors; deleting a version deletes its anchors and its file; deleting the script
   deletes everything. `show-state.ts` mirrors all of this optimistically
   (`scriptFollowUps`).
@@ -932,8 +934,11 @@ views" below).
   (`useScriptText`, `useVersionAnchors`, import results kept in sessionStorage for the
   Resolve screen).
 - **Import** (`ImportPanel.tsx`): pick/drop → `extractScript` in the browser → preview
-  (pages, blocks, confidence, first page; OCR or confidence < 0.8 shows a warning with
-  guidance) → label → Import: POST the version first (the server creates it, current,
+  (pages, blocks, confidence, first page, the extractor's warnings; OCR or confidence < 0.8
+  shows a warning with guidance) → label → Import. Size checks before anything is sent:
+  text over the route's 8 MB (`MAX_SCRIPT_BODY_BYTES`, `src/shared/script.ts`) is refused
+  with a message (`textTooBig`); an original over 25 MB is not uploaded (a note says so;
+  the text still imports, `originalTooBig`). Then: POST the version first (the server creates it, current,
   and re-anchors the previous version's cues), then upload the original through the
   attachments pipeline (`{table: "script_versions", recordId: versionId, field:
   "source_file"}`) and `update script_versions {attachment_id}`. A failed upload leaves
@@ -942,13 +947,16 @@ views" below).
   a grid of gutter (page label) | text column (~70ch) | margin. Blocks render by kind;
   each is `[data-block=<i>]` with its text alone in `[data-text]` (selection offsets rely
   on it). Keys outside inputs: j / PageDown, k / PageUp, `/` find, `g` go to a page label.
-  A sticky header shows the page; the navigator lists headings and pages (a "Pages"
-  toggle below 900 px). At ≤ 600 px: one column, markers become badges in the text that
+  A sticky header shows the page **at the middle of the visible script**; the list ends
+  with a viewport of padding (`paddingEnd`) so any page, the last included, scrolls to the
+  top. The navigator lists headings and pages (a "Pages" toggle below 900 px). At ≤ 600 px: one column, markers become badges in the text that
   expand on tap (Open / Show in list).
 - **Markers** (`Marker.tsx`, `markers.ts`): `Q 14.22` + trigger badge (`triggerBadge`:
   LINE, LX 117, SQ 12, TC 1:00:00, VISUAL, FOLLOW, MANUAL) + text (`markerText`), fixed
   height (`MARKER_HEIGHT`), positioned at their block's measured top and pushed down when
-  they'd overlap (`stackMarkers`). Color: status by default, or trigger type / none
+  they'd overlap (`stackMarkers`); markers on one block stack by offset, ties in show
+  order (`anchorsByBlock(anchors, orderOf)`: the cue's `order_key`), in the reader and
+  the print. Color: status by default, or trigger type / none
   (per user and show, localStorage). Open-notes dot, ⚠ for `changed` / `missing`. Line
   cues (trigger Line, or none) underline their quote (`quoteRanges` via the engine's
   `anchorPosition`, so a quote may run onto the next lines; `segmentText`; hovering a
@@ -957,19 +965,25 @@ views" below).
   (status / assignee / trigger) is `?filter=` (`filters.ts`), shared with the print; the
   LX/SQ toggle adds faint labels for the cue's `lx_cue` / `sq_cue`.
 - **Placing** (`PlacePopover.tsx`, `placement.ts`; editors on the current version only):
-  a text selection (`rangeToSpan` → `makeAnchor`) or a click in the margin
-  (`makePositionAnchor` for the block at that height) opens the popover: **New cue** (number from
+  a text selection (`rangeToSpan` → `{block, offset, endBlock, endOffset}` → `spanAnchor`;
+  a selection over several lines is one quote, "Quote covers 2 lines"; selecting only a
+  character name offers "Use the next line"), a click in the margin (`makePositionAnchor`
+  for the block at that height), or the keyboard (lines take focus: click one, ↑/↓ between
+  lines; **Enter** = a position at that line, **Shift+Enter** = the whole line as the
+  quote; focus returns to the line when the popover closes) opens the popover: **New cue** (number from
   `suggestCueNumber` between the nearest anchored cues before/after in script order;
   scene of the cue before, else after; created right after it in show order, else before
   the next; trigger Line + the selection, or LX / Timecode / Visual for positions) or
   **Attach existing cue** (RecordPicker over cues; moves the cue's anchor if it has one;
   a cue with no trigger type gets one). Dragging a marker onto another block updates its
-  anchor (the quote if that block contains it, else a position). All placements are
-  state `manual`, one batch with their cue ops.
+  anchor: a positional cue moves to the line; a Line cue keeps its quote when that line
+  contains it, otherwise `MoveDialog` asks (never silently): **Make this a positional
+  cue** (LX / Timecode / Visual) or **Re-anchor on this line and update trigger text**.
+  All placements are state `manual`, one batch with their cue ops.
 - **URL state**: `?cue=` scrolls to the marker and flashes it (the cue list's parameter,
   so "Show in script" / "Show in list" round-trip; clicking a marker writes it);
-  `?version=` reads an older version read-only (its own anchors); `?resolve=1` is the
-  Resolve screen. "Show in script": the cue grid's row menu, the cue panel's **Script**
+  `?version=` reads an older version read-only (its own anchors); `?resolve=<versionId>`
+  is the Resolve screen for that version (pinned: `1` means current). "Show in script": the cue grid's row menu, the cue panel's **Script**
   tab (`ScriptTab.tsx`: state, page, quote in context), ⌘K. A marker's ⋯ menu: Open cue,
   Show in list, Remove from script.
 - **New version** (`resolve.ts`, `ResolveScreen.tsx`): the import's results give the
@@ -977,10 +991,20 @@ views" below).
   (`buildResolveItems`: results when this tab imported it, else the anchor rows); each
   item shows the old text around the old anchor and the new page at the best guess
   (other guesses as chips). Accept / Place (select text, or click a line for its start) →
-  anchor state `manual`; Cut → cue status "Cut" (seeded by DO migration `0006_script`)
+  anchor state `manual`; for a Line cue, "Update trigger text to the new line" (on by
+  default when the quote changed) also writes the new quote to `trigger_value`; Cut → cue status "Cut" (seeded by DO migration `0006_script`)
   and its anchor deleted; Skip → the cue is left unanchored (a guessed anchor becomes
   `missing` with `block: null`; Accept is how to keep a guess). Cues still without a placed anchor are the reader's **Unplaced** tray; the cue
-  list's number cell warns about `changed` / `missing` anchors (`anchorWarnings`).
+  list's number cell warns about `changed` / `missing` anchors (`anchorWarnings`, a
+  **dashed** underline: `CellDecoration.warningStyle`, unlike the wavy duplicate warning).
+  **Several people at once**: the list re-checks every pending item against the live
+  anchor and cue (`resolvedBy`): accepted / placed / re-matched, cut, or removed by
+  someone else → "Resolved by <member name, else someone else>" (the item keeps the user
+  id; unknown ids refetch the member list), and each action re-reads the live anchor
+  first and refuses with a toast when it's no longer `changed` / `missing` (writes in
+  flight from this screen don't count). **A newer version** imported meanwhile: the
+  screen is keyed by its version and stays on it, with "A new version (v3) was imported
+  by …; your list is for v2", actions hidden, and **Switch to v3**.
 - **Roles**: viewers and commenters read (no popover, no drag, no import / resolve).
 - **Tests**: `markers`, `placement`, `resolve` (unit), `Reader`, `rangeToSpan`,
   `ResolveScreen` (dom), `e2e/script.spec.ts` against the real engine (TXT fixtures
@@ -994,17 +1018,31 @@ views" below).
   theme by setting `<html data-theme="light">` while mounted (restored on leave, never
   stored), adds a screen-only toolbar (Back, Print / Save as PDF → `window.print()`) and
   the header (show, title, version / view, date).
-- **Calling script** (`CallingScriptPrint.tsx`), `/shows/:id/script/print?version=&filter=`:
-  every page, each block beside its markers (status colors), page breaks between pages.
-  From the script header's **Print calling script** (keeps the filter) or ⌘K.
+- **Calling script** (`CallingScriptPrint.tsx`), `/shows/:id/script/print?version=&filter=&go=`:
+  one table per script page whose `<thead>`/`<tfoot>` repeat on every printed sheet (the
+  running header "show · version · Page 14 · date" and a footer; the page-top header is
+  screen-only), each block beside its markers (status colors); a page break after each
+  page but the last (no trailing blank sheet); body 11 pt in print. **GO emphasis** (on
+  by default, `?go=0` off): a small "GO" tag and a bold cue number. Portrait. From the
+  script header's **Print calling script** (keeps the filter) or ⌘K.
 - **Print view** (`PrintTable.tsx`), `/shows/:id/print/<tab>?view=<id>`: `TablePrintRoute`
   renders the tab's own component inside `PrintModeContext`; `TableGrid` and `CueGrid`
   build their saved view as usual (`useViewConfig`, which now also returns `viewId`) and
   return `<PrintTable>` instead of the grid: the view's visible columns
   (`formatValue`), groups, filters, sorts and color rules (`rowColors`). Each group is its
   own table with the group title and column headers in `<thead>`, so they repeat on every
-  printed page. The toolbar's **Print** link and ⌘K "Print this view". New built-in
-  layouts (SM cue sheet, notes by person…) should reuse `PrintShell` + `PrintTable`.
+  printed page. Landscape by default (`@page { size }` from `PrintShell`'s
+  `orientation`; a Sheet toggle, `?orient=portrait`); number-like columns (cue number,
+  page, LX/SQ, timecode, numbers, lengths) never wrap; 13 px on screen, 10.5 pt printed.
+  The toolbar's **Print** link and ⌘K "Print this view". Toggles on print pages keep
+  local state (the URL follows), since a control bound only to the URL snaps back while
+  the router applies it.
+- **SM cue sheet** (`cueSheet.ts`), `/shows/:id/print/cues?layout=cuesheet`: cue, page,
+  SM call / trigger (`smCall`: the SM call, else the trigger badge plus a Line / Visual
+  cue's text), LX, description; every cue by scene (not the view's filter); big type.
+  From the cue list's **Cue sheet** link, the print page's "SM cue sheet instead", or ⌘K
+  "Print SM cue sheet". New built-in layouts (notes by person…) should reuse
+  `PrintShell` + `PrintTable`.
 
 ## Theme and colors
 

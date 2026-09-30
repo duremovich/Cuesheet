@@ -9,10 +9,11 @@ import { newId } from "../../../shared/ids";
 import type { Op } from "../../../shared/ops";
 import type { CueRow, FieldOptions } from "../../../shared/tables";
 import type { Anchor, CueAnchorRow, ReanchorResult, ScriptText } from "./contract";
-import { makeAnchor, makePositionAnchor } from "./contract";
+import { makePositionAnchor } from "./contract";
 import { useScriptText } from "./data";
 import {
   cueLabel,
+  isPositionalCue,
   markerText,
   type PageBlocks,
   pagesOf,
@@ -20,12 +21,13 @@ import {
   quoteRanges,
   triggerBadge,
 } from "./markers";
-import { rangeToSpan } from "./placement";
+import { rangeToSpan, spanAnchor } from "./placement";
 import {
   allDone,
   buildResolveItems,
   initResolve,
   type ResolveItem,
+  resolvedBy,
   resolveReducer,
 } from "./resolve";
 import styles from "./Script.module.css";
@@ -95,7 +97,27 @@ const STATUS_LABEL: Record<ResolveItem["status"], string> = {
   placed: "Placed",
   cut: "Cut",
   skipped: "Skipped",
+  elsewhere: "Resolved",
 };
+
+function statusText(it: ResolveItem, who: (uid: string) => string): string {
+  return it.status === "elsewhere" ? `Resolved by ${who(it.by ?? "")}` : STATUS_LABEL[it.status];
+}
+
+const norm = (s: string | null | undefined) => (s ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+
+/** A Line cue's trigger text follows its new line (the checkbox under the panes). */
+export function triggerTextOps(cue: CueRow, quote: string): Op[] {
+  if (isPositionalCue(cue) || norm(cue.trigger_value) === norm(quote)) return [];
+  return [
+    {
+      op: "update",
+      table: "cues",
+      id: cue.id,
+      fields: { trigger_type: cue.trigger_type ?? "Line", trigger_value: quote },
+    },
+  ];
+}
 
 export function ResolveScreen({
   versionId,
@@ -111,6 +133,13 @@ export function ResolveScreen({
   onApply,
   onExit,
   onError,
+  readLive,
+  readCue,
+  nameOf,
+  userId,
+  onNotice,
+  newerVersion,
+  onSwitchVersion,
 }: {
   versionId: string;
   versionLabel: string;
@@ -125,6 +154,18 @@ export function ResolveScreen({
   onApply: (cueOps: Op[], anchorOps: AnchorOp[]) => Promise<void>;
   onExit: () => void;
   onError: (e: unknown, what: string) => void;
+  /** Live reads for the check before each action (default: the props). */
+  readLive?: (cueId: string) => CueAnchorRow | undefined;
+  readCue?: (cueId: string) => CueRow | undefined;
+  /** User id → display name, for "Resolved by …". */
+  nameOf?: (userId: string) => string | null;
+  /** You: shown as "you (another tab)". */
+  userId?: string;
+  /** A toast. */
+  onNotice?: (message: string) => void;
+  /** Set when the script's current version is no longer this one (someone imported). */
+  newerVersion?: { label: string; by: string | null } | null;
+  onSwitchVersion?: () => void;
 }) {
   const prev = useScriptText(prevVersionId);
   const fresh = useMemo(
@@ -147,6 +188,46 @@ export function ResolveScreen({
   });
   useEffect(() => dispatch({ type: "sync", items: fresh }), [fresh]);
 
+  // --- resolved by someone else meanwhile ---
+  const who = (uid: string) =>
+    !uid
+      ? "someone else"
+      : uid === userId
+        ? "you (another tab)"
+        : (nameOf?.(uid) ?? "someone else");
+  /** Cues this screen is writing right now (their optimistic change isn't "someone else"). */
+  const acting = useRef(new Set<string>());
+  const liveByCue = useMemo(() => new Map(anchors.map((a) => [a.cue_id, a])), [anchors]);
+  const itemsRef = useRef(state.items);
+  itemsRef.current = state.items;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-checked when the live data changes
+  useEffect(() => {
+    const by = new Map<string, string>();
+    for (const it of itemsRef.current) {
+      if (it.status !== "pending" || acting.current.has(it.cueId)) continue;
+      const r = resolvedBy(it, liveByCue.get(it.cueId), cues.get(it.cueId), CUT_STATUS);
+      if (r !== null) by.set(it.cueId, r);
+    }
+    if (by.size) dispatch({ type: "elsewhere", by });
+  }, [liveByCue, cues, fresh]);
+  /** Before writing: still unresolved? Else say who did it and move on. */
+  const stillOpen = (it: ResolveItem): boolean => {
+    const live = readLive ? readLive(it.cueId) : liveByCue.get(it.cueId);
+    const c = readCue ? readCue(it.cueId) : cues.get(it.cueId);
+    const r = resolvedBy(it, live, c, CUT_STATUS);
+    if (r === null) return true;
+    const name = who(r);
+    // (the item keeps the user id; its name shows once the member list has it)
+    onNotice?.(`${cueLabel(c)} was already resolved by ${name}.`);
+    dispatch({ type: "elsewhere", by: new Map([[it.cueId, r]]) });
+    return false;
+  };
+  /** The item with its live anchor row (another tab may have made one meanwhile). */
+  const withLive = (it: ResolveItem): ResolveItem => {
+    const live = readLive ? readLive(it.cueId) : liveByCue.get(it.cueId);
+    return live ? { ...it, anchorId: live.id } : it;
+  };
+
   const item = state.items[state.index];
   const cue = item ? cues.get(item.cueId) : undefined;
   const cand = item?.candidates[state.candidate];
@@ -167,42 +248,76 @@ export function ResolveScreen({
   const [pageIdx, setPageIdx] = useState(guessPage);
   useEffect(() => setPageIdx(guessPage), [guessPage]);
   const [picked, setPicked] = useState<Anchor | null>(null);
+  /** The pick is a position (a line clicked), not selected text: no trigger text update. */
+  const [pickedPosition, setPickedPosition] = useState(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new item or mode drops the pick
   useEffect(() => setPicked(null), [state.index, state.placing]);
   const [busy, setBusy] = useState(false);
 
+  // "Update trigger text to the new line": Line cues, on by default when the line changed.
+  const target = picked ?? (state.placing ? null : (cand?.anchor ?? null));
+  const lineCue = !!cue && !isPositionalCue(cue) && !(picked && pickedPosition);
+  const quoteChanged = !!target && !!item?.from && norm(target.quote) !== norm(item.from.quote);
+  const [updateTrigger, setUpdateTrigger] = useState(quoteChanged);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-defaulted per item / guess / pick
+  useEffect(
+    () => setUpdateTrigger(quoteChanged),
+    [state.index, state.candidate, picked, quoteChanged],
+  );
+
   const run = async (
-    fn: () => Promise<void>,
+    it: ResolveItem,
+    fn: (it: ResolveItem) => Promise<void>,
     status: "accepted" | "placed" | "cut" | "skipped",
     what: string,
   ) => {
+    if (!stillOpen(it)) return;
     setBusy(true);
+    acting.current.add(it.cueId);
     try {
-      await fn();
+      await fn(withLive(it));
       dispatch({ type: "done", status });
     } catch (e) {
       onError(e, what);
     } finally {
+      acting.current.delete(it.cueId);
       setBusy(false);
     }
   };
+  const triggerOps = (a: Anchor): Op[] =>
+    cue && lineCue && updateTrigger ? triggerTextOps(cue, a.quote) : [];
 
   const accept = () => {
     if (!item || !cand) return;
+    const a = cand.anchor;
     void run(
-      () => onApply([], [placeOp(item, versionId, cand.anchor)]),
+      item,
+      (it) => onApply(triggerOps(a), [placeOp(it, versionId, a)]),
       "accepted",
       "accept the placement",
     );
   };
   const place = () => {
     if (!item || !picked) return;
-    void run(() => onApply([], [placeOp(item, versionId, picked)]), "placed", "place the cue");
+    const a = picked;
+    void run(
+      item,
+      (it) => onApply(triggerOps(a), [placeOp(it, versionId, a)]),
+      "placed",
+      "place the cue",
+    );
   };
   const skip = () => {
     if (!item) return;
-    const b = skipBatch(item);
-    void run(() => onApply(b.cueOps, b.anchorOps), "skipped", "skip the cue");
+    void run(
+      item,
+      (it) => {
+        const b = skipBatch(it);
+        return onApply(b.cueOps, b.anchorOps);
+      },
+      "skipped",
+      "skip the cue",
+    );
   };
   const cut = () => {
     if (!item) return;
@@ -213,8 +328,15 @@ export function ResolveScreen({
       onError(new Error(`add a "${CUT_STATUS}" status option to cues first`), "cut the cue");
       return;
     }
-    const b = cutBatch(item);
-    void run(() => onApply(b.cueOps, b.anchorOps), "cut", "cut the cue");
+    void run(
+      item,
+      (it) => {
+        const b = cutBatch(it);
+        return onApply(b.cueOps, b.anchorOps);
+      },
+      "cut",
+      "cut the cue",
+    );
   };
 
   const rightRef = useRef<HTMLDivElement>(null);
@@ -225,12 +347,18 @@ export function ResolveScreen({
       const range = sel.getRangeAt(0);
       if (!rightRef.current?.contains(range.commonAncestorContainer)) return;
       const span = rangeToSpan(range);
-      if (span) setPicked(makeAnchor(text, span.block, span.offset, span.length));
+      if (span) {
+        setPicked(spanAnchor(text, span));
+        setPickedPosition(false);
+      }
       return;
     }
     // A click without a selection: a position at the start of that block.
     const el = (e.target as Element).closest<HTMLElement>("[data-block]");
-    if (el) setPicked(makePositionAnchor(text, Number(el.dataset.block)));
+    if (el) {
+      setPicked(makePositionAnchor(text, Number(el.dataset.block)));
+      setPickedPosition(true);
+    }
   };
 
   if (state.items.length === 0) {
@@ -246,7 +374,7 @@ export function ResolveScreen({
 
   const done = allDone(state);
   const newPage = newPages[pageIdx];
-  const highlight = picked ?? (state.placing ? null : (cand?.anchor ?? null));
+  const highlight = target;
   const newQuotes = highlight ? quoteRanges(text, [{ ...highlight, id: "guess" }]) : NO_QUOTES;
 
   return (
@@ -273,7 +401,7 @@ export function ResolveScreen({
                   <span className={styles.stateChip} data-state={it.state}>
                     {it.state}
                   </span>{" "}
-                  <span className="muted">{STATUS_LABEL[it.status]}</span>
+                  <span className="muted">{statusText(it, who)}</span>
                 </button>
               </li>
             );
@@ -284,6 +412,22 @@ export function ResolveScreen({
         </button>
       </aside>
       <div className={styles.resolveMain}>
+        {newerVersion && (
+          <p
+            className={styles.banner}
+            data-kind="warning"
+            role="status"
+            data-testid="resolve-stale"
+          >
+            A new version ({newerVersion.label}) was imported
+            {newerVersion.by ? ` by ${newerVersion.by}` : ""}; your list is for {versionLabel}.
+            {onSwitchVersion && (
+              <button type="button" className={styles.primary} onClick={onSwitchVersion}>
+                Switch to {newerVersion.label}
+              </button>
+            )}
+          </p>
+        )}
         {done && (
           <p className={styles.banner} data-kind="success" role="status" data-testid="resolve-done">
             All flagged cues are handled.
@@ -387,11 +531,21 @@ export function ResolveScreen({
                 </div>
               </section>
             </div>
+            {item.status === "pending" && lineCue && target && !newerVersion && (
+              <label className={styles.check} data-testid="update-trigger">
+                <input
+                  type="checkbox"
+                  checked={updateTrigger}
+                  onChange={(e) => setUpdateTrigger(e.target.checked)}
+                />
+                Update trigger text to the new line
+              </label>
+            )}
             {item.status !== "pending" ? (
               <p className="muted" data-testid="resolve-status">
-                {STATUS_LABEL[item.status]}.
+                {statusText(item, who)}.
               </p>
-            ) : state.placing ? (
+            ) : newerVersion ? null : state.placing ? (
               <div className={styles.resolveActions}>
                 <button
                   type="button"

@@ -1,6 +1,6 @@
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { click, render, setInputValue, wait } from "../../test/dom";
+import { click, press, render, setInputValue, wait } from "../../test/dom";
 import type { CueAnchorRow } from "./contract";
 import { NO_FILTER } from "./filters";
 import { MARKER_GAP, MARKER_HEIGHT } from "./markers";
@@ -201,5 +201,50 @@ describe("Reader placement popover", () => {
       pop.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
     expect(popover()).toBeNull();
+  });
+
+  it("a character name alone: offers the line they say instead", async () => {
+    const { container, placement } = setup({}, []);
+    selectIn(container, 4, 0, 3); // "SUE"
+    await wait(30);
+    const hint = document.querySelector('[data-testid="next-line-hint"]') as HTMLElement;
+    expect(hint.textContent).toContain("Anchor on the following line instead?");
+    click(button(hint, "Use the next line"));
+    const pop = popover() as HTMLElement;
+    expect(document.querySelector('[data-testid="next-line-hint"]')).toBeNull();
+    click(button(pop, "New cue on this line"));
+    click(button(pop, "Create cue"));
+    await wait(10);
+    expect(placement.create).toHaveBeenCalledWith(
+      expect.objectContaining({ block: 5, offset: 0, quote: "Sweet Sue needs a sax and a bass." }),
+      expect.objectContaining({ trigger_value: "Sweet Sue needs a sax and a bass." }),
+    );
+  });
+
+  it("keyboard: Enter on a focused line places at it, Shift+Enter quotes it; focus returns", async () => {
+    const { container, placement } = setup({}, []);
+    const line = container.querySelector('[data-block="7"]') as HTMLElement;
+    expect(line.getAttribute("tabindex")).toBe("-1");
+    act(() => line.focus());
+    press("Enter", { shift: true }, line);
+    let pop = popover() as HTMLElement;
+    expect(pop.textContent).toContain("Daphne. Bass. Classically trained.");
+    press("Escape", {}, pop);
+    expect(popover()).toBeNull();
+    expect(document.activeElement).toBe(line);
+    press("Enter", {}, line);
+    pop = popover() as HTMLElement;
+    expect(pop.querySelector('select[aria-label="Trigger type"]')).not.toBeNull();
+    click(button(pop, "New cue here"));
+    click(button(pop, "Create cue"));
+    await wait(10);
+    expect(placement.create).toHaveBeenCalledWith(
+      expect.objectContaining({ block: 7, offset: 0 }),
+      expect.objectContaining({ trigger_type: "LX" }),
+    );
+    // ↓ moves to the next line.
+    act(() => line.focus());
+    press("ArrowDown", {}, line);
+    expect(document.activeElement).toBe(container.querySelector('[data-block="8"]'));
   });
 });

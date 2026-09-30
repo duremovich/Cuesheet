@@ -3,13 +3,15 @@
 // that didn't re-anchor cleanly. `?cue=<id>` scrolls to that cue's marker and flashes it
 // (the cue list's parameter, so "Show in script" / "Show in list" round-trip);
 // `?version=<id>` reads an older version (read-only); `?filter=` is the marker filter;
-// `?resolve=1` is the Resolve screen. Editors place and resolve; everyone else reads.
+// `?resolve=<versionId>` is the Resolve screen for that version (pinned: if someone
+// imports a newer one meanwhile, the screen says so and offers to switch; "1" = current). Editors place and resolve; everyone else reads.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { attachmentUrl } from "../../../shared/attachments";
 import { newId } from "../../../shared/ids";
 import type { Op } from "../../../shared/ops";
 import type { FieldOption } from "../../../shared/tables";
+import { api } from "../../lib/api";
 import { ViewCache } from "../../lib/show-selectors";
 import { type ShowState, useShowStore, useShowStoreInstance } from "../../lib/show-store";
 import { cueColumns, cueEditOps } from "../cues/columns";
@@ -36,10 +38,14 @@ import {
 import { ImportPanel, isLowConfidence, LowConfidenceBanner, uploadOriginal } from "./ImportPanel";
 import { scriptPrintUrl } from "./links";
 import type { MarkerActions } from "./Marker";
+import { MoveDialog } from "./MoveDialog";
 import { cueLabel, isPlaced, isPositionalCue } from "./markers";
 import {
   attachBatch,
   moveAnchorOp,
+  moveAsPositionalBatch,
+  moveNeedsChoice,
+  moveRequoteBatch,
   type NewCueInput,
   newCueBatch,
   scriptNeighbours,
@@ -84,13 +90,32 @@ export function ScriptPage() {
 
   // --- which version ---
   const vParam = params.get("version");
-  const viewId = vParam && versions.some((v) => v.id === vParam) ? vParam : currentId;
+  const resolveParam = ws.canEdit ? params.get("resolve") : null;
+  const resolveVid =
+    resolveParam === "1"
+      ? currentId
+      : resolveParam && versions.some((v) => v.id === resolveParam)
+        ? resolveParam
+        : null;
+  const viewId =
+    resolveVid ?? (vParam && versions.some((v) => v.id === vParam) ? vParam : currentId);
   const vIndex = versions.findIndex((v) => v.id === viewId);
   const version = versions[vIndex] ?? null;
   const prevId = vIndex > 0 ? (versions[vIndex - 1]?.id ?? null) : null;
   const isCurrent = !!viewId && viewId === currentId;
   const canPlace = ws.canEdit && isCurrent;
-  const resolving = canPlace && params.get("resolve") === "1";
+  const resolving = !!resolveVid;
+  const openResolve = (cueId?: string) =>
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set("resolve", currentId ?? "1");
+        next.delete("version");
+        if (cueId) next.set("cue", cueId);
+        return next;
+      },
+      { preventScrollReset: true },
+    );
   const { text, error: textError } = useScriptText(viewId);
   const anchors = useVersionAnchors(viewId, tables.cues);
   const prevAnchors = useVersionAnchors(prevId, tables.cues);
@@ -113,7 +138,6 @@ export function ScriptPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [report, setReport] = useState<{
     versionId: string;
-    label: string;
     counts: ReportCounts | null;
     flagged: number;
   } | null>(null);
@@ -125,10 +149,8 @@ export function ScriptPage() {
   const onImported = (res: ImportVersionResponse, origError: string | null, _file: File) => {
     saveResults(ws.showId, res.versionId, res.results);
     const counts = res.results.length ? reportCounts(res.results.map((r) => r.state)) : null;
-    const label = versions.length ? `Version ${versions.length + 1}` : "The script";
     setReport({
       versionId: res.versionId,
-      label,
       counts,
       flagged: counts ? counts.changed + counts.missing : 0,
     });
@@ -270,12 +292,54 @@ export function ScriptPage() {
         const row = anchorsRef.current.find((a) => a.id === anchorId);
         if (!row || !text || row.block === block) return;
         const positional = isPositionalCue(store.getState().tables.cues.get(row.cue_id));
+        if (moveNeedsChoice(row, text, block, positional)) {
+          setMoveAsk({ anchorId, block });
+          return;
+        }
         await apply([], [moveAnchorOp(row, text, block, positional)], "move the marker").catch(
           () => undefined,
         );
       },
     }),
     [store, viewId, apply, ws, focusCue, text],
+  );
+
+  // A Line marker dropped on a line without its quote: ask (MoveDialog).
+  const [moveAsk, setMoveAsk] = useState<{ anchorId: string; block: number } | null>(null);
+  const moveRow = moveAsk ? anchors.find((a) => a.id === moveAsk.anchorId) : undefined;
+  const finishMove = (batch: { cueOps: Op[]; anchorOps: AnchorOp[] }) => {
+    setMoveAsk(null);
+    void apply(batch.cueOps, batch.anchorOps, "move the marker").catch(() => undefined);
+  };
+
+  // --- member names for "Resolved by …" / "imported by …" (members added after the
+  // workspace loaded its list are fetched once when an unknown id shows up) ---
+  const [extraNames, setExtraNames] = useState<ReadonlyMap<string, string>>(new Map());
+  const unknownUsers = useMemo(() => {
+    const ids = new Set<string>();
+    for (const a of anchors) if (a.updated_by) ids.add(a.updated_by);
+    for (const v of versions) ids.add(v.created_by);
+    return [...ids]
+      .filter((id) => id && id !== ws.userId && !ws.memberNames.has(id) && !extraNames.has(id))
+      .sort()
+      .join(",");
+  }, [anchors, versions, ws.userId, ws.memberNames, extraNames]);
+  useEffect(() => {
+    if (!resolving || !unknownUsers) return;
+    let live = true;
+    api
+      .members(ws.showId)
+      .then((r) => {
+        if (live) setExtraNames(new Map(r.members.map((m) => [m.userId, m.name])));
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [resolving, unknownUsers, ws.showId]);
+  const nameOf = useCallback(
+    (uid: string) => ws.memberNames.get(uid) ?? extraNames.get(uid) ?? null,
+    [ws.memberNames, extraNames],
   );
 
   // --- the row panel (cue fields, notes, the Script tab) ---
@@ -455,7 +519,7 @@ export function ScriptPage() {
         )}
       </fieldset>
       {canPlace && pending > 0 && !resolving && (
-        <ToolbarButton onClick={() => setParam("resolve", "1", false)} data-testid="open-resolve">
+        <ToolbarButton onClick={() => openResolve()} data-testid="open-resolve">
           Resolve ({pending})
         </ToolbarButton>
       )}
@@ -476,6 +540,17 @@ export function ScriptPage() {
 
   const notice = (
     <>
+      {moveAsk && moveRow && text && (
+        <MoveDialog
+          cueLabel={cueLabel(tables.cues.get(moveRow.cue_id))}
+          line={text.blocks[moveAsk.block]?.text ?? ""}
+          onCancel={() => setMoveAsk(null)}
+          onPositional={(trigger) =>
+            finishMove(moveAsPositionalBatch(moveRow, text, moveAsk.block, trigger))
+          }
+          onRequote={() => finishMove(moveRequoteBatch(moveRow, text, moveAsk.block))}
+        />
+      )}
       {importOpen && (
         <ImportPanel
           source={source}
@@ -502,11 +577,7 @@ export function ScriptPage() {
             )}
           </span>
           {report.flagged > 0 && canPlace && (
-            <button
-              type="button"
-              className={styles.primary}
-              onClick={() => setParam("resolve", "1", false)}
-            >
+            <button type="button" className={styles.primary} onClick={() => openResolve()}>
               Resolve {report.flagged} {report.flagged === 1 ? "cue" : "cues"}
             </button>
           )}
@@ -554,19 +625,7 @@ export function ScriptPage() {
                 key={it.cueId}
                 type="button"
                 className={styles.trayChip}
-                onClick={() =>
-                  canPlace
-                    ? setParams(
-                        (prev) => {
-                          const next = new URLSearchParams(prev);
-                          next.set("resolve", "1");
-                          next.set("cue", it.cueId);
-                          return next;
-                        },
-                        { preventScrollReset: true },
-                      )
-                    : openCue(it.cueId)
-                }
+                onClick={() => (canPlace ? openResolve(it.cueId) : openCue(it.cueId))}
               >
                 {cueLabel(cue)}
               </button>
@@ -643,6 +702,7 @@ export function ScriptPage() {
         <p className="muted">Loading the script…</p>
       ) : resolving && viewId ? (
         <ResolveScreen
+          key={viewId}
           versionId={viewId}
           versionLabel={version?.label ?? "This version"}
           prevVersionId={prevId}
@@ -656,6 +716,28 @@ export function ScriptPage() {
           onApply={(c, a) => source.apply(c, a)}
           onError={ws.reportError}
           onExit={() => setParam("resolve", null, false)}
+          readLive={(cueId) =>
+            [...source.getSnapshot().anchors.values()].find(
+              (a) => a.cue_id === cueId && a.script_version_id === viewId,
+            )
+          }
+          readCue={(cueId) => store.getState().tables.cues.get(cueId)}
+          nameOf={nameOf}
+          userId={ws.userId}
+          onNotice={(m) => ws.toast(m)}
+          newerVersion={
+            currentId && currentId !== viewId
+              ? {
+                  label: versions.find((v) => v.id === currentId)?.label ?? "a newer version",
+                  by: (() => {
+                    const uid = versions.find((v) => v.id === currentId)?.created_by;
+                    if (!uid) return null;
+                    return uid === ws.userId ? "you" : nameOf(uid);
+                  })(),
+                }
+              : null
+          }
+          onSwitchVersion={() => openResolve()}
         />
       ) : (
         <Reader

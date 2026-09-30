@@ -94,6 +94,23 @@ describe("script follow-ups", () => {
     );
     expect(data.tables.cue_anchors.get("a1")?.page).toBe(1);
     expect(data.tables.cues.get("q")?.page).toBe("2v2");
+    // Missing (no position) on the current version: the cue loses its page.
+    data = applyResolved(
+      data,
+      resolveLocal(
+        data,
+        [
+          {
+            op: "update",
+            table: "cue_anchors",
+            id: "a2",
+            fields: { block: null, state: "missing" },
+          },
+        ],
+        ctx,
+      ),
+    );
+    expect(data.tables.cues.get("q")?.page).toBeNull();
   });
 
   it("switching the current version, and deleting it, re-derive Cue.page", () => {

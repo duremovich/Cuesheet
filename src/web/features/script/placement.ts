@@ -6,7 +6,7 @@ import type { CueRow } from "../../../shared/tables";
 import { suggestCueNumber } from "../cues/cueNumbers";
 import { textField } from "../shared/ops";
 import type { Anchor, CueAnchorRow, ScriptText } from "./contract";
-import { makeAnchor, makePositionAnchor } from "./contract";
+import { makeAnchor, makePositionAnchor, SEPARATOR } from "./contract";
 import { compareAnchors, isPlaced } from "./markers";
 import type { AnchorOp } from "./source";
 
@@ -189,6 +189,69 @@ export function moveAnchorOp(
   };
 }
 
+/**
+ * Whether dragging this marker onto `block` needs a decision: a Line cue whose quote isn't
+ * in that block would otherwise silently turn into a position (ux review: never convert
+ * silently). Positional cues and blocks holding the quote move directly.
+ */
+export function moveNeedsChoice(
+  row: CueAnchorRow,
+  text: ScriptText,
+  block: number,
+  positional: boolean,
+): boolean {
+  if (positional) return false;
+  const target = text.blocks[block]?.text ?? "";
+  return !(row.quote && target.includes(row.quote));
+}
+
+function anchorUpdate(id: string, a: Anchor): AnchorOp {
+  return {
+    op: "update",
+    id,
+    fields: {
+      block: a.block,
+      offset: a.offset,
+      length: a.length,
+      quote: a.quote,
+      prefix: a.prefix,
+      suffix: a.suffix,
+      state: "manual",
+      confidence: 1,
+    },
+  };
+}
+
+/** "Make this a positional cue": the trigger type changes and the anchor is a position. */
+export function moveAsPositionalBatch(
+  row: CueAnchorRow,
+  text: ScriptText,
+  block: number,
+  trigger: string,
+): Batch {
+  return {
+    cueOps: [{ op: "update", table: "cues", id: row.cue_id, fields: { trigger_type: trigger } }],
+    anchorOps: [anchorUpdate(row.id, makePositionAnchor(text, block))],
+  };
+}
+
+/** "Re-anchor on this line": the whole line is the quote and the cue's trigger text. */
+export function moveRequoteBatch(row: CueAnchorRow, text: ScriptText, block: number): Batch {
+  const line = text.blocks[block]?.text ?? "";
+  const a = makeAnchor(text, block, 0, line.length);
+  return {
+    cueOps: [
+      {
+        op: "update",
+        table: "cues",
+        id: row.cue_id,
+        fields: { trigger_type: "Line", trigger_value: a.quote },
+      },
+    ],
+    anchorOps: [anchorUpdate(row.id, a)],
+  };
+}
+
 // ---- Selection → block span (DOM) ----
 
 /** Characters of `container`'s text before (`node`, `offset`). */
@@ -210,29 +273,64 @@ function textEl(node: Node): HTMLElement | null {
   return block?.querySelector<HTMLElement>("[data-text]") ?? null;
 }
 
+export interface Span {
+  block: number;
+  offset: number;
+  /** Where the selection ends (the same block, or a later one: a quote over several lines). */
+  endBlock: number;
+  endOffset: number;
+}
+
 /**
- * The selected span as `{block, offset, length}` in the block's text: a selection across
- * blocks is cut at the end of its first block; whitespace at either end is dropped. Null
- * when it's not inside script text or selects nothing.
+ * The selected span in script text: start and end block with offsets in their texts
+ * (a selection may run over several lines). Whitespace at either end is dropped; an end
+ * outside script text (a badge) is the end of the start block. Null when it's not inside
+ * script text or selects nothing.
  */
-export function rangeToSpan(
-  range: Range,
-): { block: number; offset: number; length: number } | null {
+export function rangeToSpan(range: Range): Span | null {
   const startText = textEl(range.startContainer);
   if (!startText) return null;
-  const blockEl = startText.closest<HTMLElement>("[data-block]");
-  const block = Number(blockEl?.dataset.block);
+  const block = Number(startText.closest<HTMLElement>("[data-block]")?.dataset.block);
   if (!Number.isInteger(block)) return null;
-  const full = startText.textContent ?? "";
-  const inStart = startText.contains(range.startContainer);
-  let start = inStart ? textOffsetIn(startText, range.startContainer, range.startOffset) : 0;
+  const startFull = startText.textContent ?? "";
+  let start = startText.contains(range.startContainer)
+    ? textOffsetIn(startText, range.startContainer, range.startOffset)
+    : 0;
   const endText = textEl(range.endContainer);
-  let end =
-    endText === startText && startText.contains(range.endContainer)
-      ? textOffsetIn(startText, range.endContainer, range.endOffset)
-      : full.length;
-  while (start < end && /\s/.test(full[start] ?? "")) start++;
-  while (end > start && /\s/.test(full[end - 1] ?? "")) end--;
-  if (end <= start) return null;
-  return { block, offset: start, length: end - start };
+  let endBlock = block;
+  let endFull = startFull;
+  let end = startFull.length;
+  if (endText?.contains(range.endContainer)) {
+    const eb = Number(endText.closest<HTMLElement>("[data-block]")?.dataset.block);
+    if (Number.isInteger(eb) && eb >= block) {
+      endBlock = eb;
+      endFull = endText.textContent ?? "";
+      end = textOffsetIn(endText, range.endContainer, range.endOffset);
+    }
+  }
+  while (start < startFull.length && /\s/.test(startFull[start] ?? "")) start++;
+  while (end > 0 && /\s/.test(endFull[end - 1] ?? "")) end--;
+  if (endBlock > block && end === 0) {
+    // Ended at the very start of a later line: the quote ends with the line before.
+    endBlock = block;
+    end = startFull.length;
+    while (end > start && /\s/.test(startFull[end - 1] ?? "")) end--;
+  }
+  if (endBlock === block && end <= start) return null;
+  return { block, offset: start, endBlock, endOffset: end };
+}
+
+/** A span's length in the version's joined text (blocks joined by the engine's separator). */
+export function spanLength(text: ScriptText, s: Span): number {
+  if (s.endBlock === s.block) return s.endOffset - s.offset;
+  let n = (text.blocks[s.block]?.text.length ?? 0) - s.offset;
+  for (let b = s.block + 1; b < s.endBlock; b++) {
+    n += SEPARATOR.length + (text.blocks[b]?.text.length ?? 0);
+  }
+  return n + SEPARATOR.length + s.endOffset;
+}
+
+/** The anchor for a selected span. */
+export function spanAnchor(text: ScriptText, s: Span): Anchor {
+  return makeAnchor(text, s.block, s.offset, spanLength(text, s));
 }

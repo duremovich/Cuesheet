@@ -2,7 +2,7 @@ import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { ShowStore } from "../../lib/show-store";
 import { click, render, wait } from "../../test/dom";
-import type { ScriptText } from "./contract";
+import type { CueAnchorRow, ScriptText } from "./contract";
 import { ResolveScreen } from "./ResolveScreen";
 import { type ScriptSource, ScriptSourceProvider } from "./source";
 import { anchorRow, cueRow, SAMPLE } from "./testData";
@@ -67,29 +67,48 @@ const anchors = [
   anchorRow({ id: "n2", cue_id: "c2", state: "missing", script_version_id: "v2" }),
 ];
 
-function setup(fieldOptions = { "cues.status": [{ value: "Cut", color: "red" }] } as never) {
+type Props = Parameters<typeof ResolveScreen>[0];
+
+function setup(
+  fieldOptions = { "cues.status": [{ value: "Cut", color: "red" }] } as never,
+  extra: Partial<Props> = {},
+) {
   const onApply = vi.fn(async () => undefined);
   const onError = vi.fn();
   const onExit = vi.fn();
-  const r = render(
+  const onNotice = vi.fn();
+  const props: Props = {
+    versionId: "v2",
+    versionLabel: "v2",
+    prevVersionId: "v1",
+    text: NEW,
+    cues,
+    fieldOptions,
+    results: null,
+    anchors,
+    prevAnchors,
+    onApply,
+    onExit,
+    onError,
+    onNotice,
+    userId: "me",
+    nameOf: (uid) => (uid === "ana" ? "Ana" : null),
+    ...extra,
+  };
+  const ui = (p: Props) => (
     <ScriptSourceProvider store={{} as ShowStore} showId="s" source={source()}>
-      <ResolveScreen
-        versionId="v2"
-        versionLabel="v2"
-        prevVersionId="v1"
-        text={NEW}
-        cues={cues}
-        fieldOptions={fieldOptions}
-        results={null}
-        anchors={anchors}
-        prevAnchors={prevAnchors}
-        onApply={onApply}
-        onExit={onExit}
-        onError={onError}
-      />
-    </ScriptSourceProvider>,
+      <ResolveScreen {...p} />
+    </ScriptSourceProvider>
   );
-  return { ...r, onApply, onError, onExit };
+  const r = render(ui(props));
+  return {
+    ...r,
+    onApply,
+    onError,
+    onExit,
+    onNotice,
+    update: (p: Partial<Props>) => r.rerender(ui({ ...props, ...p })),
+  };
 }
 
 const btn = (root: ParentNode, name: string) =>
@@ -115,8 +134,16 @@ describe("ResolveScreen", () => {
     ).toBe("Sweet Sue needs a");
     click(btn(container, "Accept"));
     await wait(0);
+    // The line changed, so its trigger text follows (the checkbox is on by default).
     expect(onApply).toHaveBeenCalledWith(
-      [],
+      [
+        {
+          op: "update",
+          table: "cues",
+          id: "c1",
+          fields: { trigger_type: "Line", trigger_value: "Sweet Sue needs a" },
+        },
+      ],
       [
         {
           op: "update",
@@ -204,5 +231,69 @@ describe("ResolveScreen", () => {
     await wait(0);
     expect(onError).toHaveBeenCalled();
     expect(heading(container)).toContain("Q 14.20");
+  });
+
+  it("marks items someone else resolved meanwhile, and says who", async () => {
+    const { container, update } = setup();
+    await wait(0);
+    // Ana accepted 14.20 in her browser: its live anchor is now manual.
+    update({
+      anchors: [
+        { ...(anchors[0] as CueAnchorRow), state: "manual", updated_by: "ana" },
+        anchors[1] as CueAnchorRow,
+      ],
+    });
+    await wait(0);
+    const first = container.querySelector('[data-testid="resolve-item"]') as HTMLElement;
+    expect(first.dataset.status).toBe("elsewhere");
+    expect(first.textContent).toContain("Resolved by Ana");
+    // The screen moved on to the next pending cue.
+    expect(heading(container)).toContain("Q 14.25");
+  });
+
+  it("re-checks the live anchor before writing and refuses when it's resolved", async () => {
+    const live = new Map<string, CueAnchorRow>([
+      ["c1", { ...(anchors[0] as CueAnchorRow), state: "manual", updated_by: "zed" }],
+    ]);
+    const { container, onApply, onNotice } = setup(undefined, {
+      readLive: (id) => live.get(id),
+    });
+    await wait(0);
+    click(btn(container, "Accept"));
+    await wait(0);
+    expect(onApply).not.toHaveBeenCalled();
+    expect(onNotice).toHaveBeenCalledWith("Q 14.20 was already resolved by someone else.");
+    expect(
+      container.querySelector('[data-testid="resolve-item"]')?.getAttribute("data-status"),
+    ).toBe("elsewhere");
+  });
+
+  it("the trigger text checkbox: off keeps the cue's trigger text", async () => {
+    const { container, onApply } = setup();
+    await wait(0);
+    const box = container.querySelector<HTMLInputElement>(
+      '[data-testid="update-trigger"] input',
+    ) as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    click(box);
+    click(btn(container, "Accept"));
+    await wait(0);
+    expect(onApply).toHaveBeenCalledWith([], [expect.objectContaining({ id: "n1" })]);
+  });
+
+  it("a newer version imported meanwhile: a banner, no actions, a switch", async () => {
+    const onSwitchVersion = vi.fn();
+    const { container } = setup(undefined, {
+      newerVersion: { label: "v3", by: "Ana" },
+      onSwitchVersion,
+    });
+    await wait(0);
+    const banner = container.querySelector('[data-testid="resolve-stale"]') as HTMLElement;
+    expect(banner.textContent).toContain(
+      "A new version (v3) was imported by Ana; your list is for v2",
+    );
+    expect(btn(container, "Accept")).toBeUndefined();
+    click(btn(banner, "Switch to v3"));
+    expect(onSwitchVersion).toHaveBeenCalled();
   });
 });

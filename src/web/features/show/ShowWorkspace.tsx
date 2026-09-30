@@ -23,7 +23,7 @@ import pageStyles from "../../pages/pages.module.css";
 import { AttachmentsHost } from "../attachments/Attachments";
 import { planSortNow } from "../cues/sortNow";
 import { SessionControl } from "../notes/SessionControl";
-import { printViewUrl } from "../print/PrintTable";
+import { cueSheetUrl, printViewUrl } from "../print/PrintTable";
 import { scriptPrintUrl, scriptUrl } from "../script/links";
 import { ScriptSourceProvider } from "../script/source";
 import { CommandPalette, goToCommands, type PaletteCommand } from "../search/CommandPalette";
@@ -207,6 +207,11 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
         id: "print-script",
         label: "Print calling script",
         run: () => navigate(scriptPrintUrl(showId)),
+      },
+      {
+        id: "print-cuesheet",
+        label: "Print SM cue sheet",
+        run: () => navigate(cueSheetUrl(showId)),
       },
       ...(pathTab
         ? [

@@ -42,7 +42,7 @@ import {
 } from "./markers";
 import { PlacePopover, type PlaceRequest } from "./PlacePopover";
 import type { NewCueInput } from "./placement";
-import { rangeToSpan } from "./placement";
+import { rangeToSpan, spanAnchor } from "./placement";
 import styles from "./Script.module.css";
 import { BlockText } from "./ScriptBlocks";
 
@@ -103,7 +103,10 @@ export function Reader(props: ReaderProps) {
       }),
     [anchors, cues, assignees, filter],
   );
-  const byBlock = useMemo(() => anchorsByBlock(shown), [shown]);
+  const byBlock = useMemo(
+    () => anchorsByBlock(shown, (id) => cues.get(id)?.order_key ?? ""),
+    [shown, cues],
+  );
   // Line cues' quotes, per block (a quote may run onto the next lines).
   const quotes = useMemo(
     () =>
@@ -116,19 +119,40 @@ export function Reader(props: ReaderProps) {
 
   // --- virtualized pages ---
   const scroller = useRef<HTMLDivElement>(null);
+  // The list ends with room for a viewport, so any page (the last one too) can be scrolled
+  // to the top: `g 14` then shows page 14 at the top, and the header agrees.
+  const headerRef = useRef<HTMLDivElement>(null);
+  const [room, setRoom] = useState(0);
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const measure = () =>
+      setRoom(Math.max(0, el.clientHeight - (headerRef.current?.offsetHeight ?? 0)));
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const virtualizer = useVirtualizer({
     count: pages.length,
     getScrollElement: () => scroller.current,
     estimateSize: (i) => estimatePage(pages[i]),
     getItemKey: (i) => pages[i]?.page ?? i,
     overscan: 2,
+    paddingEnd: room,
   });
   const [pageIdx, setPageIdx] = useState(0);
   const pageIdxRef = useRef(0);
   pageIdxRef.current = pageIdx;
+  /** The current page: the one at the middle of the visible script. */
   const onScroll = () => {
-    const top = scroller.current?.scrollTop ?? 0;
-    const item = virtualizer.getVirtualItems().find((it) => it.end > top + 40);
+    const el = scroller.current;
+    if (!el) return;
+    const header = headerRef.current?.offsetHeight ?? 0;
+    const mid = el.scrollTop + (el.clientHeight - header) / 2;
+    const items = virtualizer.getVirtualItems();
+    const item = items.find((it) => it.start <= mid && mid < it.end) ?? items.at(-1);
     if (item && item.index !== pageIdxRef.current) setPageIdx(item.index);
   };
   const scrollToPage = useCallback(
@@ -247,23 +271,78 @@ export function Reader(props: ReaderProps) {
   // --- placing ---
   const [place, setPlace] = useState<{ req: PlaceRequest; anchor: Anchor } | null>(null);
   const openPlace = useCallback(
-    (kind: PlaceRequest["kind"], anchor: Anchor, x: number, y: number) => {
+    (kind: PlaceRequest["kind"], anchor: Anchor, x: number, y: number, lines = 1) => {
       const page = text.blocks[anchor.block]?.page;
       const label = text.pages.find((p) => p.page === page)?.label ?? String(page ?? "");
+      const block = text.blocks[anchor.block];
+      const next = text.blocks[anchor.block + 1];
       setPlace({
         anchor,
         req: {
           kind,
           x,
           y,
-          quote: kind === "selection" ? anchor.quote : (text.blocks[anchor.block]?.text ?? ""),
+          quote: kind === "selection" ? anchor.quote : (block?.text ?? ""),
           pageLabel: label,
           suggestion: placement.suggest({ block: anchor.block, offset: anchor.offset }),
+          lines,
+          // Only a character name selected: offer the line they say instead.
+          nextLine: kind === "selection" && lines === 1 && block?.kind === "character" && !!next,
         },
       });
     },
     [text, placement],
   );
+  /** "Anchor on the following line instead" (a character name was selected). */
+  const pickNextLine = useCallback(() => {
+    setPlace((cur) => {
+      if (!cur) return cur;
+      const next = text.blocks[cur.anchor.block + 1];
+      if (!next) return cur;
+      const anchor = makeAnchor(text, next.i, 0, next.text.length);
+      const page = text.pages.find((p) => p.page === next.page)?.label ?? String(next.page);
+      return {
+        anchor,
+        req: {
+          ...cur.req,
+          quote: anchor.quote,
+          pageLabel: page,
+          suggestion: placement.suggest({ block: anchor.block, offset: 0 }),
+          lines: 1,
+          nextLine: false,
+        },
+      };
+    });
+  }, [text, placement]);
+
+  // --- keyboard placement: a focused line (click it, or ↑/↓ from one) ---
+  const focusBlock = useCallback(
+    (i: number) => {
+      if (i < 0 || i >= text.blocks.length) return;
+      const el = scroller.current?.querySelector<HTMLElement>(`[data-block="${i}"]`);
+      if (el) {
+        el.focus({ preventScroll: true });
+        el.scrollIntoView?.({ block: "nearest" });
+      } else scrollToBlock(i, (found) => found.focus({ preventScroll: true }));
+    },
+    [text, scrollToBlock],
+  );
+  const onBlockKey = (e: React.KeyboardEvent) => {
+    const el = e.target as HTMLElement;
+    if (!el.matches?.("[data-block]") || e.metaKey || e.ctrlKey || e.altKey) return;
+    const b = Number(el.dataset.block);
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      focusBlock(b + (e.key === "ArrowDown" ? 1 : -1));
+    } else if (e.key === "Enter" && canPlace) {
+      e.preventDefault();
+      const r = el.getBoundingClientRect();
+      const line = text.blocks[b]?.text ?? "";
+      if (e.shiftKey && line)
+        openPlace("selection", makeAnchor(text, b, 0, line.length), r.left, r.bottom);
+      else openPlace("position", makePositionAnchor(text, b), r.left, r.bottom);
+    }
+  };
   const onSelectEnd = () => {
     if (!canPlace) return;
     // After the browser has finished the selection.
@@ -278,9 +357,10 @@ export function Reader(props: ReaderProps) {
       const rect = range.getBoundingClientRect?.() ?? { left: 0, bottom: 0 };
       openPlace(
         "selection",
-        makeAnchor(text, span.block, span.offset, span.length),
+        spanAnchor(text, span),
         rect.left,
         rect.bottom,
+        span.endBlock - span.block + 1,
       );
     });
   };
@@ -455,6 +535,7 @@ export function Reader(props: ReaderProps) {
           tabIndex={-1}
           onScroll={onScroll}
           onMouseUp={onSelectEnd}
+          onKeyDown={onBlockKey}
           onKeyUp={(e) => {
             if (e.shiftKey) onSelectEnd();
           }}
@@ -462,7 +543,7 @@ export function Reader(props: ReaderProps) {
           aria-label="Script"
           role="document"
         >
-          <div className={styles.stickyHeader} data-testid="script-page-header">
+          <div ref={headerRef} className={styles.stickyHeader} data-testid="script-page-header">
             <button
               type="button"
               className={styles.navToggle}
@@ -503,6 +584,7 @@ export function Reader(props: ReaderProps) {
                     showOthers={props.showOthers}
                     narrow={narrow}
                     canPlace={canPlace}
+                    focusable
                     flash={flash}
                     hot={hotSet}
                     activeCue={props.activeCue}
@@ -519,7 +601,9 @@ export function Reader(props: ReaderProps) {
       </div>
       {place && (
         <PlacePopover
+          key={`${place.anchor.block}:${place.anchor.offset}:${place.anchor.length}`}
           request={place.req}
+          onUseNextLine={pickNextLine}
           onClose={closePlace}
           searchCues={placement.searchCues}
           onCreate={(input) => placement.create(place.anchor, input)}
@@ -543,6 +627,8 @@ interface PageProps {
   showOthers: boolean;
   narrow: boolean;
   canPlace: boolean;
+  /** Lines take focus (click, ↑/↓) for keyboard placement. */
+  focusable: boolean;
   flash: string | null;
   hot: ReadonlySet<string>;
   activeCue: string | null;
@@ -653,6 +739,7 @@ const Page = memo(function Page(p: PageProps) {
             <BlockText
               key={b.i}
               block={b}
+              tabIndex={p.focusable ? -1 : undefined}
               quotes={p.quotes.get(b.i)}
               hot={p.hot}
               highlight={p.findBlock === b.i}

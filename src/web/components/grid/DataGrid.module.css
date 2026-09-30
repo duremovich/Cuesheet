@@ -537,6 +537,12 @@
   text-underline-offset: 3px;
 }
 
+.cell[data-warning="dashed"] .text,
+.cell[data-warning="dashed"] .number,
+.cell[data-warning="dashed"] .longtext {
+  text-decoration-style: dashed;
+}
+
 .ghost {
   color: var(--color-text-muted);
   font-style: italic;

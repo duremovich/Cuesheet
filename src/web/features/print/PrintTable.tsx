@@ -12,7 +12,7 @@ import frameStyles from "../shared/TableFrame.module.css";
 import { type TabKey, tabInfo } from "../show/tabs";
 import { useWorkspace } from "../show/workspace";
 import styles from "./Print.module.css";
-import { PrintShell } from "./PrintShell";
+import { PrintShell, useOrientation } from "./PrintShell";
 
 /** `/shows/<id>/print/<tab>?view=<viewId>`. */
 export function printViewUrl(showId: string, tab: TabKey, viewId?: string | null): string {
@@ -20,6 +20,25 @@ export function printViewUrl(showId: string, tab: TabKey, viewId?: string | null
   return viewId && !viewId.startsWith("builtin:")
     ? `${base}?view=${encodeURIComponent(viewId)}`
     : base;
+}
+
+/** The SM cue sheet (R21): `/shows/<id>/print/cues?layout=cuesheet`. */
+export function cueSheetUrl(showId: string): string {
+  return `/shows/${encodeURIComponent(showId)}/print/cues?layout=cuesheet`;
+}
+
+/** Columns that never wrap (numbers, cue numbers, pages, lengths). */
+function noWrap(c: { key: string; type: string }): boolean {
+  return (
+    c.type === "number" ||
+    c.type === "measurement" ||
+    c.type === "pixelsize" ||
+    c.key === "number" ||
+    c.key === "page" ||
+    c.key === "lx_cue" ||
+    c.key === "sq_cue" ||
+    c.key === "timecode"
+  );
 }
 
 export interface RowStyle {
@@ -55,6 +74,8 @@ export function PrintTable<R>({
   rowId,
   sectionLabel,
   viewId,
+  title,
+  variant,
 }: {
   tab: TabKey;
   columns: Column<R>[];
@@ -66,7 +87,12 @@ export function PrintTable<R>({
   viewId: string | null;
   /** A divider row's label (cue sections), else null. */
   sectionLabel?: (r: R) => string | null;
+  /** Default: the tab's name. */
+  title?: string;
+  /** `cuesheet`: the SM cue sheet's big type (no view name in the header). */
+  variant?: "cuesheet";
 }) {
+  const [orientation, setOrientation] = useOrientation("landscape");
   const ws = useWorkspace();
   const viewName = useShowStore((s) => (viewId ? s.tables.views.get(viewId)?.name : undefined));
   const info = tabInfo(tab);
@@ -88,7 +114,12 @@ export function PrintTable<R>({
       )}
       <tr>
         {shown.map((c) => (
-          <th key={c.key} style={{ width: c.width ? `${c.width}px` : undefined }}>
+          <th
+            key={c.key}
+            scope="col"
+            style={{ width: c.width ? `${c.width}px` : undefined }}
+            data-nowrap={noWrap(c) || undefined}
+          >
             {c.title}
           </th>
         ))}
@@ -98,19 +129,37 @@ export function PrintTable<R>({
 
   return (
     <PrintShell
-      title={info.label}
+      title={title ?? info.label}
       back={back}
       testId="print-view"
+      orientation={orientation}
+      onOrientation={setOrientation}
+      controls={
+        tab === "cues" ? (
+          <Link
+            to={variant ? printViewUrl(ws.showId, "cues", viewId) : cueSheetUrl(ws.showId)}
+            data-testid="print-switch-layout"
+          >
+            {variant ? "This view instead" : "SM cue sheet instead"}
+          </Link>
+        ) : null
+      }
       subtitle={
         <span>
-          {viewName ?? "Default view"} · {count} {count === 1 ? info.noun : `${info.noun}s`}
+          {variant ? "" : `${viewName ?? "Default view"} · `}
+          {count} {count === 1 ? info.noun : `${info.noun}s`}
         </span>
       }
     >
       {all
         .filter((g) => g.rows.length > 0 || !groups)
         .map((g) => (
-          <table key={g.id} className={styles.table} data-testid="print-group">
+          <table
+            key={g.id}
+            className={styles.table}
+            data-variant={variant}
+            data-testid="print-group"
+          >
             {head(g)}
             <tbody>
               {g.rows.map((r) => {
@@ -128,7 +177,11 @@ export function PrintTable<R>({
                     {shown.map((c) => {
                       const cell = colors.cells.get(c.key);
                       return (
-                        <td key={c.key} style={cellStyle(cell, true)}>
+                        <td
+                          key={c.key}
+                          style={cellStyle(cell, true)}
+                          data-nowrap={noWrap(c) || undefined}
+                        >
                           {formatValue(c, c.getValue(r))}
                         </td>
                       );
@@ -143,17 +196,29 @@ export function PrintTable<R>({
   );
 }
 
-/** The toolbar's "Print" link for a grid tab (opens the view's print layout). */
+/** The toolbar's "Print" link for a grid tab (the view's print layout; cues: + cue sheet). */
 export function PrintViewLink({ tab, viewId }: { tab: TabKey; viewId: string | null }) {
   const ws = useWorkspace();
   return (
-    <Link
-      className={frameStyles.toolButton}
-      to={printViewUrl(ws.showId, tab, viewId)}
-      title="Print this view (or save it as a PDF)"
-      data-testid="print-view-link"
-    >
-      Print
-    </Link>
+    <>
+      <Link
+        className={frameStyles.toolButton}
+        to={printViewUrl(ws.showId, tab, viewId)}
+        title="Print this view (or save it as a PDF)"
+        data-testid="print-view-link"
+      >
+        Print
+      </Link>
+      {tab === "cues" && (
+        <Link
+          className={frameStyles.toolButton}
+          to={cueSheetUrl(ws.showId)}
+          title="Print the SM cue sheet: cue, page, SM call / trigger, LX, description"
+          data-testid="print-cuesheet-link"
+        >
+          Cue sheet
+        </Link>
+      )}
+    </>
   );
 }

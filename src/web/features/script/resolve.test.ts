@@ -8,6 +8,7 @@ import {
   type ResolveItem,
   reportCounts,
   reportText,
+  resolvedBy,
   resolveReducer,
 } from "./resolve";
 import { anchorRow } from "./testData";
@@ -142,5 +143,49 @@ describe("resolveReducer", () => {
     ]);
     // Resolved items leaving the fresh list stay; nothing new → same state.
     expect(resolveReducer(synced, { type: "sync", items: [] })).toBe(synced);
+  });
+
+  it("marks pending items resolved elsewhere and moves off the current one", () => {
+    let s = initResolve([item("a"), item("b"), item("c")]);
+    s = resolveReducer(s, { type: "done", status: "cut" }); // a: cut, index → b
+    const e = resolveReducer(s, {
+      type: "elsewhere",
+      by: new Map([
+        ["b", "Ana"],
+        ["a", "Bo"],
+      ]),
+    });
+    expect(e.items.map((i) => [i.status, i.by])).toEqual([
+      ["cut", undefined],
+      ["elsewhere", "Ana"],
+      ["pending", undefined],
+    ]);
+    expect(e.index).toBe(2);
+    expect(resolveReducer(e, { type: "elsewhere", by: new Map([["b", "X"]]) })).toBe(e);
+  });
+});
+
+describe("resolvedBy", () => {
+  const cue = { status: "Cued", updated_by: "u1" };
+  it("is null while the live anchor still needs a look", () => {
+    expect(resolvedBy({ anchorId: "x" }, { state: "changed" }, cue, "Cut")).toBeNull();
+    expect(resolvedBy({ anchorId: "x" }, { state: "missing" }, cue, "Cut")).toBeNull();
+    expect(resolvedBy({ anchorId: null }, undefined, cue, "Cut")).toBeNull();
+  });
+  it("names who resolved it: anchor placed / re-matched, cue cut, anchor or cue removed", () => {
+    expect(resolvedBy({ anchorId: "x" }, { state: "manual", updated_by: "ana" }, cue, "Cut")).toBe(
+      "ana",
+    );
+    expect(resolvedBy({ anchorId: null }, { state: "matched" }, cue, "Cut")).toBe("");
+    expect(
+      resolvedBy(
+        { anchorId: "x" },
+        { state: "changed" },
+        { status: "Cut", updated_by: "bo" },
+        "Cut",
+      ),
+    ).toBe("bo");
+    expect(resolvedBy({ anchorId: "x" }, undefined, cue, "Cut")).toBe("");
+    expect(resolvedBy({ anchorId: "x" }, { state: "changed" }, undefined, "Cut")).toBe("");
   });
 });

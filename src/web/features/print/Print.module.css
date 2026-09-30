@@ -6,7 +6,7 @@
   color: var(--color-text);
   min-height: 100dvh;
   padding: var(--space-4);
-  font-size: 12px;
+  font-size: 13px;
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
 }
@@ -29,6 +29,13 @@
 
 .printButton:hover:not(:disabled) {
   background: var(--color-accent-hover);
+}
+
+.control {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  white-space: nowrap;
 }
 
 .hint {
@@ -111,14 +118,81 @@
   break-inside: avoid;
 }
 
+.table [data-nowrap] {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+/* The SM cue sheet: big type for the booth. */
+.table[data-variant="cuesheet"] {
+  font-size: 15px;
+}
+
+.table[data-variant="cuesheet"] td {
+  padding: 5px 8px;
+}
+
+@media print {
+  .print {
+    font-size: 10.5pt;
+  }
+
+  .table[data-variant="cuesheet"] {
+    font-size: 12.5pt;
+  }
+}
+
 /* --- calling script --- */
 
-.scriptPage {
-  font-size: 12.5px;
-  line-height: 1.5;
-  padding-bottom: var(--space-4);
-  border-bottom: 1px dashed var(--color-border);
+.sheet {
+  width: 100%;
+  border-collapse: collapse;
   margin-bottom: var(--space-4);
+  border-bottom: 1px dashed var(--color-border);
+}
+
+.running {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  border-bottom: 1px solid var(--color-border);
+  padding: 0 0 2px;
+}
+
+.running span + span::before {
+  content: " · ";
+}
+
+.runningFoot {
+  display: none;
+  padding: 0;
+  font-size: 10px;
+  color: var(--color-text-muted);
+  text-align: right;
+}
+
+.scriptPage {
+  font-size: 14px;
+  line-height: 1.5;
+  padding: var(--space-2) 0 var(--space-4);
+  vertical-align: top;
+}
+
+.go {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  padding: 0 4px;
+  margin-right: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--color-text);
+  color: var(--color-surface);
+  vertical-align: 1px;
+}
+
+.goNumber {
+  font-size: 1.15em;
+  font-weight: 800;
 }
 
 .pageLabel {
@@ -166,9 +240,32 @@
     min-height: 0;
   }
 
-  .scriptPage {
-    break-after: page;
+  .header[data-screen-only] {
+    display: none;
+  }
+
+  .sheet {
     border-bottom: 0;
+    margin: 0;
+    break-after: page;
+  }
+
+  /* No blank sheet after the last page. */
+  .sheet[data-last] {
+    break-after: auto;
+  }
+
+  .scriptPage {
+    font-size: 11pt;
+  }
+
+  .running {
+    font-size: 8.5pt;
+  }
+
+  .runningFoot {
+    display: table-cell;
+    font-size: 8pt;
   }
 }
 

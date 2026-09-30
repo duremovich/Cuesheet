@@ -23,7 +23,8 @@ export function reportText(c: ReportCounts): string {
   return `${c.matched} matched · ${c.moved} moved · ${c.changed} changed · ${c.missing} missing`;
 }
 
-export type ItemStatus = "pending" | "accepted" | "placed" | "cut" | "skipped";
+/** `elsewhere`: someone (or another tab) resolved it meanwhile; `by` says who. */
+export type ItemStatus = "pending" | "accepted" | "placed" | "cut" | "skipped" | "elsewhere";
 
 export interface ResolveItem {
   cueId: string;
@@ -35,6 +36,8 @@ export interface ResolveItem {
   /** Its anchor row on the new version, if any. */
   anchorId: string | null;
   status: ItemStatus;
+  /** For `elsewhere`: who resolved it (a user id; "" when unknown). */
+  by?: string;
 }
 
 /**
@@ -124,7 +127,9 @@ export type ResolveAction =
   | { type: "candidate"; index: number }
   | { type: "place" }
   | { type: "cancelPlace" }
-  | { type: "done"; status: Exclude<ItemStatus, "pending"> }
+  | { type: "done"; status: Exclude<ItemStatus, "pending" | "elsewhere"> }
+  /** Pending items resolved by someone else meanwhile: cue id → user id ("" unknown). */
+  | { type: "elsewhere"; by: ReadonlyMap<string, string> }
   | { type: "sync"; items: ResolveItem[] };
 
 export function initResolve(items: ResolveItem[]): ResolveState {
@@ -154,6 +159,20 @@ export function resolveReducer(s: ResolveState, a: ResolveAction): ResolveState 
       return s.items[s.index]?.status === "pending" ? { ...s, placing: true } : s;
     case "cancelPlace":
       return { ...s, placing: false };
+    case "elsewhere": {
+      let changed = false;
+      const items = s.items.map((it) => {
+        const by = a.by.get(it.cueId);
+        if (by === undefined || it.status !== "pending") return it;
+        changed = true;
+        return { ...it, status: "elsewhere" as const, by };
+      });
+      if (!changed) return s;
+      const cur = items[s.index];
+      if (cur?.status === "pending") return { ...s, items };
+      const next = nextPending(items, s.index);
+      return { items, index: next >= 0 ? next : s.index, candidate: 0, placing: false };
+    }
     case "done": {
       const items = s.items.map((it, i) => (i === s.index ? { ...it, status: a.status } : it));
       const next = nextPending(items, s.index);
@@ -167,6 +186,26 @@ export function resolveReducer(s: ResolveState, a: ResolveAction): ResolveState 
       return added.length ? { ...s, items: [...s.items, ...added] } : s;
     }
   }
+}
+
+/**
+ * Whether a pending item was resolved meanwhile (by another user or tab), judged from the
+ * live anchor on its version and the live cue: the cue was deleted or cut, its anchor is
+ * no longer `changed` / `missing` (accepted, placed, re-matched), or its anchor was
+ * removed. Returns who did it (a user id, "" when unknown), or null while it still needs
+ * resolving.
+ */
+export function resolvedBy(
+  item: Pick<ResolveItem, "anchorId">,
+  live: { state: string; updated_by?: string } | undefined,
+  cue: { status: string | null; updated_by: string } | undefined,
+  cutStatus: string,
+): string | null {
+  if (!cue) return "";
+  if (cue.status === cutStatus) return cue.updated_by;
+  if (live)
+    return live.state === "changed" || live.state === "missing" ? null : (live.updated_by ?? "");
+  return item.anchorId ? "" : null;
 }
 
 export function allDone(s: ResolveState): boolean {

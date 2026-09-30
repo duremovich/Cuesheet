@@ -1,7 +1,7 @@
 // The Cues tab: the cue list on the live store (R1–R5a). Grouped by scene, show order by
 // default, optional live sort by number, "Sort now", ghost numbers and duplicate warnings.
 import { useCallback, useMemo, useRef } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import { newId } from "../../../shared/ids";
 import type { Op } from "../../../shared/ops";
 import { DataGrid } from "../../components/grid";
@@ -9,6 +9,7 @@ import type { CellDecoration, Column, InsertPosition, MenuItem } from "../../com
 import { sceneIdForGroup, UNASSIGNED, ViewCache } from "../../lib/show-selectors";
 import type { ShowState } from "../../lib/show-store";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
+import { CUE_SHEET_COLUMNS } from "../print/cueSheet";
 import { usePrintMode } from "../print/PrintShell";
 import { PrintTable, PrintViewLink } from "../print/PrintTable";
 import { scriptUrl } from "../script/links";
@@ -39,6 +40,7 @@ const SORT_PRESETS: SortPreset[] = [
 ];
 
 const selectState = (s: ShowState) => s;
+const NO_RULES: never[] = [];
 
 export function CueGrid() {
   const ws = useWorkspace();
@@ -47,6 +49,7 @@ export function CueGrid() {
   const { tables, order, joins, fieldOptions } = state;
   const editable = ws.canEdit;
   const print = usePrintMode();
+  const printLayout = useSearchParams()[0].get("layout");
   const navigate = useNavigate();
 
   // --- Rows and groups ---
@@ -324,6 +327,21 @@ export function CueGrid() {
   ).length;
   const panelView = chrome.panelRow ? viewsById.get(chrome.panelRow) : undefined;
 
+  if (print && printLayout === "cuesheet") {
+    return (
+      <PrintTable<CueView>
+        tab="cues"
+        title="SM cue sheet"
+        variant="cuesheet"
+        columns={CUE_SHEET_COLUMNS}
+        groups={groups}
+        colorRules={NO_RULES}
+        rowId={(v) => v.id}
+        viewId={null}
+        sectionLabel={(v) => (v.cue.is_section ? (v.cue.description ?? "") : null)}
+      />
+    );
+  }
   if (print) {
     return (
       <PrintTable<CueView>

@@ -151,6 +151,11 @@ export interface CellDecoration {
   /** Orange underline + tooltip (e.g. "Duplicate cue number"). Never blocks editing. */
   warning?: string;
   /**
+   * How the warning underline looks: `wavy` (default: a problem with the value, e.g. a
+   * duplicate) or `dashed` (something elsewhere needs a look, e.g. the cue's script anchor).
+   */
+  warningStyle?: "wavy" | "dashed";
+  /**
    * A suggested value shown faintly in the empty cell (e.g. the midpoint cue number). Tab or
    * → accepts it; typing replaces it.
    */

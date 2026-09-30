@@ -5,9 +5,9 @@
 // the version at it. A failed upload leaves the version without its original ("Attach
 // original…" in the header retries). OCR / low confidence shows a warning with guidance.
 import { useRef, useState } from "react";
-import { checkAttachmentType } from "../../../shared/attachments";
+import { checkAttachmentType, MAX_ATTACHMENT_BYTES } from "../../../shared/attachments";
 import { newId } from "../../../shared/ids";
-import { SCRIPT_SOURCE_FIELD } from "../../../shared/script";
+import { MAX_SCRIPT_BODY_BYTES, SCRIPT_SOURCE_FIELD } from "../../../shared/script";
 import { api, putFile } from "../../lib/api";
 import type { ImportVersionResponse, ScriptText } from "./contract";
 import { extractScript } from "./contract";
@@ -40,6 +40,18 @@ export function LowConfidenceBanner({ source }: { source: ScriptText["source"] |
       that instead.
     </div>
   );
+}
+
+/** The original file can't be stored (the attachment limit). */
+export function originalTooBig(file: Blob): boolean {
+  return file.size > MAX_ATTACHMENT_BYTES;
+}
+
+/** Why the extracted text can't be imported (over the route's limit), or null. */
+export function textTooBig(text: ScriptText): string | null {
+  const bytes = new Blob([JSON.stringify(text)]).size;
+  if (bytes <= MAX_SCRIPT_BODY_BYTES - 64 * 1024) return null;
+  return `The script's text is over ${MAX_SCRIPT_BODY_BYTES / 1024 / 1024} MB once extracted, too large to import. Split it into acts (one version each) or remove front matter.`;
 }
 
 /** Upload `file` as the version's original and link it. Resolves to an error message or null. */
@@ -101,6 +113,12 @@ export function ImportPanel({
     setPhase({ kind: "extracting", file });
     try {
       const text = await extractScript(file);
+      const tooBig = textTooBig(text);
+      if (tooBig) {
+        setError(tooBig);
+        setPhase({ kind: "pick" });
+        return;
+      }
       setPhase({ kind: "preview", file, text });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -124,7 +142,9 @@ export function ImportPanel({
     }
     // Version first (the upload needs the record), then the original file.
     setPhase({ kind: "importing", file, text, step: "Uploading the original file…" });
-    const originalError = await uploadOriginal(source, showId, res.versionId, file);
+    const originalError = originalTooBig(file)
+      ? `it's over ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB`
+      : await uploadOriginal(source, showId, res.versionId, file);
     onDone(res, originalError, file);
   };
 
@@ -197,6 +217,12 @@ export function ImportPanel({
             confidence · {preview.text.source.toUpperCase()}
           </p>
           {isLowConfidence(preview.text) && <LowConfidenceBanner source={preview.text.source} />}
+          {originalTooBig(preview.file) && (
+            <p className={styles.banner} data-kind="warning" data-testid="original-too-big">
+              The original file is over {MAX_ATTACHMENT_BYTES / 1024 / 1024} MB, so it won't be kept
+              with the version (its text still imports).
+            </p>
+          )}
           {preview.text.warnings?.map((w) => (
             <p key={w} className={styles.banner} data-kind="warning" data-testid="extract-warning">
               {w}

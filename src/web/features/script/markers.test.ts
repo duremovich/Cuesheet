@@ -138,10 +138,25 @@ describe("anchors", () => {
     ]).toEqual(["a1", "a2"]);
     expect(versionAnchors(anchors, null, cues)).toEqual([]);
   });
+  it("stacks markers on one block by offset, ties in show order", () => {
+    const list = [
+      anchorRow({ id: "x", cue_id: "late", block: 2, offset: 0 }),
+      anchorRow({ id: "y", cue_id: "early", block: 2, offset: 0 }),
+      anchorRow({ id: "z", cue_id: "mid", block: 2, offset: 9 }),
+    ];
+    const order: Record<string, string> = { late: "a5", early: "a1", mid: "a0" };
+    expect(
+      anchorsByBlock(list, (id) => order[id] ?? "")
+        .get(2)
+        ?.map((a) => a.cue_id),
+    ).toEqual(["early", "late", "mid"]);
+  });
+
   it("warns in the cue list about changed and missing anchors on the current version", () => {
     const w = anchorWarnings(anchors, "v2");
     expect([...w.keys()].sort()).toEqual(["c1", "c2"]);
     expect(w.get("c1")?.warning).toMatch(/changed/);
+    expect(w.get("c1")?.warningStyle).toBe("dashed");
     expect(anchorWarnings(anchors, "v1").size).toBe(0);
   });
 });

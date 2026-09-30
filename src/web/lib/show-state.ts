@@ -273,11 +273,11 @@ function cuePageOps(
 ): ResolvedOp[] {
   const out: ResolvedOp[] = [];
   for (const a of anchors) {
-    if (a.block === null) continue;
     const version = data.tables.script_versions.get(a.script_version_id);
     const script = version && data.tables.scripts.get(version.script_id);
     if (!version || (current ?? script?.current_version_id) !== version.id) continue;
-    const label = pageForBlock(version.page_map ?? [], a.block)?.label;
+    // A `missing` anchor (no position) on the current version: the cue has no page.
+    const label = a.block === null ? null : pageForBlock(version.page_map ?? [], a.block)?.label;
     const cue = data.tables.cues.get(a.cue_id);
     if (label !== undefined && cue && cue.page !== label) {
       out.push({ op: "update", table: "cues", id: cue.id, fields: { page: label, ...stamp } });

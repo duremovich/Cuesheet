@@ -81,8 +81,11 @@ to try on the **Cues** tab:
   LX / timecode / visual cue at a line. Click a marker to open the cue; drag it to move
   it. j/k page, `/` find, `g` go to a page. In the cue list, a row's menu (right-click)
   → **Show in script**. **Import new version** (try `script-v2.txt`) shows what
-  re-anchored and a **Resolve** screen for the rest. **Print calling script** (or a
-  grid's **Print**) opens a light print layout.
+  re-anchored and a **Resolve** screen for the rest (open it in two browsers: what one
+  person resolves shows as "Resolved by …" for the other). Click a line and press Enter
+  to place a cue from the keyboard. **Print calling script** (running header, GO tags),
+  a grid's **Print** (landscape) or the cue list's **Cue sheet** open light print
+  layouts.
 - **Content versions**: open a content item's panel (Content tab, Space) → **Versions** →
   **+ Add version** (next Vnn, today, current). The cue list's content chips show the
   current version (`105-001-VAMP · V03`); **Set current** switches it.

@@ -252,10 +252,11 @@ describe("script versions", () => {
       quote: "Nobody's perfect!",
     });
     expect(anchors.find((a) => a.cue_id === qLolly)).toMatchObject({ block: 10, page: 3 });
-    // Cue.page from the new current version ("3a"); the cut cue keeps its old page.
+    // Cue.page from the new current version ("3a"); the cut (missing, unplaced) cue has
+    // no page any more.
     expect(pageOf(qLolly as string)).toBe("3a");
     expect(pageOf(qSue as string)).toBe("2");
-    expect(pageOf(qPerfect as string)).toBe("3");
+    expect(pageOf(qPerfect as string)).toBeNull();
     // Old anchors stay with v1.
     expect(snap.tables.cue_anchors.filter((a) => a.script_version_id === v1)).toHaveLength(4);
 
@@ -381,6 +382,8 @@ describe("anchor ops", () => {
       length: null,
       page: null,
     });
+    // An unplaced cue (missing on the current version) has no page.
+    expect(snap.tables.cues.find((c) => c.id === cue)?.page).toBeNull();
     // cue_id / script_version_id can't change.
     const moveCue = await mutate(showId, admin, [
       { op: "update", table: "cue_anchors", id, fields: { cue_id: newId() } },

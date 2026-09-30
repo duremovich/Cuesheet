@@ -131,8 +131,15 @@ export function compareAnchors(
   );
 }
 
-/** Placed anchors by block, each list in offset order. */
-export function anchorsByBlock(anchors: readonly CueAnchorRow[]): Map<number, CueAnchorRow[]> {
+/**
+ * Placed anchors by block, each list in the order its markers stack: by offset, ties
+ * (e.g. several positional cues at a line's start) in show order (`orderOf`: the cue's
+ * order_key), then by id.
+ */
+export function anchorsByBlock(
+  anchors: readonly CueAnchorRow[],
+  orderOf: (cueId: string) => string = () => "",
+): Map<number, CueAnchorRow[]> {
   const out = new Map<number, CueAnchorRow[]>();
   for (const a of anchors) {
     if (!isPlaced(a)) continue;
@@ -140,7 +147,15 @@ export function anchorsByBlock(anchors: readonly CueAnchorRow[]): Map<number, Cu
     if (list) list.push(a);
     else out.set(a.block, [a]);
   }
-  for (const list of out.values()) list.sort(compareAnchors);
+  for (const list of out.values()) {
+    list.sort((a, b) => {
+      if (a.offset !== b.offset) return a.offset - b.offset;
+      const oa = orderOf(a.cue_id);
+      const ob = orderOf(b.cue_id);
+      if (oa !== ob) return oa < ob ? -1 : 1;
+      return compareAnchors(a, b);
+    });
+  }
   return out;
 }
 
@@ -274,9 +289,15 @@ export function anchorWarnings(
   for (const a of anchors.values()) {
     if (a.script_version_id !== versionId) continue;
     if (a.state === "changed")
-      out.set(a.cue_id, { warning: "The script line changed in the new version: check it" });
+      out.set(a.cue_id, {
+        warning: "The script line changed in the new version: check it",
+        warningStyle: "dashed",
+      });
     else if (a.state === "missing")
-      out.set(a.cue_id, { warning: "Not found in the new script version: place it" });
+      out.set(a.cue_id, {
+        warning: "Not placed in the current script version",
+        warningStyle: "dashed",
+      });
   }
   return out;
 }

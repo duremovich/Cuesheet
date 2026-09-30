@@ -3,6 +3,9 @@ import { makeAnchor } from "./contract";
 import {
   attachBatch,
   moveAnchorOp,
+  moveAsPositionalBatch,
+  moveNeedsChoice,
+  moveRequoteBatch,
   newCueBatch,
   scriptNeighbours,
   suggestNumber,
@@ -172,6 +175,38 @@ describe("moveAnchorOp", () => {
     });
     expect(moveAnchorOp(row, SAMPLE, 7, true)).toMatchObject({
       fields: { block: 7, offset: 0, quote: "Daphne. Bass. Classically trained." },
+    });
+  });
+});
+
+describe("dragging a Line marker to a line without its quote", () => {
+  const row = anchorRow({ id: "a", cue_id: "c", block: 5, offset: 0, length: 4, quote: "Bass" });
+  it("asks unless the quote is on the target line or the cue is positional", () => {
+    expect(moveNeedsChoice(row, SAMPLE, 7, false)).toBe(false);
+    expect(moveNeedsChoice(row, SAMPLE, 3, false)).toBe(true);
+    expect(moveNeedsChoice(row, SAMPLE, 3, true)).toBe(false);
+  });
+  it("either becomes a positional cue, or re-anchors on the whole line with its text", () => {
+    const pos = moveAsPositionalBatch(row, SAMPLE, 3, "Visual");
+    expect(pos.cueOps).toEqual([
+      { op: "update", table: "cues", id: "c", fields: { trigger_type: "Visual" } },
+    ]);
+    expect(pos.anchorOps[0]).toMatchObject({
+      id: "a",
+      fields: { block: 3, offset: 0, state: "manual" },
+    });
+    const line = "Keep your head down and your case up.";
+    const re = moveRequoteBatch(row, SAMPLE, 3);
+    expect(re.cueOps).toEqual([
+      {
+        op: "update",
+        table: "cues",
+        id: "c",
+        fields: { trigger_type: "Line", trigger_value: line },
+      },
+    ]);
+    expect(re.anchorOps[0]).toMatchObject({
+      fields: { block: 3, length: line.length, quote: line },
     });
   });
 });

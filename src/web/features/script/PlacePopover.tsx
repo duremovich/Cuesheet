@@ -23,6 +23,10 @@ export interface PlaceRequest {
   /** Page label, for the heading. */
   pageLabel: string;
   suggestion: string;
+  /** Lines the selected quote covers (> 1: "Quote covers 2 lines"). */
+  lines?: number;
+  /** Only a character name is selected: offer the following line instead. */
+  nextLine?: boolean;
 }
 
 export function PlacePopover({
@@ -31,8 +35,10 @@ export function PlacePopover({
   onAttach,
   searchCues,
   onClose,
+  onUseNextLine,
 }: {
   request: PlaceRequest;
+  onUseNextLine?: () => void;
   onCreate: (input: NewCueInput) => Promise<void>;
   onAttach: (cueId: string, positionTrigger: string | null) => Promise<void>;
   searchCues: (q: string) => PickerItem[];
@@ -66,6 +72,14 @@ export function PlacePopover({
       request.y + h + 8 > window.innerHeight ? Math.max(8, request.y - h - 16) : request.y + 8;
     setPos({ left, top });
   }, [request.x, request.y, step]);
+
+  // Focus goes back where it was (a focused line) when the popover closes.
+  useEffect(() => {
+    const was = document.activeElement as HTMLElement | null;
+    return () => {
+      if (was?.isConnected && was !== document.body) was.focus({ preventScroll: true });
+    };
+  }, []);
 
   // Focus the first control of each step.
   useEffect(() => {
@@ -124,6 +138,19 @@ export function PlacePopover({
       <p className={styles.popoverTitle} id={titleId}>
         {heading}
       </p>
+      {!positional && (request.lines ?? 1) > 1 && (
+        <p className={styles.popoverNote} data-testid="quote-lines">
+          Quote covers {request.lines} lines
+        </p>
+      )}
+      {request.nextLine && onUseNextLine && (
+        <p className={styles.popoverNote} data-testid="next-line-hint">
+          That's a character name. Anchor on the following line instead?{" "}
+          <button type="button" className={styles.linkButton} onClick={onUseNextLine}>
+            Use the next line
+          </button>
+        </p>
+      )}
       {positional && (
         <label className={styles.formRow}>
           <span>Trigger</span>

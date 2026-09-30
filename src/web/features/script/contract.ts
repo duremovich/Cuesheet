@@ -25,6 +25,7 @@ export {
   anchorPosition,
   makeAnchor,
   makePositionAnchor,
+  SEPARATOR,
 } from "../../../shared/script-anchor";
 export type { ScriptRow, ScriptVersionRow, StoredAnchorRow };
 
@@ -46,6 +47,8 @@ export interface CueAnchorRow {
   page: number | null;
   state: AnchorState;
   confidence: number | null;
+  /** Who last changed it (for "Resolved by …"). */
+  updated_by?: string;
 }
 
 const normalized = new WeakMap<StoredAnchorRow, CueAnchorRow>();
@@ -66,6 +69,7 @@ export function normalizeAnchor(row: StoredAnchorRow): CueAnchorRow {
     page: row.page,
     state: row.state ?? "manual",
     confidence: row.confidence,
+    updated_by: row.updated_by,
   };
   normalized.set(row, out);
   return out;
