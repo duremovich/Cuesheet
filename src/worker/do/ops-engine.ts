@@ -805,13 +805,17 @@ export class Batch {
     row.page = pageForBlock(map, row.block as number)?.page ?? null;
   }
 
-  /** The page label of an anchor, when its version is the script's current one. */
-  private currentPageLabel(anchor: Record<string, unknown>): string | null {
-    if (typeof anchor.block !== "number") return null;
+  /**
+   * The page label an anchor gives its cue: undefined when the anchor's version isn't the
+   * script's current one (the cue keeps its page), null when it has no position there
+   * (a `missing` anchor: an unplaced cue has no page).
+   */
+  private currentPageLabel(anchor: Record<string, unknown>): string | null | undefined {
     const version = this.getRow("script_versions", anchor.script_version_id as string);
-    if (!version) return null;
+    if (!version) return undefined;
     const script = this.getRow("scripts", version.script_id as string);
-    if (script?.current_version_id !== version.id) return null;
+    if (script?.current_version_id !== version.id) return undefined;
+    if (typeof anchor.block !== "number") return null;
     const map = parseJson<PageMapEntry[]>(version.page_map, []);
     return pageForBlock(map, anchor.block)?.label ?? null;
   }
@@ -819,7 +823,7 @@ export class Batch {
   /** Cue.page follows an anchor on the current version (data-model.md §Cue). */
   private syncCuePage(anchor: WireRow | DbRow): void {
     const label = this.currentPageLabel(anchor);
-    if (label === null) return;
+    if (label === undefined) return;
     const cue = this.getRow("cues", anchor.cue_id as string);
     if (cue && cue.page !== label) this.write("cues", cue.id as string, cue, { page: label });
   }
@@ -827,10 +831,7 @@ export class Batch {
   /** The current version changed: every cue anchored in it takes its page from there. */
   private syncCuePages(versionId: string): void {
     const anchors = this.sql
-      .exec<DbRow>(
-        "SELECT * FROM cue_anchors WHERE script_version_id = ? AND block IS NOT NULL ORDER BY id",
-        versionId,
-      )
+      .exec<DbRow>("SELECT * FROM cue_anchors WHERE script_version_id = ? ORDER BY id", versionId)
       .toArray();
     for (const a of anchors) this.syncCuePage(a);
   }

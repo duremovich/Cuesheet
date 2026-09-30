@@ -117,6 +117,25 @@ Things the first build had to decide; each is easy to change.
 - **Calculator.** The aspect lock starts off. The region diagram shows the region's
   share, not its position (surfaces have no offsets yet).
 
+## Script view and print (M4b decisions to confirm)
+
+- **Cut** sets the cue's status to a new **Cut** option (red) and deletes its anchor on
+  the new version; the cue stays in the list. The option is seeded by a migration.
+- **Marker colors** follow a per-user, per-show choice (Status / Trigger type / none;
+  localStorage), not a saved view. When the script gets saved views, move it there.
+- **Other departments' cues** (the LX/SQ toggle): shown as faint `LX 117` / `SQ 12`
+  labels beside the video cue that carries them, since LX/SQ cues aren't records of their
+  own.
+- **Unplaced** = cues anchored on the previous version with no placed anchor on the
+  current one (Cut cues excluded). Older gaps (v1 → v3) aren't tracked.
+- **Numbers** for a new cue come from the nearest anchored cues in *script* order; if
+  those disagree with show order (a cue placed out of order), the new cue still goes
+  right after the one before it in the script.
+- **Positional anchors** from a margin click sit at the start of the block clicked; a
+  finer position (between words) isn't offered.
+- **Print** is the browser's print dialog / Save as PDF: no server-side PDF. The calling
+  script prints the whole script; a page range isn't offered.
+
 ## Infrastructure
 
 - **Sign-in for SM/director.** Do they need accounts, or is a read-only link enough?
@@ -132,6 +151,11 @@ Things the first build had to decide; each is easy to change.
 - A shot list example for the Shot table.
 
 ## Answered
+
+- **Resolve → Skip** (M4b): leaves the cue unanchored on the new version, per ux.md: a
+  guessed (`changed`) anchor is set to `missing` with no position, so the cue shows in
+  the reader's Unplaced tray (and keeps its cue-list warning). **Accept** is the way to
+  keep a guess. → CLAUDE.md "Script view"
 
 - **Platform**: hosted web app. → overview
 - **Team size**: 2–5 editors, simultaneously in tech. → overview, R22

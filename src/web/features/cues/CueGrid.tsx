@@ -1,6 +1,7 @@
 // The Cues tab: the cue list on the live store (R1–R5a). Grouped by scene, show order by
 // default, optional live sort by number, "Sort now", ghost numbers and duplicate warnings.
 import { useCallback, useMemo, useRef } from "react";
+import { useNavigate, useSearchParams } from "react-router";
 import { newId } from "../../../shared/ids";
 import type { Op } from "../../../shared/ops";
 import { DataGrid } from "../../components/grid";
@@ -8,6 +9,13 @@ import type { CellDecoration, Column, InsertPosition, MenuItem } from "../../com
 import { sceneIdForGroup, UNASSIGNED, ViewCache } from "../../lib/show-selectors";
 import type { ShowState } from "../../lib/show-store";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
+import { CUE_SHEET_COLUMNS } from "../print/cueSheet";
+import { usePrintMode } from "../print/PrintShell";
+import { PrintTable, PrintViewLink } from "../print/PrintTable";
+import { scriptUrl } from "../script/links";
+import { anchorWarnings } from "../script/markers";
+import { scriptPanelTab } from "../script/ScriptTab";
+import { useScriptSnapshot, useScriptVersions } from "../script/source";
 import { groupOrder, placementFor } from "../shared/ops";
 import { RowPanel } from "../shared/RowPanel";
 import { TableFrame, ToolbarButton } from "../shared/TableFrame";
@@ -32,6 +40,7 @@ const SORT_PRESETS: SortPreset[] = [
 ];
 
 const selectState = (s: ShowState) => s;
+const NO_RULES: never[] = [];
 
 export function CueGrid() {
   const ws = useWorkspace();
@@ -39,6 +48,9 @@ export function CueGrid() {
   const state = useShowStore(selectState);
   const { tables, order, joins, fieldOptions } = state;
   const editable = ws.canEdit;
+  const print = usePrintMode();
+  const printLayout = useSearchParams()[0].get("layout");
+  const navigate = useNavigate();
 
   // --- Rows and groups ---
   const cache = useRef(new ViewCache<CueView>()).current;
@@ -146,9 +158,21 @@ export function CueGrid() {
     prevHints.current = next;
     return next;
   }, [groups, sort, baseColumns]);
+  // Cues whose anchor in the current script version changed or went missing (ux.md §New
+  // script version): a warning on the number until resolved.
+  const scriptSnap = useScriptSnapshot();
+  const { currentId: scriptVersion } = useScriptVersions();
+  const prevWarnings = useRef<Map<string, CellDecoration>>(new Map());
+  const scriptWarnings = useMemo(() => {
+    const next = anchorWarnings(scriptSnap.anchors, scriptVersion);
+    if (hintsEqual(prevWarnings.current, next)) return prevWarnings.current;
+    prevWarnings.current = next;
+    return next;
+  }, [scriptSnap.anchors, scriptVersion]);
   const cellDecoration = useCallback(
-    (v: CueView, key: string) => (key === "number" ? hints.get(v.id) : undefined),
-    [hints],
+    (v: CueView, key: string) =>
+      key === "number" ? (hints.get(v.id) ?? scriptWarnings.get(v.id)) : undefined,
+    [hints, scriptWarnings],
   );
 
   // --- Callbacks → ops ---
@@ -274,17 +298,21 @@ export function CueGrid() {
   const extraMenuItems = useCallback(
     ({ rowId }: { rowId: string }): MenuItem[] => {
       if (!viewsRef.current.has(rowId)) return [];
-      return [
-        {
+      const items: MenuItem[] = [
+        { label: "Show in script", onSelect: () => navigate(scriptUrl(ws.showId, rowId)) },
+      ];
+      if (editable) {
+        items.push({
           label: "Insert section divider below",
           onSelect: () => {
             const id = insert({ afterRowId: rowId }, { is_section: true, description: "SECTION" });
             requestAnimationFrame(() => chrome.grid.current?.focusRow(id, "description"));
           },
-        },
-      ];
+        });
+      }
+      return items;
     },
-    [insert, chrome.grid],
+    [insert, chrome.grid, navigate, ws.showId, editable],
   );
 
   const addCueAtEnd = () => {
@@ -299,6 +327,36 @@ export function CueGrid() {
   ).length;
   const panelView = chrome.panelRow ? viewsById.get(chrome.panelRow) : undefined;
 
+  if (print && printLayout === "cuesheet") {
+    return (
+      <PrintTable<CueView>
+        tab="cues"
+        title="SM cue sheet"
+        variant="cuesheet"
+        columns={CUE_SHEET_COLUMNS}
+        groups={groups}
+        colorRules={NO_RULES}
+        rowId={(v) => v.id}
+        viewId={null}
+        sectionLabel={(v) => (v.cue.is_section ? (v.cue.description ?? "") : null)}
+      />
+    );
+  }
+  if (print) {
+    return (
+      <PrintTable<CueView>
+        tab="cues"
+        columns={vc.columns}
+        rows={shownRows}
+        groups={shownGroups}
+        colorRules={vc.colorRules}
+        rowId={(v) => v.id}
+        viewId={vc.viewId}
+        sectionLabel={(v) => (v.cue.is_section ? (v.cue.description ?? "") : null)}
+      />
+    );
+  }
+
   return (
     <TableFrame
       title="Cues"
@@ -310,6 +368,7 @@ export function CueGrid() {
             {cueCount} {cueCount === 1 ? "cue" : "cues"}
           </span>
           {vc.toolbar}
+          <PrintViewLink tab="cues" viewId={vc.viewId} />
           {editable && (
             <ToolbarButton onClick={addCueAtEnd} title="Add a cue at the end of the show">
               + Add cue
@@ -359,7 +418,8 @@ export function CueGrid() {
           {...(chrome.onEscape ? { onEscape: chrome.onEscape } : {})}
           addRowLabel="Add cue"
           onEdit={onEdit}
-          {...(editable ? { onInsert, onMove, onDelete, extraMenuItems } : {})}
+          extraMenuItems={extraMenuItems}
+          {...(editable ? { onInsert, onMove, onDelete } : {})}
           onError={(e, action) => report(e, GRID_ACTIONS[action])}
         />
       </div>
@@ -380,6 +440,7 @@ function CuePanel({
   onStep: (delta: number) => void;
   onEdit: (key: string, value: unknown) => Promise<void> | undefined;
 }) {
+  const extraTabs = useMemo(() => [scriptPanelTab(view.id, "grid")], [view.id]);
   const title = view.cue.is_section
     ? `Section: ${view.cue.description ?? ""}`
     : view.cue.number
@@ -393,6 +454,7 @@ function CuePanel({
       table="cues"
       recordId={view.id}
       onEdit={onEdit}
+      extraTabs={extraTabs}
       onClose={onClose}
       onStep={onStep}
     />

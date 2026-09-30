@@ -135,7 +135,8 @@ export function hintsEqual(
   if (a.size !== b.size) return false;
   for (const [k, v] of a) {
     const w = b.get(k);
-    if (!w || w.ghost !== v.ghost || w.warning !== v.warning) return false;
+    if (!w || w.ghost !== v.ghost || w.warning !== v.warning || w.warningStyle !== v.warningStyle)
+      return false;
   }
   return true;
 }

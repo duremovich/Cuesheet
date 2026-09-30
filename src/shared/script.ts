@@ -190,6 +190,9 @@ export function isPageMap(v: unknown): v is PageMapEntry[] {
 // ---- validation of uploaded text (Worker) ----
 
 /** Largest accepted script: blocks, and characters per block. */
+/** Largest `POST /script/versions` body (the extracted text as JSON); checked on the client too. */
+export const MAX_SCRIPT_BODY_BYTES = 8 * 1024 * 1024;
+
 export const MAX_SCRIPT_BLOCKS = 50_000;
 export const MAX_BLOCK_CHARS = 20_000;
 export const MAX_SCRIPT_PAGES = 5_000;

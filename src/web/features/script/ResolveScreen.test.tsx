@@ -1,0 +1,299 @@
+import { act } from "react";
+import { describe, expect, it, vi } from "vitest";
+import type { ShowStore } from "../../lib/show-store";
+import { click, render, wait } from "../../test/dom";
+import type { CueAnchorRow, ScriptText } from "./contract";
+import { ResolveScreen } from "./ResolveScreen";
+import { type ScriptSource, ScriptSourceProvider } from "./source";
+import { anchorRow, cueRow, SAMPLE } from "./testData";
+
+const OLD: ScriptText = SAMPLE;
+const NEW: ScriptText = {
+  ...SAMPLE,
+  blocks: SAMPLE.blocks.map((b) =>
+    b.i === 5 ? { ...b, text: "Sweet Sue needs a saxophone and a bass." } : b,
+  ),
+};
+
+function source(): ScriptSource {
+  return {
+    subscribe: () => () => undefined,
+    getSnapshot: () => ({ scripts: new Map(), versions: new Map(), anchors: new Map() }),
+    apply: vi.fn(async () => undefined),
+    importVersion: vi.fn(),
+    setOriginal: vi.fn(),
+    fetchText: vi.fn(async () => OLD),
+  };
+}
+
+const cues = new Map([
+  ["c1", cueRow({ id: "c1", number: "14.20", trigger_type: "Line", trigger_value: "Sweet Sue" })],
+  ["c2", cueRow({ id: "c2", number: "14.25" })],
+  ["c3", cueRow({ id: "c3", number: "14.30" })],
+]);
+const prevAnchors = [
+  anchorRow({
+    id: "p1",
+    cue_id: "c1",
+    block: 5,
+    offset: 0,
+    length: 9,
+    quote: "Sweet Sue",
+    script_version_id: "v1",
+  }),
+  anchorRow({
+    id: "p2",
+    cue_id: "c2",
+    block: 7,
+    offset: 0,
+    length: 7,
+    quote: "Daphne.",
+    script_version_id: "v1",
+  }),
+  anchorRow({ id: "p3", cue_id: "c3", block: 8, script_version_id: "v1" }),
+];
+const anchors = [
+  anchorRow({
+    id: "n1",
+    cue_id: "c1",
+    block: 5,
+    offset: 0,
+    length: 17,
+    quote: "Sweet Sue needs a",
+    state: "changed",
+    confidence: 0.7,
+    script_version_id: "v2",
+  }),
+  anchorRow({ id: "n2", cue_id: "c2", state: "missing", script_version_id: "v2" }),
+];
+
+type Props = Parameters<typeof ResolveScreen>[0];
+
+function setup(
+  fieldOptions = { "cues.status": [{ value: "Cut", color: "red" }] } as never,
+  extra: Partial<Props> = {},
+) {
+  const onApply = vi.fn(async () => undefined);
+  const onError = vi.fn();
+  const onExit = vi.fn();
+  const onNotice = vi.fn();
+  const props: Props = {
+    versionId: "v2",
+    versionLabel: "v2",
+    prevVersionId: "v1",
+    text: NEW,
+    cues,
+    fieldOptions,
+    results: null,
+    anchors,
+    prevAnchors,
+    onApply,
+    onExit,
+    onError,
+    onNotice,
+    userId: "me",
+    nameOf: (uid) => (uid === "ana" ? "Ana" : null),
+    ...extra,
+  };
+  const ui = (p: Props) => (
+    <ScriptSourceProvider store={{} as ShowStore} showId="s" source={source()}>
+      <ResolveScreen {...p} />
+    </ScriptSourceProvider>
+  );
+  const r = render(ui(props));
+  return {
+    ...r,
+    onApply,
+    onError,
+    onExit,
+    onNotice,
+    update: (p: Partial<Props>) => r.rerender(ui({ ...props, ...p })),
+  };
+}
+
+const btn = (root: ParentNode, name: string) =>
+  [...root.querySelectorAll("button")].find((b) => b.textContent?.trim() === name) as HTMLElement;
+const heading = (c: HTMLElement) => c.querySelector("h3")?.textContent ?? "";
+
+describe("ResolveScreen", () => {
+  it("lists changed and missing cues; Accept keeps the guess as a manual anchor", async () => {
+    const { container, onApply } = setup();
+    await wait(0);
+    const items = [...container.querySelectorAll('[data-testid="resolve-item"]')];
+    expect(items.map((i) => i.textContent)).toEqual([
+      expect.stringContaining("Q 14.20 changed"),
+      expect.stringContaining("Q 14.25 missing"),
+      expect.stringContaining("Q 14.30 missing"),
+    ]);
+    expect(heading(container)).toContain("Line changed");
+    expect(
+      container.querySelector('[data-testid="resolve-old-text"] [data-quote]')?.textContent,
+    ).toBe("Sweet Sue");
+    expect(
+      container.querySelector('[data-testid="resolve-new-text"] [data-quote]')?.textContent,
+    ).toBe("Sweet Sue needs a");
+    click(btn(container, "Accept"));
+    await wait(0);
+    // The line changed, so its trigger text follows (the checkbox is on by default).
+    expect(onApply).toHaveBeenCalledWith(
+      [
+        {
+          op: "update",
+          table: "cues",
+          id: "c1",
+          fields: { trigger_type: "Line", trigger_value: "Sweet Sue needs a" },
+        },
+      ],
+      [
+        {
+          op: "update",
+          id: "n1",
+          fields: expect.objectContaining({ block: 5, length: 17, state: "manual", confidence: 1 }),
+        },
+      ],
+    );
+    expect(heading(container)).toContain("Q 14.25");
+    expect(btn(container, "Accept").hasAttribute("disabled")).toBe(true); // no guess
+  });
+
+  it("Place: select new text, then place (creates or updates the anchor)", async () => {
+    const { container, onApply } = setup();
+    await wait(0);
+    click(
+      container.querySelectorAll<HTMLElement>('[data-testid="resolve-item"]')[1] as HTMLElement,
+    );
+    click(btn(container, "Place"));
+    expect(
+      container.querySelector('[data-testid="resolve-new-text"]')?.getAttribute("data-placing"),
+    ).toBe("true");
+    expect(btn(container, "Select text first").hasAttribute("disabled")).toBe(true);
+    // Click a line without selecting: a position at its start.
+    const block = container.querySelector(
+      '[data-testid="resolve-new-text"] [data-block="6"]',
+    ) as HTMLElement;
+    act(() => {
+      block.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    });
+    click(btn(container, "Place Q 14.25 here"));
+    await wait(0);
+    expect(onApply).toHaveBeenCalledWith(
+      [],
+      [
+        {
+          op: "update",
+          id: "n2",
+          fields: expect.objectContaining({ block: 6, offset: 0, quote: "JERRY", state: "manual" }),
+        },
+      ],
+    );
+  });
+
+  it("Cut sets status Cut and drops the anchor; Skip drops the guess (missing, unplaced); all done at the end", async () => {
+    const { container, onApply } = setup();
+    await wait(0);
+    click(btn(container, "Skip"));
+    await wait(0);
+    expect(onApply).toHaveBeenCalledWith(
+      [],
+      [{ op: "update", id: "n1", fields: { state: "missing", block: null, confidence: 0 } }],
+    );
+    expect(heading(container)).toContain("Q 14.25");
+    click(btn(container, "Cut"));
+    await wait(0);
+    expect(onApply).toHaveBeenCalledWith(
+      [{ op: "update", table: "cues", id: "c2", fields: { status: "Cut" } }],
+      [{ op: "delete", id: "n2" }],
+    );
+    // c3 had no anchor row at all: Cut is just the status.
+    click(btn(container, "Cut"));
+    await wait(0);
+    expect(onApply).toHaveBeenLastCalledWith(
+      [{ op: "update", table: "cues", id: "c3", fields: { status: "Cut" } }],
+      [],
+    );
+    expect(container.querySelector('[data-testid="resolve-done"]')).not.toBeNull();
+    expect(onApply).toHaveBeenCalledTimes(3);
+  });
+
+  it("Cut without a Cut status option reports instead of writing", async () => {
+    const { container, onApply, onError } = setup({} as never);
+    await wait(0);
+    click(btn(container, "Cut"));
+    expect(onApply).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalled();
+  });
+
+  it("a failed write keeps the item pending", async () => {
+    const { container, onApply, onError } = setup();
+    onApply.mockRejectedValueOnce(new Error("nope"));
+    await wait(0);
+    click(btn(container, "Accept"));
+    await wait(0);
+    expect(onError).toHaveBeenCalled();
+    expect(heading(container)).toContain("Q 14.20");
+  });
+
+  it("marks items someone else resolved meanwhile, and says who", async () => {
+    const { container, update } = setup();
+    await wait(0);
+    // Ana accepted 14.20 in her browser: its live anchor is now manual.
+    update({
+      anchors: [
+        { ...(anchors[0] as CueAnchorRow), state: "manual", updated_by: "ana" },
+        anchors[1] as CueAnchorRow,
+      ],
+    });
+    await wait(0);
+    const first = container.querySelector('[data-testid="resolve-item"]') as HTMLElement;
+    expect(first.dataset.status).toBe("elsewhere");
+    expect(first.textContent).toContain("Resolved by Ana");
+    // The screen moved on to the next pending cue.
+    expect(heading(container)).toContain("Q 14.25");
+  });
+
+  it("re-checks the live anchor before writing and refuses when it's resolved", async () => {
+    const live = new Map<string, CueAnchorRow>([
+      ["c1", { ...(anchors[0] as CueAnchorRow), state: "manual", updated_by: "zed" }],
+    ]);
+    const { container, onApply, onNotice } = setup(undefined, {
+      readLive: (id) => live.get(id),
+    });
+    await wait(0);
+    click(btn(container, "Accept"));
+    await wait(0);
+    expect(onApply).not.toHaveBeenCalled();
+    expect(onNotice).toHaveBeenCalledWith("Q 14.20 was already resolved by someone else.");
+    expect(
+      container.querySelector('[data-testid="resolve-item"]')?.getAttribute("data-status"),
+    ).toBe("elsewhere");
+  });
+
+  it("the trigger text checkbox: off keeps the cue's trigger text", async () => {
+    const { container, onApply } = setup();
+    await wait(0);
+    const box = container.querySelector<HTMLInputElement>(
+      '[data-testid="update-trigger"] input',
+    ) as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    click(box);
+    click(btn(container, "Accept"));
+    await wait(0);
+    expect(onApply).toHaveBeenCalledWith([], [expect.objectContaining({ id: "n1" })]);
+  });
+
+  it("a newer version imported meanwhile: a banner, no actions, a switch", async () => {
+    const onSwitchVersion = vi.fn();
+    const { container } = setup(undefined, {
+      newerVersion: { label: "v3", by: "Ana" },
+      onSwitchVersion,
+    });
+    await wait(0);
+    const banner = container.querySelector('[data-testid="resolve-stale"]') as HTMLElement;
+    expect(banner.textContent).toContain(
+      "A new version (v3) was imported by Ana; your list is for v2",
+    );
+    expect(btn(container, "Accept")).toBeUndefined();
+    click(btn(banner, "Switch to v3"));
+    expect(onSwitchVersion).toHaveBeenCalled();
+  });
+});

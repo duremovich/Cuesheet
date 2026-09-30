@@ -162,6 +162,8 @@ export interface ViewState<V> {
   unit: Unit;
   /** The view's own unit override, if it has one. */
   viewUnit: Unit | undefined;
+  /** The saved view shown (null: the built-in default), e.g. for the Print view link. */
+  viewId: string | null;
 }
 
 const NO_IDS: string[] = [];
@@ -1045,6 +1047,7 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
     layout: setup.gallery && config.layout === "gallery" ? "gallery" : "grid",
     unit,
     viewUnit: config.unit,
+    viewId: current?.id ?? null,
   };
 }
 

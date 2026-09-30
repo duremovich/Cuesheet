@@ -17,6 +17,7 @@ import {
   type AnchorStats,
   buildPageMap,
   type CreateScriptVersionResponse,
+  MAX_SCRIPT_BODY_BYTES,
   type ReanchorResponse,
   type ReanchorResult,
   type ScriptText,
@@ -32,7 +33,6 @@ import { jsonBody, readJsonObjectLimited } from "./util";
 type C = Context<ShowEnv>;
 
 /** Largest import body (the extracted text as JSON). */
-export const MAX_SCRIPT_BODY_BYTES = 8 * 1024 * 1024;
 export const MAX_LABEL_LENGTH = 100;
 
 const stub = (c: C) => c.env.SHOW.get(c.env.SHOW.idFromName(c.var.show.id));
