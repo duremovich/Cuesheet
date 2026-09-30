@@ -366,7 +366,7 @@ Every column in the export, and where it goes.
 | | Assignee | Cue.assignees |
 | | Content | Cue.content |
 | | Content Notes | (lookup) → notes panel on the cue |
-| | *(hidden)* Scene | Cue.scene — assumed present but hidden in the exported view |
+| | *(hidden)* Scene | Cue.scene — confirmed: a hidden link field in the exported view |
 | | blank rows | Cue.is_section, or removed: grouping by scene replaces them |
 | Content | Name | Content.name |
 | | Version | ContentVersion records |

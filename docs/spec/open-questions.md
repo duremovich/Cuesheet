@@ -37,8 +37,7 @@ summarized at the bottom.
 
 ## Infrastructure
 
-- **Sign-in.** Google sign-in for the team? Do SM/director need accounts or is a
-  read-only link enough?
+- **Sign-in for SM/director.** Do they need accounts, or is a read-only link enough?
 - **Hosting.** Any preference or budget (a small VPS, a managed platform)? Who maintains
   it once it's running?
 - **Offline.** Not v1, but how bad is venue Wi-Fi in practice? If tech regularly happens
@@ -55,6 +54,9 @@ summarized at the bottom.
 - **Platform**: hosted web app. → overview
 - **Team size**: 2–5 editors, simultaneously in tech. → overview, R22
 - **Schema**: fixed core + custom fields and tables. → data model
+- **Cue → Scene**: the cue list has a hidden Scene link field. → data model
+- **Sign-in**: email + password, invite-only for v1. → R24
+- **Platform**: Cloudflare Workers / Durable Objects / D1 / R2. → decision 0005
 - **Blank rows in the cue list**: the team groups by scene; grouping is essential. → R4
 - **Content versions**: version history per content item. → ContentVersion
 - **Audience**: video team edits; SM, director and other designers view/comment. → R23

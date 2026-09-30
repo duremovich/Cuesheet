@@ -83,7 +83,7 @@ specified in [ux.md](ux.md); the tables in [data-model.md](data-model.md).
   cell resolve last-write-wins with the history showing both.
 - **R23 Roles.** Per show: editor, commenter (read everything, add and edit own notes),
   viewer. Share a view by link, optionally read-only without login for SM/director.
-- **R24 Sign-in** for the team (Google sign-in is likely; see open questions).
+- **R24 Sign-in** for the team: email + password, invite-only. Google sign-in can come later.
 
 ### Import / export
 
