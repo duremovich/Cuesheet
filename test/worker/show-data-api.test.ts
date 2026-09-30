@@ -62,6 +62,29 @@ describe("show data API", () => {
     });
     expect((await mutate(show.id, cookie, "nope")).status).toBe(400);
     expect((await mutate(show.id, cookie, new Array(1001).fill({}))).status).toBe(400);
+
+    // Prototype-polluting custom keys are refused by the Worker, before the DO.
+    const polluted = await api(`/api/shows/${show.id}/mutate`, {
+      method: "POST",
+      cookie,
+      body: `{"clientId":"x","ops":[{"op":"update","table":"cues","id":"${cueId}","fields":{"custom":{"__proto__":{"admin":true}}}}]}`,
+    });
+    expect(polluted.status).toBe(400);
+    expect(await polluted.json()).toMatchObject({ error: /not allowed/, opIndex: 0 });
+
+    // Bodies over 4 MB: 413, whether or not Content-Length says so up front.
+    const big = { clientId: "x", ops: [], pad: "x".repeat(4 * 1024 * 1024) };
+    expect((await mutate(show.id, cookie, [], "x")).status).toBe(200);
+    expect((await post(`/api/shows/${show.id}/mutate`, big, cookie)).status).toBe(413);
+    const stream = new Blob([JSON.stringify(big)]).stream();
+    const chunked = await api(`/api/shows/${show.id}/mutate`, {
+      method: "POST",
+      cookie,
+      body: stream,
+      headers: { "Content-Type": "application/json" },
+      duplex: "half",
+    } as RequestInit);
+    expect(chunked.status).toBe(413);
   });
 
   it("non-members get 404 on every data route", async () => {

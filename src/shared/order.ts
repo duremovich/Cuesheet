@@ -18,10 +18,37 @@ export function compareOrder(a: Keyed, b: Keyed): number {
 export class PlacementError extends Error {}
 
 /**
+ * Where a *create* actually goes when its neighbour no longer exists (e.g. another user
+ * deleted it just before our batch arrived): a missing `after` falls back to `before` if
+ * that still exists, then to the end of the new row's scene (`sceneId`, for cues and
+ * content: right after the last row with the same scene_id), then to the end of the table.
+ * A missing `before` falls back the same way. Placements that resolve are returned as is.
+ */
+export function effectivePlacement(
+  rows: readonly (Keyed & { scene_id?: string | null })[],
+  placement: Placement,
+  sceneId?: string | null,
+): Placement {
+  const exists = (id: string | null | undefined) =>
+    id === undefined || id === null || rows.some((r) => r.id === id);
+  const { after, before } = placement;
+  if (exists(after) && exists(before)) return placement;
+  if (after != null && exists(after)) return { after };
+  if (before != null && exists(before)) return { before };
+  if (sceneId !== undefined) {
+    const last = rows.findLast((r) => (r.scene_id ?? null) === (sceneId ?? null));
+    if (last) return { after: last.id };
+  }
+  return {};
+}
+
+/**
  * The key for a row placed per `placement` among `rows` (in show order). `excludeId` is the
  * row being moved, which doesn't count as its own neighbour. Keys already in use are never
- * returned, so two rows never share a key through this function (concurrent inserts from
- * two clients can still tie; `compareOrder` breaks the tie by id).
+ * returned, so the server never gives two rows the same key. Two users inserting "after X"
+ * at the same moment both keep their rows: the server applies them in turn, and the later
+ * one gets a key between X and the earlier one, so it lands directly after X, before the
+ * earlier insert.
  */
 export function orderKeyFor(
   rows: readonly Keyed[],

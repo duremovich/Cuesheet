@@ -39,8 +39,10 @@ Rules:
   never jumps to the top.
 - A live sort is stored on the view and shown as a chip in the toolbar; clicking it
   offers "Sort now and clear" or "Remove sort".
-- Concurrent inserts at the same spot by two users are ordered by insert time and both
-  shown; nobody's row disappears.
+- Concurrent inserts at the same spot by two users are both kept; nobody's row disappears.
+  The server applies them one after the other and computes each key from the rows that
+  exist at that moment, so the one it applies second lands directly after the anchor row,
+  i.e. *before* the first one. Show order is simply key order.
 
 ### Inserting a cue
 

@@ -122,8 +122,16 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   content or person set to null; cues/content of a deleted scene become Unassigned), logs
   one `changes` row per changed field (create/delete: one row, field `*`), and broadcasts
   `{type:"ops", prevVersion, version, clientId, ops}` with the *resolved* ops (or
-  `{type:"version"}` when too big). Errors: 400/403 `{error, opIndex}`, whole batch
-  rolled back. Field names on the wire are the snake_case storage names; row types are in
+  `{type:"version"}` when over 256 KiB of UTF-8). Errors: 400/403 `{error, opIndex}`,
+  whole batch rolled back. Limits: ids must be lowercase UUIDv7 (`newId()`); request
+  bodies over 4 MB get 413 (`readJsonObjectLimited` in `routes/util.ts`); a row may not
+  exceed 512 KiB as JSON; `custom` keys `__proto__`/`constructor`/`prototype` are
+  rejected (by the Worker before the RPC, and again in the engine). A create whose
+  `after`/`before` row no longer exists falls back to the other neighbour, then the end of
+  its scene (cues/content), then the end of the table (`effectivePlacement` in
+  `shared/order.ts`, used by client and server); resolved creates carry the `placement`
+  actually used. Concurrent inserts after the same row: both kept; the one applied second
+  lands directly after the anchor, before the first. Field names on the wire are the snake_case storage names; row types are in
   `src/shared/tables.ts`. `GET /snapshot` returns everything (ordered tables sorted by
   `order_key`, then `id`); `GET /history?table=&id=&limit=` returns changes newest first
   with `userName`. Order keys are compared as plain strings (byte order), never
@@ -138,6 +146,9 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   `mutate` is optimistic (applies at once, including order keys and delete cascades, via
   `show-state.ts`), sends one batch at a time, and on error rolls back and rethrows (an
   `ApiError` with `opIndex`). Untouched rows keep object identity across updates.
+  **Deferred:** a snapshot refetch (version gap, reconnect, import) replaces every row
+  object, so every row re-renders; the grid (M1c) may need structural sharing there
+  (reuse the old object when a row is unchanged).
 - **Adding a field to a core table.** (1) Column in `src/worker/db/do/schema.ts` +
   `pnpm db:generate` (nullable, or with a default, since existing shows have rows). (2) The
   field spec in `FIELDS` and the row interface in `src/shared/tables.ts` (type drives
@@ -152,9 +163,13 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   role the Worker read on that request. Members: `GET/POST /api/shows/:id/members`,
   `PATCH/DELETE .../members/:userId` (owner only; the user must already have an account;
   the owner can't be changed or removed). Removal and logout call
-  `ShowDO.disconnectUser(userId)`, which closes that user's sockets with code 4003.
+  `ShowDO.disconnectUser(userId)`, which sends `{type:"revoked"}` to that user's sockets
+  and closes them with code 4003; `useShowSocket` treats `revoked` as terminal (status
+  `unauthorized`, "No access") and doesn't reconnect.
 - **Airtable import** (`POST /api/shows/:id/import/airtable`, multipart CSV files; editors
-  and owners). Files are recognised by Airtable's `<Table>-<View>.csv` name or by their
+  and owners; 4 MB max). A show that already has rows in any core table gets 409
+  `{error:"Show already has data"}` unless the request has `?append=1` (the UI asks for
+  confirmation first; appended rows are added, not merged). Files are recognised by Airtable's `<Table>-<View>.csv` name or by their
   headers; the five core tables are imported, others skipped with a warning. The import is
   one op batch (so history and broadcast work; `allowCreatedAt` lets it keep note
   `Created Time`). CSV order becomes show order. Links resolve by primary text among the

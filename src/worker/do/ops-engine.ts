@@ -14,7 +14,7 @@ import type {
   SnapshotResponse,
   UnlinkOp,
 } from "../../shared/ops";
-import { orderKeyFor, PlacementError } from "../../shared/order";
+import { effectivePlacement, orderKeyFor, PlacementError } from "../../shared/order";
 import {
   FIELDS,
   type FieldOptions,
@@ -55,7 +55,13 @@ export interface BatchResult {
 }
 
 const MAX_TEXT = 100_000;
+/** Largest a row may be, as UTF-8 JSON. */
+export const MAX_ROW_BYTES = 512 * 1024;
 const DONE_STATUS = "Done";
+/** Keys that could pollute prototypes when custom objects are merged. */
+export const RESERVED_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+const encoder = new TextEncoder();
+const byteLength = (v: unknown) => encoder.encode(JSON.stringify(v)).byteLength;
 
 type DbRow = Record<string, SqlStorageValue>;
 type WireRow = Record<string, unknown>;
@@ -337,8 +343,9 @@ export class Batch {
     if (!isPlainObject(value)) this.fail("custom must be an object");
     for (const k of Object.keys(value)) {
       if (!k || k.length > 64) this.fail("custom field keys must be 1–64 characters");
+      if (RESERVED_KEYS.has(k)) this.fail(`custom field key "${k}" is not allowed`);
     }
-    if (JSON.stringify(value).length > MAX_TEXT) this.fail("custom is too large");
+    if (byteLength(value) > MAX_TEXT) this.fail("custom is too large");
     return value;
   }
 
@@ -414,7 +421,12 @@ export class Batch {
     row.created_by = this.ctx.userId;
     row.updated_at = this.now;
     row.updated_by = this.ctx.userId;
-    if (isOrderedTable(table)) row.order_key = this.orderKey(table, placement);
+    let used: Placement | undefined;
+    if (isOrderedTable(table)) {
+      used = this.createPlacement(table, placement, row.scene_id as string | null | undefined);
+      row.order_key = this.orderKey(table, used);
+    }
+    this.checkRowSize(table, row);
     if (table === "notes" && row.status === DONE_STATUS) {
       row.completed_at = this.now;
       row.completed_by = this.ctx.userId;
@@ -427,7 +439,38 @@ export class Batch {
     );
     this.log(table, id, "*", undefined, row);
     const { id: _id, ...rest } = row;
-    this.resolved.push({ op: "create", table, id, fields: rest });
+    this.resolved.push({
+      op: "create",
+      table,
+      id,
+      fields: rest,
+      ...(used ? { placement: used } : {}),
+    });
+  }
+
+  /** The placement a create really gets (neighbours may have been deleted meanwhile). */
+  private createPlacement(
+    table: TableName,
+    placement: Placement,
+    sceneId: string | null | undefined,
+  ): Placement {
+    const { after, before } = placement;
+    if ((after === undefined || after === null) && (before === undefined || before === null)) {
+      return placement; // start or end: nothing to look up
+    }
+    const hasScene = "scene_id" in FIELDS[table];
+    const rows = this.sql
+      .exec<{ id: string; order_key: string; scene_id: string | null }>(
+        `SELECT id, order_key, ${hasScene ? "scene_id" : "NULL AS scene_id"} FROM ${q(table)} ORDER BY order_key, id`,
+      )
+      .toArray();
+    return effectivePlacement(rows, placement, hasScene ? (sceneId ?? null) : undefined);
+  }
+
+  private checkRowSize(table: TableName, row: WireRow): void {
+    if (byteLength(row) > MAX_ROW_BYTES) {
+      this.fail(`${table} row would exceed ${MAX_ROW_BYTES / 1024} KiB`);
+    }
   }
 
   /** Apply already-validated changes to one row; logs and emits a resolved op. */
@@ -468,6 +511,7 @@ export class Batch {
     }
     changed.updated_at = this.now;
     changed.updated_by = this.ctx.userId;
+    this.checkRowSize(table, { ...old, ...changed });
     const cols = Object.keys(changed);
     this.sql.exec(
       `UPDATE ${q(table)} SET ${cols.map((c) => `${q(c)} = ?`).join(", ")} WHERE id = ?`,

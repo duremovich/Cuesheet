@@ -91,11 +91,17 @@ export const api = {
     for (const [k, v] of Object.entries(q)) if (v !== undefined) params.set(k, String(v));
     return request<HistoryResponse>("GET", showPath(id, `/history?${params}`));
   },
-  importAirtable: (id: string, files: File[], clientId?: string) => {
+  /** `append`: import into a show that already has data (else the server answers 409). */
+  importAirtable: (
+    id: string,
+    files: File[],
+    opts: { clientId?: string; append?: boolean } = {},
+  ) => {
     const form = new FormData();
     for (const f of files) form.append("files", f);
-    if (clientId) form.append("clientId", clientId);
-    return request<ImportResponse>("POST", showPath(id, "/import/airtable"), form);
+    if (opts.clientId) form.append("clientId", opts.clientId);
+    const q = opts.append ? "?append=1" : "";
+    return request<ImportResponse>("POST", showPath(id, `/import/airtable${q}`), form);
   },
   members: (id: string) => request<MembersResponse>("GET", showPath(id, "/members")),
   addMember: (id: string, body: AddMemberRequest) =>

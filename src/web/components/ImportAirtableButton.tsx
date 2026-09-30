@@ -1,6 +1,7 @@
 // "Import Airtable CSVs…": uploads the core CSV exports to /import/airtable (R25).
 import { type ChangeEvent, useState } from "react";
 import type { ImportResponse } from "../../shared/ops";
+import { TABLE_NAMES } from "../../shared/tables";
 import { api } from "../lib/api";
 import { useApiErrorHandler } from "../lib/auth";
 import { useShowStoreInstance } from "../lib/show-store";
@@ -17,11 +18,21 @@ export function ImportAirtableButton({ showId }: { showId: string }) {
     const files = [...(e.target.files ?? [])];
     e.target.value = "";
     if (files.length === 0) return;
+    // The server refuses (409) to import into a show with data unless told to append.
+    const state = store.getState();
+    const append = TABLE_NAMES.some((t) => state.tables[t].size > 0);
+    if (append) {
+      const n = state.order.cues.length;
+      const ok = window.confirm(
+        `This show already has ${n} ${n === 1 ? "cue" : "cues"}. Import anyway? Rows will be added, not merged.`,
+      );
+      if (!ok) return;
+    }
     setBusy(true);
     setError(null);
     setResult(null);
     try {
-      setResult(await api.importAirtable(showId, files, store.clientId));
+      setResult(await api.importAirtable(showId, files, { clientId: store.clientId, append }));
       await store.refresh();
     } catch (err) {
       setError(handleError(err));

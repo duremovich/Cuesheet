@@ -416,9 +416,100 @@ describe("ops: history, versions, broadcast", () => {
     const b = await connectDO(stub, "bob");
     expect(await b.next(isType("hello"))).toMatchObject({ clients: 3 });
     expect(await stub.disconnectUser("alice")).toBe(2);
+    // Told why first, so the client stops reconnecting.
+    expect(await a.next(isType("revoked"))).toEqual({ type: "revoked" });
     expect(await a.closedWith()).toBe(4003);
     expect(await a2.closedWith()).toBe(4003);
     expect(await b.next((m): m is never => m.type === "presence" && m.clients === 1)).toBeTruthy();
     b.ws.close(1000);
+  });
+});
+
+describe("ops: review hardening", () => {
+  it("accepts only lowercase UUIDv7 ids", async () => {
+    const stub = await freshShow();
+    for (const id of [
+      "not-a-uuid",
+      "c1",
+      "0190AAAA-0000-7000-8000-000000000000", // uppercase
+      "0190aaaa-0000-4000-8000-000000000000", // v4
+      "0190aaaa-0000-7000-c000-000000000000", // bad variant
+    ]) {
+      expect(await stub.mutate(ctx(), [cue(id)]), id).toMatchObject({ ok: false, status: 400 });
+    }
+    expect(await stub.mutate(ctx(), [cue(newId(), {}, { after: "not-a-uuid" })])).toMatchObject({
+      ok: false,
+      error: /after must be an id/,
+    });
+    ok(await stub.mutate(ctx(), [cue(newId())]));
+  });
+
+  it("rejects reserved custom keys", async () => {
+    const stub = await freshShow();
+    const id = newId();
+    ok(await stub.mutate(ctx(), [cue(id)]));
+    for (const key of ["__proto__", "constructor", "prototype"]) {
+      const custom = JSON.parse(`{"${key}": 1}`) as Record<string, unknown>;
+      expect(
+        await stub.mutate(ctx(), [{ op: "update", table: "cues", id, fields: { custom } }]),
+      ).toMatchObject({ ok: false, error: /not allowed/ });
+    }
+  });
+
+  it("rejects creates and updates that would make a row over 512 KiB", async () => {
+    const stub = await freshShow();
+    const big = "x".repeat(99_000);
+    const five = { description: big, sm_call: big, trigger_value: big, lx_cue: big, sq_cue: big };
+    const id = newId();
+    ok(await stub.mutate(ctx(), [cue(id, five)])); // ~495 KB fits
+    expect(
+      await stub.mutate(ctx(), [{ op: "update", table: "cues", id, fields: { timecode: big } }]),
+    ).toMatchObject({ ok: false, status: 400, error: /exceed 512 KiB/ });
+    expect(await stub.mutate(ctx(), [cue(newId(), { ...five, timecode: big })])).toMatchObject({
+      ok: false,
+      error: /exceed 512 KiB/,
+    });
+  });
+
+  it("a create whose neighbour was deleted falls back to before, then the end of its scene", async () => {
+    const stub = await freshShow();
+    const [s1, s2, a, b, c, gone] = [newId(), newId(), newId(), newId(), newId(), newId()];
+    ok(
+      await stub.mutate(ctx(), [
+        { op: "create", table: "scenes", id: s1, fields: { name: "One" } },
+        { op: "create", table: "scenes", id: s2, fields: { name: "Two" } },
+        cue(a, { number: "1", scene_id: s1 }),
+        cue(gone, { number: "1.5", scene_id: s1 }),
+        cue(b, { number: "2", scene_id: s1 }),
+        cue(c, { number: "10", scene_id: s2 }),
+      ]),
+    );
+    // Someone else deletes the row our client was about to insert after.
+    ok(await stub.mutate(ctx(), [{ op: "delete", table: "cues", id: gone }]));
+
+    // after: gone, before: b → before is used.
+    const r1 = ok(
+      await stub.mutate(ctx(), [
+        cue(newId(), { number: "1.7", scene_id: s1 }, { after: gone, before: b }),
+      ]),
+    );
+    expect(r1.ops[0]).toMatchObject({ op: "create", placement: { before: b } });
+
+    // after: gone only → end of the new row's scene (after b, the last scene-1 cue).
+    const r2 = ok(
+      await stub.mutate(ctx(), [cue(newId(), { number: "2.5", scene_id: s1 }, { after: gone })]),
+    );
+    expect(r2.ops[0]).toMatchObject({ placement: { after: b } });
+
+    // No cues in its scene (Unassigned) → end of the table.
+    const r3 = ok(await stub.mutate(ctx(), [cue(newId(), { number: "99" }, { after: gone })]));
+    expect(r3.ops[0]).toMatchObject({ placement: {} });
+
+    // A placement that resolves is reported unchanged.
+    const r4 = ok(await stub.mutate(ctx(), [cue(newId(), { number: "0" }, { after: null })]));
+    expect(r4.ops[0]).toMatchObject({ placement: { after: null } });
+
+    const order = (await snapshot(stub)).tables.cues.map((r) => r.number);
+    expect(order).toEqual(["0", "1", "1.7", "2", "2.5", "10", "99"]);
   });
 });

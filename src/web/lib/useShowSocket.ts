@@ -61,6 +61,14 @@ export function useShowSocket(
       ws.onmessage = (e) => {
         const msg = parseServerMessage(e.data);
         if (msg) onMessageRef.current?.(msg);
+        if (msg?.type === "revoked") {
+          // Access was taken away (removed from the show, signed out): terminal.
+          stopped = true;
+          clearInterval(heartbeat);
+          setState({ status: "unauthorized", clients: 0 });
+          ws?.close(1000, "revoked");
+          return;
+        }
         if (msg?.type === "hello" || msg?.type === "presence") {
           attempt = 0;
           setState({ status: "connected", clients: msg.clients });

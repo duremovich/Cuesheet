@@ -2,7 +2,7 @@
 // snapshot, resolving ops locally the way the server will (optimistic updates), and
 // applying resolved ops. Untouched rows keep their identity so React selectors stay cheap.
 import type { FieldValues, Joins, Op, ResolvedOp, SnapshotResponse } from "../../shared/ops";
-import { compareOrder, orderKeyFor } from "../../shared/order";
+import { compareOrder, effectivePlacement, orderKeyFor } from "../../shared/order";
 import {
   type AnyRow,
   FIELDS,
@@ -83,7 +83,7 @@ function sortIds(rows: RowMap, ids: string[]): string[] {
 function keyed(data: ShowData, table: OrderedTableName) {
   const rows = data.tables[table] as RowMap;
   return data.order[table].map(
-    (id) => rows.get(id) as unknown as { id: string; order_key: string },
+    (id) => rows.get(id) as unknown as { id: string; order_key: string; scene_id?: string | null },
   );
 }
 
@@ -133,7 +133,14 @@ function resolveOne(data: ShowData, op: Op, ctx: LocalContext): ResolvedOp[] {
         ...stamp,
       });
       if (isOrderedTable(op.table)) {
-        fields.order_key = orderKeyFor(keyed(data, op.table), op);
+        const rows = keyed(data, op.table);
+        const hasScene = "scene_id" in FIELDS[op.table];
+        const sceneId = hasScene
+          ? ((fields.scene_id as string | null | undefined) ?? null)
+          : undefined;
+        const placement = effectivePlacement(rows, op, sceneId);
+        fields.order_key = orderKeyFor(rows, placement);
+        return [{ op: "create", table: op.table, id: op.id, fields, placement }];
       }
       return [{ op: "create", table: op.table, id: op.id, fields }];
     }

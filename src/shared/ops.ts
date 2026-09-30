@@ -81,6 +81,11 @@ export interface ResolvedCreate {
   table: TableName;
   id: string;
   fields: FieldValues;
+  /**
+   * Ordered tables: the placement actually used, which differs from the request when a
+   * neighbour had been deleted (see `effectivePlacement` in ./order.ts).
+   */
+  placement?: Placement;
 }
 
 /**

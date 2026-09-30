@@ -34,8 +34,8 @@ function importForm(files = FILES): FormData {
   return form;
 }
 
-function importCsv(showId: string, cookie: string, form = importForm()) {
-  return api(`/api/shows/${showId}/import/airtable`, {
+function importCsv(showId: string, cookie: string, form = importForm(), query = "") {
+  return api(`/api/shows/${showId}/import/airtable${query}`, {
     method: "POST",
     body: form,
     cookie,
@@ -142,9 +142,7 @@ describe("Airtable import", () => {
     // Select values map case-insensitively; Cast → person group.
     expect(cues.find((c) => c.number === "1.00")?.status).toBe("Cued");
     expect(persons.find((p) => p.name === "Jamie Petrova")?.group).toBe("Cast");
-    expect(persons.find((p) => p.name === "Quinn Weller")?.email).toBe(
-      "quinn.weller@example.com",
-    );
+    expect(persons.find((p) => p.name === "Quinn Weller")?.email).toBe("quinn.weller@example.com");
     const multiType = noteRows.find((n) => n.type.length === 2);
     expect(multiType?.type).toEqual(["Stage Management", "Content"]);
 
@@ -167,5 +165,32 @@ describe("Airtable import", () => {
     expect(res.status).toBe(200);
     expect(((await res.json()) as ImportResponse).warnings[0]).toMatch(/random.csv: not one of/);
     expect((await importCsv(show.id, admin, new FormData())).status).toBe(400);
+  });
+
+  it("refuses to import into a show that has data unless asked to append", async () => {
+    const admin = await loginAdmin();
+    const show = await createShow(admin);
+    const small = (): FormData =>
+      importForm([["Breakdown-Grid view.csv", "Scene Name,Location\n101 Speakeasy,Chicago\n"]]);
+    expect((await importCsv(show.id, admin, small())).status).toBe(200);
+
+    const again = await importCsv(show.id, admin, small());
+    expect(again.status).toBe(409);
+    expect(await again.json()).toEqual({ error: "Show already has data" });
+
+    const appended = await importCsv(show.id, admin, small(), "?append=1");
+    expect(appended.status).toBe(200);
+    const snap = (await (
+      await api(`/api/shows/${show.id}/snapshot`, { cookie: admin })
+    ).json()) as SnapshotResponse;
+    expect(snap.tables.scenes.map((s) => s.name)).toEqual(["Speakeasy", "Speakeasy"]);
+  });
+
+  it("rejects import bodies over 4 MB with 413", async () => {
+    const admin = await loginAdmin();
+    const show = await createShow(admin);
+    const huge = `Scene Name,Location\n${"x".repeat(4 * 1024 * 1024)}\n`;
+    const res = await importCsv(show.id, admin, importForm([["Breakdown-Grid view.csv", huge]]));
+    expect(res.status).toBe(413);
   });
 });

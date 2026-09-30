@@ -20,6 +20,27 @@ async function addCue(page: Page, number: string, opts: { after?: string } = {})
   await form.getByLabel("Number").fill(number);
   if (opts.after) await form.getByLabel("Insert after").selectOption({ label: opts.after });
   await form.getByRole("button", { name: "Add cue" }).click();
+  // The form clears once the server has accepted the cue.
+  await expect(form.getByLabel("Number")).toHaveValue("");
+}
+
+/** A new user, invited by the admin page's session and added to the show with `role`. */
+async function addMember(browser: Browser, admin: Page, showId: string, role: string) {
+  const email = `${uniqueName(role).replace(/\s+/g, "-")}@cuesheet.test`;
+  const invite = await admin.request.post("/api/invites", { data: { email } });
+  const { path: invitePath } = (await invite.json()) as { path: string };
+  const page = await (await browser.newContext()).newPage();
+  const token = invitePath.split("/").at(-1);
+  const accepted = await page.request.post(`/api/invites/${token}/accept`, {
+    data: { name: `Test ${role}`, password: "a-long-password" },
+  });
+  expect(accepted.status()).toBe(201);
+  const { user } = (await accepted.json()) as { user: { id: string } };
+  const added = await admin.request.post(`/api/shows/${showId}/members`, {
+    data: { email, role },
+  });
+  expect(added.status()).toBe(201);
+  return { page, userId: user.id };
 }
 
 test("import the example Airtable CSVs; cues appear grouped by scene", async ({ page }) => {
@@ -78,21 +99,7 @@ test("a viewer sees the cue list but can't add cues", async ({ browser }) => {
   const showId = await createShow(admin, uniqueName("Viewer check"));
   await addCue(admin, "1");
 
-  // A new user, invited and added to the show as a viewer.
-  const email = `${uniqueName("viewer").replace(/\s+/g, "-")}@cuesheet.test`;
-  const invite = await admin.request.post("/api/invites", { data: { email } });
-  const { path: invitePath } = (await invite.json()) as { path: string };
-  const viewer = await (await browser.newContext()).newPage();
-  const token = invitePath.split("/").at(-1);
-  const accepted = await viewer.request.post(`/api/invites/${token}/accept`, {
-    data: { name: "Vera Viewer", password: "a-long-password" },
-  });
-  expect(accepted.status()).toBe(201);
-  const added = await admin.request.post(`/api/shows/${showId}/members`, {
-    data: { email, role: "viewer" },
-  });
-  expect(added.status()).toBe(201);
-
+  const { page: viewer } = await addMember(browser, admin, showId, "viewer");
   await viewer.goto(`/shows/${showId}`);
   await expect.poll(() => cueNumbers(viewer)).toEqual(["1"]);
   await expect(viewer.getByRole("form", { name: "Add cue" })).toHaveCount(0);
@@ -108,4 +115,46 @@ test("a viewer sees the cue list but can't add cues", async ({ browser }) => {
   expect(res.status()).toBe(403);
   await admin.context().close();
   await viewer.context().close();
+});
+
+test("a member removed while the show is open sees No access and stays disconnected", async ({
+  browser,
+}) => {
+  const admin = await signedInPage(browser);
+  const showId = await createShow(admin, uniqueName("Removal"));
+  const { page: member, userId } = await addMember(browser, admin, showId, "editor");
+  await member.goto(`/shows/${showId}`);
+  const presence = member.getByTestId("presence");
+  await expect(presence).toHaveAttribute("data-status", "connected");
+
+  // A browser's fetch sends Origin on DELETE; Playwright's request API doesn't (CSRF check).
+  const res = await admin.request.delete(`/api/shows/${showId}/members/${userId}`, {
+    headers: { Origin: new URL(admin.url()).origin },
+  });
+  expect(res.status()).toBe(200);
+  await expect(presence).toHaveText(/No access/, { timeout: 2000 });
+  await expect(presence).toHaveAttribute("data-status", "unauthorized");
+  // It doesn't try to reconnect afterwards.
+  await member.waitForTimeout(1500);
+  await expect(presence).toHaveAttribute("data-status", "unauthorized");
+  await admin.context().close();
+  await member.context().close();
+});
+
+test("importing into a show with cues asks first and appends", async ({ page }) => {
+  await login(page);
+  await createShow(page, uniqueName("Append"));
+  await addCue(page, "1");
+  const breakdown = path.join("examples", "Breakdown-Grid view.csv");
+  // Declined: nothing is sent.
+  page.once("dialog", (d) => {
+    expect(d.message()).toContain("This show already has 1 cue. Import anyway?");
+    void d.dismiss();
+  });
+  await page.getByLabel("Import Airtable CSVs…").setInputFiles(breakdown);
+  await expect(page.getByTestId("import-result")).toHaveCount(0);
+  // Accepted: rows are added.
+  page.once("dialog", (d) => void d.accept());
+  await page.getByLabel("Import Airtable CSVs…").setInputFiles(breakdown);
+  await expect(page.getByTestId("import-result")).toContainText("Imported 28 scenes");
 });

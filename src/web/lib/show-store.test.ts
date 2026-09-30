@@ -290,6 +290,35 @@ describe("ShowStore", () => {
     expect(store.tables.cues.get("c1")?.scene_id).toBeNull();
   });
 
+  it("places a create whose neighbour is gone at the end of its scene, like the server", async () => {
+    const { server, store, releaseNext } = setup();
+    server.apply({
+      clientId: "x",
+      ops: [
+        { op: "create", table: "scenes", id: "s1", fields: { name: "S" } },
+        cue("c1", "1"),
+        cue("c2", "2"),
+        cue("c3", "3"),
+        { op: "update", table: "cues", id: "c1", fields: { scene_id: "s1" } },
+        { op: "update", table: "cues", id: "c2", fields: { scene_id: "s1" } },
+      ],
+    });
+    await store.load();
+    const done = store.mutate([
+      {
+        op: "create",
+        table: "cues",
+        id: "n",
+        fields: { number: "2.5", scene_id: "s1" },
+        after: "deleted",
+      },
+    ]);
+    expect(numbers(store)).toEqual(["1", "2", "2.5", "3"]);
+    await releaseNext();
+    await done;
+    expect(numbers(store)).toEqual(["1", "2", "2.5", "3"]);
+  });
+
   it("keeps untouched rows' identity across changes", async () => {
     const { server, store, releaseNext } = setup();
     server.apply({ clientId: "x", ops: [cue("c1", "1"), cue("c2", "2")] });

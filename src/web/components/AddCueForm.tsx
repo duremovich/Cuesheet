@@ -47,11 +47,13 @@ export function AddCueForm() {
       fields,
       ...placement(),
     };
-    setNumber("");
-    setDescription("");
-    setAfterId(END);
     try {
       await mutate([op]);
+      // Clear only once the server accepted it (on error the typed values stay), and only
+      // what the user hasn't changed since submitting.
+      setNumber((cur) => (cur === number ? "" : cur));
+      setDescription((cur) => (cur === description ? "" : cur));
+      setAfterId((cur) => (cur === afterId ? END : cur));
     } catch (err) {
       setError(handleError(err));
     }

@@ -7,7 +7,7 @@ import { type DrizzleSqliteDODatabase, drizzle } from "drizzle-orm/durable-sqlit
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import type { ShowMetaDTO } from "../../shared/api";
 import type { HistoryEntry, MutateResponse, SnapshotResponse } from "../../shared/ops";
-import type { FieldOptions } from "../../shared/tables";
+import { type FieldOptions, TABLE_NAMES } from "../../shared/tables";
 import { PING_FRAME, PONG_FRAME, type ServerMessage } from "../../shared/ws";
 import migrations from "../db/do/migrations/migrations.js";
 import * as schema from "../db/do/schema";
@@ -29,8 +29,9 @@ export const USER_ID_HEADER = "X-Cuesheet-User";
 export const ACCESS_REVOKED_CODE = 4003;
 
 /**
- * Broadcasts bigger than this send `{type:"version"}` instead of the ops; clients then
- * refetch the snapshot. Keeps imports from pushing megabytes through every socket.
+ * Broadcasts bigger than this (256 KiB of UTF-8) send `{type:"version"}` instead of the
+ * ops; clients then refetch the snapshot. Keeps imports from pushing megabytes through
+ * every socket.
  */
 const MAX_BROADCAST_BYTES = 256 * 1024;
 
@@ -117,8 +118,9 @@ export class ShowDO extends DurableObject<Env> {
         ops: result.ops,
       };
       const text = JSON.stringify(msg);
-      if (text.length <= MAX_BROADCAST_BYTES) this.broadcastRaw(text);
-      else this.broadcast({ type: "version", version: result.version });
+      if (new TextEncoder().encode(text).byteLength <= MAX_BROADCAST_BYTES) {
+        this.broadcastRaw(text);
+      } else this.broadcast({ type: "version", version: result.version });
     }
     return { ok: true, ...result };
   }
@@ -143,10 +145,21 @@ export class ShowDO extends DurableObject<Env> {
     return currentVersion(this.ctx.storage.sql);
   }
 
-  /** Close every socket belonging to a user (logout, removal from the show). */
+  /** True when any core table has rows (import refuses to run into a non-empty show). */
+  async hasData(): Promise<boolean> {
+    return TABLE_NAMES.some(
+      (t) => this.ctx.storage.sql.exec(`SELECT 1 FROM "${t}" LIMIT 1`).toArray().length > 0,
+    );
+  }
+
+  /**
+   * Close every socket belonging to a user (logout, removal from the show). Each gets a
+   * `revoked` message first so the client stops reconnecting instead of retrying.
+   */
   async disconnectUser(userId: string): Promise<number> {
     const sockets = this.ctx.getWebSockets(userId);
     for (const ws of sockets) {
+      this.send(ws, { type: "revoked" });
       try {
         ws.close(ACCESS_REVOKED_CODE, "access revoked");
       } catch {

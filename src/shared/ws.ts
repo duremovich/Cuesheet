@@ -37,7 +37,16 @@ export interface PongMessage {
   type: "pong";
 }
 
+/**
+ * Sent just before the server closes the socket because the user lost access (logout,
+ * removed from the show). Terminal: the client must not reconnect.
+ */
+export interface RevokedMessage {
+  type: "revoked";
+}
+
 export type ServerMessage =
+  | RevokedMessage
   | HelloMessage
   | PresenceMessage
   | VersionMessage

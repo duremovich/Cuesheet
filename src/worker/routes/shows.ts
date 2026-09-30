@@ -21,14 +21,21 @@ import type {
 import { requireAuth } from "../auth/middleware";
 import { normalizeEmail } from "../auth/session";
 import { schema } from "../db/d1/client";
+import { RESERVED_KEYS } from "../do/ops-engine";
 import { USER_ID_HEADER } from "../do/ShowDO";
 import { buildAirtableImport, type CsvFile } from "../import/airtable";
 import type { AppEnv } from "../types";
-import { jsonBody, readJsonObject, str } from "./util";
+import {
+  declaredTooLarge,
+  jsonBody,
+  MAX_BODY_BYTES,
+  readJsonObject,
+  readJsonObjectLimited,
+  str,
+} from "./util";
 
 /** Largest batch accepted by POST /mutate (import goes straight to the DO). */
 export const MAX_OPS_PER_REQUEST = 1000;
-const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 
 export function showStub(env: Env, showId: string) {
   return env.SHOW.get(env.SHOW.idFromName(showId));
@@ -73,6 +80,19 @@ const requireSameOriginUpgrade = createMiddleware<ShowEnv>(async (c, next) => {
   }
   await next();
 });
+
+/**
+ * True if a create/update op's `fields.custom` has a key that could pollute prototypes when
+ * merged. Checked here, before the DO RPC (the op engine checks again).
+ */
+function hasReservedCustomKey(op: unknown): boolean {
+  if (!op || typeof op !== "object") return false;
+  const fields = (op as { fields?: unknown }).fields;
+  if (!fields || typeof fields !== "object") return false;
+  const custom = (fields as { custom?: unknown }).custom;
+  if (!custom || typeof custom !== "object") return false;
+  return Object.keys(custom).some((k) => RESERVED_KEYS.has(k));
+}
 
 function isGrantable(role: unknown): role is Role {
   return typeof role === "string" && (GRANTABLE_ROLES as readonly string[]).includes(role);
@@ -131,7 +151,10 @@ export const showRoutes = new Hono<ShowEnv>()
     return c.body(snap, 200, { "Content-Type": "application/json" });
   })
   .post("/shows/:id/mutate", requireMembership, async (c) => {
-    const body = await readJsonObject(c);
+    const body = await readJsonObjectLimited(c);
+    if (body === "too-large") {
+      return c.json({ error: `Request body over ${MAX_BODY_BYTES / 1024 / 1024} MB` }, 413);
+    }
     const ops = body?.ops;
     const clientId = str(body?.clientId);
     if (!Array.isArray(ops))
@@ -139,6 +162,16 @@ export const showRoutes = new Hono<ShowEnv>()
     if (clientId.length > 64) return c.json({ error: "clientId is too long" }, 400);
     if (ops.length > MAX_OPS_PER_REQUEST) {
       return c.json({ error: `At most ${MAX_OPS_PER_REQUEST} ops per request` }, 400);
+    }
+    const reserved = ops.findIndex(hasReservedCustomKey);
+    if (reserved >= 0) {
+      return c.json(
+        {
+          error: "custom field keys __proto__, constructor and prototype are not allowed",
+          opIndex: reserved,
+        } satisfies MutateError,
+        400,
+      );
     }
     if (c.var.role === "viewer") {
       return c.json({ error: "Viewers can't make changes" } satisfies MutateError, 403);
@@ -178,6 +211,15 @@ export const showRoutes = new Hono<ShowEnv>()
     if (c.var.role !== "owner" && c.var.role !== "editor") {
       return c.json({ error: "Only editors can import" }, 403);
     }
+    const tooLarge = () =>
+      c.json({ error: `Request body over ${MAX_BODY_BYTES / 1024 / 1024} MB` }, 413);
+    if (declaredTooLarge(c)) return tooLarge();
+    const stub = showStub(c.env, c.var.show.id);
+    // Importing twice would duplicate everything: only into an empty show, unless the
+    // caller explicitly asks to append.
+    if (c.req.query("append") !== "1" && (await stub.hasData())) {
+      return c.json({ error: "Show already has data" }, 409);
+    }
     let form: Record<string, string | File | (string | File)[]>;
     try {
       form = await c.req.parseBody({ all: true });
@@ -189,13 +231,12 @@ export const showRoutes = new Hono<ShowEnv>()
     for (const value of Object.values(form).flat()) {
       if (typeof value === "string") continue;
       bytes += value.size;
-      if (bytes > MAX_IMPORT_BYTES) return c.json({ error: "Files are too large" }, 400);
+      if (bytes > MAX_BODY_BYTES) return tooLarge();
       files.push({ name: value.name, text: await value.text() });
     }
     if (files.length === 0) return c.json({ error: "Attach one or more CSV files" }, 400);
     const clientId = typeof form.clientId === "string" ? form.clientId.slice(0, 64) : "";
 
-    const stub = showStub(c.env, c.var.show.id);
     const fieldOptions = await stub.fieldOptions();
     const plan = buildAirtableImport(files, fieldOptions);
     const res = await stub.mutate(

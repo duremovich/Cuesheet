@@ -32,7 +32,7 @@ other open client can replay.
   autoincrement; a batch's version is the highest one it wrote, and messages carry
   `prevVersion` too. A batch that changes nothing keeps the version and isn't broadcast.
 - **Broadcast.** After commit the DO sends `{type:"ops", prevVersion, version, clientId,
-  ops}` to every socket, the sender's included. Batches whose message would exceed 256 KB
+  ops}` to every socket, the sender's included. Batches whose message would exceed 256 KiB of UTF-8
   (imports) send `{type:"version", version}` instead. Each new socket gets `version` right
   after `hello`.
 - **Client.** `src/web/lib/show-store.ts` keeps the confirmed state plus pending local
@@ -46,8 +46,15 @@ other open client can replay.
 
 - Last write wins per field: two users editing the same cell both succeed in commit order;
   history has both values. There is no merge of text within a field.
-- Concurrent inserts at the same spot get the same key; `id` (time-ordered) breaks the tie,
-  and the server never hands out a key already in use for later inserts there.
+- Concurrent inserts at the same spot are both kept, ordered by key. The server applies
+  batches one at a time and recomputes each key from the rows present then, so two
+  "after X" inserts don't tie: the one applied second gets a key between X and the first
+  one and lands before it. The client's provisional position for its own insert can
+  therefore change when the server's resolved op arrives. (`id` is still the tie-break in
+  `compareOrder`, but the server never produces equal keys.)
+- A create whose `after`/`before` row was deleted meanwhile doesn't fail: it falls back to
+  the other neighbour, then the end of its scene (cues/content), then the end of the table,
+  and the resolved op records the `placement` actually used.
 - Recovery is always "refetch the whole snapshot". Fine at show scale (hundreds of rows);
   a delta endpoint (`changes since version`) can replace it if snapshots get large.
 - Versions jump by the number of changed fields, not by one per batch, which is why
