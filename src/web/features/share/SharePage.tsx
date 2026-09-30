@@ -100,6 +100,7 @@ function targetParams(info: ShareInfoResponse): Record<string, string> {
   if (link.preset === "cuesheet") out.layout = "cuesheet";
   else if (link.preset && link.preset !== "calling-script") out.preset = link.preset;
   if (link.options.session) out.session = link.options.session;
+  if (link.options.person) out.person = link.options.person;
   if (link.options.orient) out.orient = link.options.orient;
   return out;
 }
@@ -116,11 +117,11 @@ function SharedShow({
   onRevoked: () => void;
 }) {
   const location = useLocation();
-  // Put the target's parameters in the URL first (the layouts read them from there); the
-  // viewer's own extras (e.g. ?person= from a "Distribute notes" email) stay.
+  // Put the target's parameters in the URL (the layouts read them from there). What the
+  // link fixes wins over the URL (the server enforces session / person anyway).
   const params = new URLSearchParams(location.search);
   const wanted = targetParams(info);
-  const missing = Object.entries(wanted).filter(([k]) => !params.has(k));
+  const missing = Object.entries(wanted).filter(([k, v]) => params.get(k) !== v);
   if (missing.length > 0) {
     for (const [k, v] of missing) params.set(k, v);
     return <Navigate to={{ pathname: location.pathname, search: `?${params}` }} replace />;
@@ -175,8 +176,8 @@ function ShareWorkspace({
     [showId, showName, toast],
   );
   const mode = useMemo<ShareMode>(
-    () => ({ token, kind: info.link.kind, label: info.link.label }),
-    [token, info.link.kind, info.link.label],
+    () => ({ token, kind: info.link.kind, label: info.link.label, options: info.link.options }),
+    [token, info.link.kind, info.link.label, info.link.options],
   );
 
   return (

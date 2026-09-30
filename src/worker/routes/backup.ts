@@ -5,8 +5,9 @@
 //   side (show row, members, share links without their token hashes) and a manifest of the
 //   attachment files in R2 (key, size, type) so a restore can copy them.
 // - `backupD1` (the Worker's weekly `scheduled` handler): every D1 table except sessions
-//   and rate-limit events as gzipped JSON in R2 under `backups/d1/<date>.json.gz`; the
-//   newest BACKUPS_KEPT are kept.
+//   and rate-limit events as gzipped JSON in R2 under `_backups/d1/<date>.json.gz`; the
+//   newest BACKUPS_KEPT are kept. **Show data is not in D1** (it's in each show's Durable
+//   Object): the per-show export, and DO point-in-time recovery, cover it.
 import { eq } from "drizzle-orm";
 import type { Context } from "hono";
 import type { SnapshotResponse } from "../../shared/ops";
@@ -96,7 +97,11 @@ export async function exportShow(c: Context<ShowEnv>): Promise<Response> {
 
 /** Weekly D1 backups kept in R2 (about three months). */
 export const BACKUPS_KEPT = 13;
-export const BACKUP_PREFIX = "backups/d1/";
+/**
+ * Apart from show files (`shows/…`). These dumps hold password hashes and the hashes of
+ * session-less tokens (invites, reset links, share links): treat them as secrets.
+ */
+export const BACKUP_PREFIX = "_backups/d1/";
 /** Not worth backing up: short-lived and security-sensitive. */
 const SKIPPED_TABLES = new Set(["sessions", "rate_limit_events", "d1_migrations"]);
 

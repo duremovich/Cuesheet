@@ -13,6 +13,7 @@ import { formatValue } from "../../components/grid/values";
 import { useShowStore } from "../../lib/show-store";
 import { useShareMode } from "../share/context";
 import frameStyles from "../shared/TableFrame.module.css";
+import { useMediaQuery } from "../shared/useMediaQuery";
 import { type TabKey, tabInfo } from "../show/tabs";
 import { useWorkspace } from "../show/workspace";
 import styles from "./Print.module.css";
@@ -99,6 +100,8 @@ export function PrintTable<R>({
   const [orientation, setOrientation] = useOrientation("landscape");
   const ws = useWorkspace();
   const share = useShareMode();
+  // Phones: no fixed column widths, so the table wraps to the screen instead of scrolling.
+  const narrow = useMediaQuery("screen and (max-width: 600px)");
   const expandable = share?.kind === "view";
   const [openRow, setOpenRow] = useState<{ row: R; opener: HTMLElement } | null>(null);
   const viewName = useShowStore((s) => (viewId ? s.tables.views.get(viewId)?.name : undefined));
@@ -130,7 +133,7 @@ export function PrintTable<R>({
           <th
             key={c.key}
             scope="col"
-            style={{ width: c.width ? `${c.width}px` : undefined }}
+            style={{ width: c.width && !narrow ? `${c.width}px` : undefined }}
             data-nowrap={noWrap(c) || undefined}
           >
             {c.title}

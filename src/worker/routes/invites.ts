@@ -1,5 +1,7 @@
 // Invite-only sign-up: an admin (anyone), or a show's owner (to that show), creates an
-// invite for an email and shares the one-time link out of band (no email sending).
+// invite for an email and shares the one-time link out of band (no email sending). The
+// answer is the same 200 whether or not the email has an account (no account oracle).
+// A show owner's open invites to that show end when they hand the show over.
 // Accepting sets name + password, signs in, and joins the invite's show with its role.
 // Bad tokens are rate-limited per IP (auth/rate-limit.ts).
 import { and, eq, gt, isNull } from "drizzle-orm";
@@ -76,12 +78,9 @@ export const inviteRoutes = new Hono<AppEnv>()
       if (!show) return c.json({ error: "Show not found" }, 404);
     }
     if (!isPlausibleEmail(email)) return c.json({ error: "Enter a valid email address" }, 400);
-    const existing = await c.var.db
-      .select({ id: schema.users.id })
-      .from(schema.users)
-      .where(eq(schema.users.email, email))
-      .get();
-    if (existing) return c.json({ error: "That email already has an account" }, 409);
+    // No "already has an account" answer (that would tell anyone who may invite which
+    // emails have accounts): the invite is made either way; accepting it for an existing
+    // account is refused then, to the invitee, who can simply sign in.
 
     const token = randomToken();
     const expiresAt = Date.now() + INVITE_TTL_MS;
@@ -96,7 +95,7 @@ export const inviteRoutes = new Hono<AppEnv>()
     });
     return c.json(
       { email, path: `/invite/${token}`, expiresAt } satisfies CreateInviteResponse,
-      201,
+      200,
     );
   })
   .get("/invites/:token", async (c) => {

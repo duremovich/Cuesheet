@@ -133,7 +133,7 @@ test("notes by person and by cue: session filter, one person, page numbers in th
   await expect(page.getByTestId("print-notes-summary")).toContainText("Tech 1");
 });
 
-test("distribute notes: an email per person, with the share link once there is one", async ({
+test("distribute notes: an email per person, each with a link to only their notes", async ({
   browser,
 }) => {
   const page = await newPage(browser);
@@ -144,9 +144,12 @@ test("distribute notes: an email per person, with the share link once there is o
   await expect(panel.getByTestId("distribute-person").first()).toBeVisible();
   const mail = panel.getByTestId("distribute-person").first().getByRole("link", { name: /Email/ });
   await expect(mail).toHaveAttribute("href", /^mailto:.*subject=.*notes%20%E2%80%93%20Tech%201/);
+  await expect(panel).toContainText("each recipient sees only their notes for Tech 1");
   await panel.getByTestId("distribute-create-link").click();
-  await expect(panel.getByTestId("distribute-share-link")).toContainText("/s/");
-  await expect(mail).toHaveAttribute("href", /Printable%20list%3A%20http.*%2Fs%2F.*person%3D/);
+  const people = await panel.getByTestId("distribute-person").count();
+  await expect(panel.getByTestId("distribute-share-link")).toHaveCount(people);
+  await expect(panel.getByTestId("distribute-create-link")).toHaveCount(0);
+  await expect(mail).toHaveAttribute("href", /Printable%20list%3A%20http.*%2Fs%2F/);
 
   // The link from the email opens that person's notes, signed out.
   const href = (await mail.getAttribute("href")) ?? "";
@@ -158,6 +161,12 @@ test("distribute notes: an email per person, with the share link once there is o
   await anon.goto(link);
   await expect(anon.getByTestId("print-notes")).toBeVisible();
   await expect(anon.getByTestId("print-group")).toHaveCount(1);
+  await expect(anon.getByTestId("print-notes-summary")).toContainText("Tech 1");
+  // The link fixes session and person: no pickers (the server enforces both anyway).
+  await expect(anon.getByLabel("Session")).toHaveCount(0);
+  await expect(anon.getByLabel("Person", { exact: true })).toHaveCount(0);
+  // Asking for another session in the URL changes nothing.
+  await anon.goto(`${link.replace(/\?.*$/, "")}?session=`);
   await expect(anon.getByTestId("print-notes-summary")).toContainText("Tech 1");
 });
 
@@ -201,6 +210,10 @@ test("print presets fit a 390 px phone", async ({ browser }) => {
     ["notes?preset=by-cue", "print-notes"],
     ["content?preset=content", "print-content"],
     ["surfaces?preset=surfaces", "print-surfaces"],
+    ["cues", "print-view"],
+    ["cues?layout=cuesheet", "print-view"],
+    ["content", "print-view"],
+    ["notes", "print-view"],
   ] as const) {
     await page.goto(`/shows/${showId}/print/${path}`);
     await expect(page.getByTestId(id)).toBeVisible();

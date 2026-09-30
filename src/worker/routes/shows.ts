@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import {
@@ -27,6 +27,8 @@ import { requireAuthOrShare, shareResourceGuard } from "../auth/share-auth";
 import { schema } from "../db/d1/client";
 import { RESERVED_KEYS } from "../do/ops-engine";
 import {
+  INTERNAL_HEADER,
+  INTERNAL_MARKER,
   NAME_HEADER,
   ROLE_HEADER,
   SESSION_ID_HEADER,
@@ -238,7 +240,10 @@ export const showRoutes = new Hono<ShowEnv>()
     return c.json({ show: updated } satisfies UpdateShowResponse);
   })
   .get("/shows/:id/ws", requireSameOriginUpgrade, requireMembership, async (c) => {
-    const headers = new Headers(c.req.raw.headers);
+    // A fresh set of headers: nothing the client sent reaches the DO (it could otherwise
+    // forge X-Cuesheet-* identity headers). The runtime completes the handshake with the
+    // client from the original request.
+    const headers = new Headers({ Upgrade: "websocket", [INTERNAL_HEADER]: INTERNAL_MARKER });
     if (c.var.share) {
       // A share link's viewer: its ops are filtered to the link's scope in the DO.
       headers.set(SHARE_SCOPE_HEADER, JSON.stringify(c.var.share));
@@ -249,7 +254,9 @@ export const showRoutes = new Hono<ShowEnv>()
       // So logout can close exactly this browser's sockets (ShowDO.disconnectSession).
       headers.set(SESSION_ID_HEADER, await sha256Hex(c.var.sessionToken));
     }
-    return showStub(c.env, c.var.show.id).fetch(new Request(c.req.raw, { headers }));
+    return showStub(c.env, c.var.show.id).fetch(
+      new Request(`https://do/shows/${c.var.show.id}/ws`, { headers }),
+    );
   })
 
   // ---- show data ----
@@ -479,7 +486,21 @@ export const showRoutes = new Hono<ShowEnv>()
         .update(schema.memberships)
         .set({ role })
         .where(and(eq(schema.memberships.showId, showId), eq(schema.memberships.userId, uid)));
-    await c.var.db.batch([setRole(userId, "owner"), setRole(c.var.user.id, "editor")]);
+    await c.var.db.batch([
+      setRole(userId, "owner"),
+      setRole(c.var.user.id, "editor"),
+      // The old owner's open invites into this show end with their ownership.
+      c.var.db
+        .update(schema.invites)
+        .set({ expiresAt: Date.now() })
+        .where(
+          and(
+            eq(schema.invites.showId, showId),
+            eq(schema.invites.invitedBy, c.var.user.id),
+            isNull(schema.invites.acceptedAt),
+          ),
+        ),
+    ]);
     const stub = showStub(c.env, showId);
     await stub.notifyRole(userId, "owner");
     await stub.notifyRole(c.var.user.id, "editor");

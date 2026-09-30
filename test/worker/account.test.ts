@@ -8,9 +8,14 @@ import type { CreateResetLinkResponse } from "../../src/shared/account";
 import type { CreateInviteResponse, MembersResponse, ShowResponse } from "../../src/shared/api";
 import type { ServerMessage } from "../../src/shared/ws";
 import { SESSION_TTL_MS } from "../../src/worker/auth/cookie";
-import { recordFailure, retryAfter } from "../../src/worker/auth/rate-limit";
+import { loginLimits, recordFailure, retryAfter } from "../../src/worker/auth/rate-limit";
 import { BACKUP_PREFIX, backupD1, type ShowExport } from "../../src/worker/routes/backup";
-import { contentSecurityPolicy, inlineScriptHashes, serveAsset } from "../../src/worker/security";
+import {
+  contentSecurityPolicy,
+  inlineScriptHashes,
+  redactTokens,
+  serveAsset,
+} from "../../src/worker/security";
 import {
   ADMIN,
   api,
@@ -44,7 +49,7 @@ async function openSocket(showId: string, cookie: string) {
 
 /** Move a key's rate-limit events `ms` into the past. */
 async function age(keyLike: string, ms: number) {
-  await env.DB.prepare("UPDATE rate_limit_events SET at = at - ?1 WHERE key LIKE ?2")
+  await env.DB.prepare("UPDATE rate_limit_events SET at = at - ?1 WHERE key = ?2")
     .bind(ms, keyLike)
     .run();
 }
@@ -64,30 +69,41 @@ describe("rate limiting", () => {
     expect(await retryAfter(db, ["k:a"], t0 + 3_600_001 + 10 * 61_000)).toBe(0);
   });
 
-  it("locks an email after 10 failed logins (429 + Retry-After), whatever the IP; then frees it", async () => {
+  it("locks an email from one IP after 10 failures (429 + Retry-After); other IPs still sign in", async () => {
     const admin = await loginAdmin();
     const user = await newUser(admin, "Locked");
+    const ipA = "198.51.100.10";
     for (let i = 0; i < 10; i++) {
-      const res = await login(user.email, "wrong-password!", `198.51.100.${i + 10}`);
+      const res = await login(user.email, "wrong-password!", ipA);
       expect(res.status).toBe(401);
       expect(await res.json()).toEqual({ error: "Wrong email or password" });
     }
-    const blocked = await login(user.email, PASSWORD, "198.51.100.99");
+    const blocked = await login(user.email, PASSWORD, ipA);
     expect(blocked.status).toBe(429);
     expect(Number(blocked.headers.get("Retry-After"))).toBeGreaterThan(0);
     expect(((await blocked.json()) as { error: string }).error).toMatch(/Too many attempts/);
-    // An unknown email gets the same treatment (no account enumeration).
-    for (let i = 0; i < 10; i++) await login("nobody@test.local", "x", `198.51.100.${i + 30}`);
-    expect((await login("nobody@test.local", "x", "198.51.100.98")).status).toBe(429);
-    // A minute later the window has room again.
-    await age(`login:email:${user.email}`, 61_000);
-    expect((await login(user.email, PASSWORD, "198.51.100.97")).status).toBe(200);
+    // The right password from another IP still works (no lockout from elsewhere).
+    expect((await login(user.email, PASSWORD, "198.51.100.11")).status).toBe(200);
+    // A minute later IP A has room again.
+    await age(`login:emailip:${user.email}|${ipA}`, 61_000);
+    expect((await login(user.email, PASSWORD, ipA)).status).toBe(200);
   });
 
-  it("locks an IP after 10 failures across emails", async () => {
+  it("per email alone: 100 failures an hour (from anywhere) lock it", async () => {
+    const admin = await loginAdmin();
+    const user = await newUser(admin, "Spread");
+    const now = Date.now();
+    for (let i = 0; i < 100; i++) {
+      await recordFailure(env.DB, loginLimits(user.email, `203.0.113.${i % 250}`), now - i);
+    }
+    expect((await login(user.email, PASSWORD, "198.51.100.60")).status).toBe(429);
+  });
+
+  it("per IP alone: 50 failures an hour across emails lock the IP", async () => {
     const ip = "198.51.100.200";
-    for (let i = 0; i < 10; i++) {
-      expect((await login(`guess${i}@test.local`, "nope-nope-nope", ip)).status).toBe(401);
+    const now = Date.now();
+    for (let i = 0; i < 50; i++) {
+      await recordFailure(env.DB, loginLimits(`guess${i}@test.local`, ip), now - i);
     }
     expect((await login(ADMIN.email, ADMIN.password, ip)).status).toBe(429);
     expect((await login(ADMIN.email, ADMIN.password, "198.51.100.201")).status).toBe(200);
@@ -221,7 +237,7 @@ describe("invites and members", () => {
       { email: "joiner@test.local", showId: show.id, role: "commenter" },
       admin,
     );
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(200);
     const token = ((await res.json()) as CreateInviteResponse).path.split("/").at(-1) as string;
     expect(await (await api(`/api/invites/${token}`)).json()).toEqual({
       email: "joiner@test.local",
@@ -244,7 +260,7 @@ describe("invites and members", () => {
     const own = await createShow(owner.cookie, "Mine");
     expect(
       (await post("/api/invites", { email: "a@test.local", showId: own.id }, owner.cookie)).status,
-    ).toBe(201);
+    ).toBe(200);
     expect((await post("/api/invites", { email: "b@test.local" }, owner.cookie)).status).toBe(403);
     expect(
       (await post("/api/invites", { email: "c@test.local", showId: show.id }, owner.cookie)).status,
@@ -278,11 +294,20 @@ describe("invites and members", () => {
     expect((await post(`/api/shows/${show.id}/transfer`, { userId: "nobody" }, admin)).status).toBe(
       404,
     );
+    // An invite the old owner made into this show…
+    const pending = await post(
+      "/api/invites",
+      { email: `pending${Date.now()}@test.local`, showId: show.id, role: "viewer" },
+      admin,
+    );
+    const pendingToken = ((await pending.json()) as CreateInviteResponse).path.split("/").at(-1);
     const socket = await openSocket(show.id, editor.cookie);
     expect(
       (await post(`/api/shows/${show.id}/transfer`, { userId: editor.id }, admin)).status,
     ).toBe(200);
     expect(await socket.next(isType("role"))).toEqual({ type: "role", role: "owner" });
+    // …ends with the transfer.
+    expect((await api(`/api/invites/${pendingToken}`)).status).toBe(404);
     socket.ws.close();
     const members = (await (
       await api(`/api/shows/${show.id}/members`, { cookie: admin })
@@ -431,6 +456,31 @@ describe("health, export, backups, headers", () => {
     expect(js.headers.get("Content-Security-Policy")).toBeNull();
     expect(js.headers.get("X-Robots-Tag")).toContain("noindex");
     expect(js.headers.get("Strict-Transport-Security")).toBeNull();
+  });
+
+  it("CSP: wss only over https, ws only on local http; reports to /api/csp-report", async () => {
+    expect(contentSecurityPolicy("c.example", [], true)).toContain(
+      "connect-src 'self' wss://c.example;",
+    );
+    expect(contentSecurityPolicy("c.example", [], true)).not.toContain("ws://");
+    expect(contentSecurityPolicy("localhost", [], false)).toContain(
+      "connect-src 'self' ws://localhost;",
+    );
+    expect(contentSecurityPolicy("c.example", [])).toContain("report-uri /api/csp-report");
+    const res = await api("/api/csp-report", {
+      method: "POST",
+      headers: { "Content-Type": "application/csp-report" },
+      body: JSON.stringify({
+        "csp-report": { "document-uri": "https://x/s/abcdefghijklmnopqrstuvwxyz" },
+      }),
+    });
+    expect(res.status).toBe(204);
+  });
+
+  it("share tokens never reach log lines", () => {
+    expect(redactTokens("GET https://x/s/AbC_123-xyz?person=1 and /api/share/Zz9_-q failed")).toBe(
+      "GET https://x/s/[token]?person=1 and /api/share/[token] failed",
+    );
   });
 
   it("production cookies are always Secure", async () => {

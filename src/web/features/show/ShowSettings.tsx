@@ -6,7 +6,7 @@ import type { MemberDTO, StorageResponse } from "../../../shared/api";
 import { formatBytes } from "../../../shared/attachments";
 import { isUnit, UNIT_LABELS, UNITS } from "../../../shared/units";
 import { IMPORT_LABEL } from "../../components/AirtableImport";
-import { api } from "../../lib/api";
+import { api, exportUrl } from "../../lib/api";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
 import { setUserUnit, useUserUnit } from "../views/units";
 import { SharingSection } from "./ShareSettings";
@@ -106,7 +106,35 @@ function SettingsBody({
       {/* Members and Sharing: ShareSettingsMembers.tsx / ShareSettings.tsx (M5b). */}
       <MembersSection members={members} onMembersChanged={onMembersChanged} />
       {ws.canEdit && <SharingSection />}
+      {ws.role === "owner" && <BackupSection />}
     </div>
+  );
+}
+
+/**
+ * Owner: download the whole show as JSON (`GET /api/shows/:id/export.json`). Show data
+ * lives in the show's Durable Object, which the weekly D1 backup doesn't cover
+ * (docs/deploy.md, "Backups"): keep one of these per active show every week.
+ */
+function BackupSection() {
+  const ws = useWorkspace();
+  return (
+    <section>
+      <h3>Backup</h3>
+      <p className="muted" style={{ fontSize: 12, margin: "0 0 8px" }}>
+        Everything in this show (data, members, file list) as one JSON file. Keep a copy weekly and
+        before big changes.
+      </p>
+      <a
+        className={styles.navButton}
+        href={exportUrl(ws.showId)}
+        download
+        data-testid="download-backup"
+        style={{ display: "inline-block", padding: "4px 10px" }}
+      >
+        Download backup
+      </a>
+    </section>
   );
 }
 

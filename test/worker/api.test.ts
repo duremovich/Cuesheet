@@ -197,10 +197,22 @@ describe("API", () => {
   it("invites: admin-only, one-time, and the new user is signed in", async () => {
     const admin = await loginAdmin();
     expect((await post("/api/invites", { email: "not-an-email" }, admin)).status).toBe(400);
-    expect((await post("/api/invites", { email: ADMIN.email }, admin)).status).toBe(409);
+    // Same answer whether or not the email has an account (no account oracle)…
+    const existing = await post("/api/invites", { email: ADMIN.email }, admin);
+    expect(existing.status).toBe(200);
+    const existingToken = ((await existing.json()) as CreateInviteResponse).path.split("/").at(-1);
+    // …and accepting it for an existing account is refused.
+    expect(
+      (
+        await post(`/api/invites/${existingToken}/accept`, {
+          name: "X",
+          password: "long-enough-pw",
+        })
+      ).status,
+    ).toBe(409);
 
     const created = await post("/api/invites", { email: "New.Person@Test.Local" }, admin);
-    expect(created.status).toBe(201);
+    expect(created.status).toBe(200);
     const invite = (await created.json()) as CreateInviteResponse;
     expect(invite.email).toBe("new.person@test.local");
     expect(invite.path).toMatch(/^\/invite\/[A-Za-z0-9_-]{40,}$/);

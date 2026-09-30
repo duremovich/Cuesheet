@@ -2,7 +2,10 @@ name: Deploy
 
 # Production deploy (decision 0005, docs/deploy.md): after CI passes on a push to main
 # (its one job runs `pnpm check` and the e2e suite), build with the production
-# environment, apply D1 migrations, deploy the Worker. Also runnable by hand.
+# environment (`CLOUDFLARE_ENV=production pnpm build`), apply D1 migrations, deploy the
+# Worker (`wrangler deploy`, which follows the build's .wrangler/deploy redirection to
+# dist/). Also runnable by hand, from main only. Runs in the GitHub `production`
+# environment: protect it (required reviewers / branch rule) in the repo settings.
 # Skips with a notice until the repository has the CLOUDFLARE_API_TOKEN and
 # CLOUDFLARE_ACCOUNT_ID secrets (and wrangler.jsonc a real D1 database id).
 
@@ -26,11 +29,12 @@ env:
 
 jobs:
   deploy:
-    # CI must have passed, for a push (not a pull request) to main.
+    # CI must have passed, for a push (not a pull request) to main; by hand only from main.
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
       (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push')
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment:

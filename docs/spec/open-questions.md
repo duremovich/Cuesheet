@@ -146,6 +146,9 @@ Things the first build had to decide; each is easy to change.
   evaluate the view's filters in the ShowDO (snapshot and live ops), which needs the
   filter evaluator on the server and re-checking rows as they change in and out of the
   filter.
+- **DO point-in-time recovery tooling.** Show data is only backed up by owners' weekly
+  "Download backup" and Durable Object PITR, which (as far as we know) needs an admin
+  route calling the Storage API. Build that route, and an import of `export.json`?
 - **One share cookie per show per browser.** Opening a second link of the same show in
   one browser replaces the first (its tab keeps working until it reloads). Rare enough?
 - **Compatibility date** is 2026-08-22, the newest the local test runtime

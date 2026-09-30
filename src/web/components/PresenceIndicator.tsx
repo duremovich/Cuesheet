@@ -64,13 +64,11 @@ export function PresenceIndicator({
       data-status={status}
       data-clients={clients}
       data-read-only={readOnly}
-      role="status"
-      aria-live="polite"
     >
       <span className={`${styles.dot} ${styles[status]}`} aria-hidden="true" />
       <span>{LABEL[status]}</span>
       {status === "connected" && !bare && users.length === 0 && (
-        <span className={styles.count} data-testid="presence-count">
+        <span className={styles.count} data-testid="presence-count" aria-live="polite">
           {countText}
         </span>
       )}
@@ -84,8 +82,15 @@ export function PresenceIndicator({
           aria-haspopup="true"
           aria-label={`${countText}: who's here`}
           onClick={() => setOpen((o) => !o)}
+          onKeyDown={(e) => {
+            // Focus stays on the button while the list is open: Escape closes it here.
+            if (e.key === "Escape" && open) {
+              e.stopPropagation();
+              setOpen(false);
+            }
+          }}
         >
-          <span className={styles.count} data-testid="presence-count">
+          <span className={styles.count} data-testid="presence-count" aria-live="polite">
             {countText}
           </span>
         </button>
@@ -95,12 +100,8 @@ export function PresenceIndicator({
           className={styles.list}
           data-testid="presence-list"
           aria-label="Who's here"
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              setOpen(false);
-              button.current?.focus();
-            }
-          }}
+          // biome-ignore lint/a11y/noRedundantRoles: list-style none drops the implicit role in Safari
+          role="list"
         >
           {users.map((u) => (
             <li key={u.id} data-read-only={u.readOnly || undefined}>

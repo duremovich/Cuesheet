@@ -524,3 +524,28 @@
     max-width: 40px;
   }
 }
+
+/* Cue numbers and priorities in the notes layouts never wrap, phones included. */
+.table [data-num] {
+  white-space: nowrap;
+}
+
+.personalLink {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+/* Phones: the live share view and every print table fit the width. */
+@media screen and (max-width: 600px) {
+  .table td,
+  .table th {
+    padding: 2px 4px;
+  }
+
+  /* A table too wide for the phone scrolls inside its own box; the page never does. */
+  .table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+}

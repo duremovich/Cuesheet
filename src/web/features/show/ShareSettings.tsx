@@ -4,11 +4,11 @@
 // optionally an expiry and a label; the link is shown once (the server keeps only its hash;
 // this browser remembers the ones it made so they can be copied again,
 // ShareSettingsTokens.ts); "Regenerate" gives a live link a new token. Revoking closes open
-// viewers at once. Also the owner's JSON export (backups).
+// viewers at once.
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { SHARE_PRESETS, type ShareLinkDTO, type SharePreset } from "../../../shared/share";
 import type { DataTableName } from "../../../shared/tables";
-import { api, exportUrl } from "../../lib/api";
+import { api } from "../../lib/api";
 import { useApiErrorHandler } from "../../lib/auth";
 import { useShowStore } from "../../lib/show-store";
 import styles from "./ShareSettings.module.css";
@@ -310,12 +310,6 @@ export function SharingSection() {
             );
           })}
         </ul>
-      )}
-      {ws.role === "owner" && (
-        <p className={styles.hint}>
-          Backup: <a href={exportUrl(ws.showId)}>download everything as JSON</a> (data, members,
-          file list).
-        </p>
       )}
     </section>
   );

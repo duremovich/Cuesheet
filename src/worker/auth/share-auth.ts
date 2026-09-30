@@ -4,7 +4,7 @@
 // without an import cycle.
 import { createMiddleware } from "hono/factory";
 import type { UserDTO } from "../../shared/api";
-import { type ShareKind, type ShareScope, shareScope } from "../../shared/share";
+import { parseShareOptions, type ShareKind, type ShareScope, shareScope } from "../../shared/share";
 import type { schema } from "../db/d1/client";
 import type { ShowEnv } from "../routes/shows";
 import type { AppEnv } from "../types";
@@ -93,7 +93,7 @@ export const requireAuthOrShare = createMiddleware<AppEnv>(async (c, next) => {
       if (!route.allowed) {
         if (!session) return c.json({ error: "Share links are read-only" }, 403);
       } else {
-        const scope = shareScope(link);
+        const scope = shareScope({ ...link, options: parseShareOptions(link.options) });
         c.set("share", scope);
         if (!session) {
           c.set("user", shareUser(scope));

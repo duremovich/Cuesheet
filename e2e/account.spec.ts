@@ -36,7 +36,7 @@ async function invitedUser(browser: Browser, admin: Page, showId?: string) {
   const res = await admin.request.post("/api/invites", {
     data: showId ? { email, showId, role: "editor" } : { email },
   });
-  expect(res.status()).toBe(201);
+  expect(res.status()).toBe(200);
   const token = ((await res.json()) as { path: string }).path.split("/").at(-1);
   const page = await newPage(browser);
   const accepted = await page.request.post(`/api/invites/${token}/accept`, {

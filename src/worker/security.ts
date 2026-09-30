@@ -24,7 +24,17 @@ export async function inlineScriptHashes(html: string): Promise<string[]> {
   return out;
 }
 
-export function contentSecurityPolicy(host: string, scriptHashes: readonly string[]): string {
+/** Where browsers send CSP violation reports (`POST /api/csp-report`, logged, 204). */
+export const CSP_REPORT_PATH = "/api/csp-report";
+
+/**
+ * `https`: sockets only over wss:// (production); plain http (local) allows ws:// only.
+ */
+export function contentSecurityPolicy(
+  host: string,
+  scriptHashes: readonly string[],
+  https = true,
+): string {
   return [
     "default-src 'self'",
     `script-src 'self' 'wasm-unsafe-eval' ${scriptHashes.join(" ")}`.trim(),
@@ -34,12 +44,14 @@ export function contentSecurityPolicy(host: string, scriptHashes: readonly strin
     "img-src 'self' data: blob:",
     "media-src 'self' blob:",
     "font-src 'self' data:",
-    `connect-src 'self' wss://${host} ws://${host}`,
+    `connect-src 'self' ${https ? "wss" : "ws"}://${host}`,
     "frame-src 'self' blob:",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
     "frame-ancestors 'none'",
+    `report-uri ${CSP_REPORT_PATH}`,
+    "report-to csp",
   ].join("; ");
 }
 
@@ -57,6 +69,27 @@ export function baseSecurityHeaders(headers: Headers, https: boolean): void {
 }
 
 let cached: { html: string; host: string; csp: string } | null = null;
+
+/**
+ * Secrets that travel in URLs (share tokens) must not reach logs: `/s/<token>` and
+ * `/api/share/<token>` become `[token]` in anything the Worker logs.
+ */
+export function redactTokens(text: string): string {
+  return text.replace(/(\/s\/|\/api\/share\/)[A-Za-z0-9_%-]+/g, "$1[token]");
+}
+
+/** `console.error` with share tokens redacted from every string argument. */
+export function logError(...args: unknown[]): void {
+  console.error(
+    ...args.map((a) =>
+      typeof a === "string"
+        ? redactTokens(a)
+        : a instanceof Error
+          ? redactTokens(`${a.name}: ${a.message}\n${a.stack ?? ""}`)
+          : a,
+    ),
+  );
+}
 
 /**
  * Serve a page from the assets binding with security headers. HTML gets the CSP (built
@@ -82,13 +115,14 @@ export async function serveAsset(
   const text = await res.text();
   let csp = cached?.html === text && cached.host === url.host ? cached.csp : null;
   if (csp === null) {
-    csp = contentSecurityPolicy(url.host, await inlineScriptHashes(text));
+    csp = contentSecurityPolicy(url.host, await inlineScriptHashes(text), https);
     cached = { html: text, host: url.host, csp };
   }
   const page = new Response(text, res);
   baseSecurityHeaders(page.headers, https);
   page.headers.set("X-Frame-Options", "DENY");
   page.headers.set("Content-Security-Policy", csp);
+  page.headers.set("Reporting-Endpoints", `csp="${CSP_REPORT_PATH}"`);
   page.headers.delete("Content-Length");
   return page;
 }

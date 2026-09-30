@@ -3,6 +3,7 @@
 // that table's rows, script text only for a calling-script link), refusals (mutate 403,
 // other routes 401, other shows), live ops filtered on its socket, revoke → 410 + sockets
 // closed, expiry, and rate limiting of bad tokens.
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { UploadUrlResponse } from "../../src/shared/api";
@@ -13,6 +14,7 @@ import type {
   ShareInfoResponse,
   ShareLinksResponse,
 } from "../../src/shared/share";
+import type { ServerMessage } from "../../src/shared/ws";
 import { api, collect, createShow, isType, loginAdmin, newUser, post, WS_HEADERS } from "./helpers";
 
 function mutate(showId: string, cookie: string, ops: Op[]) {
@@ -354,8 +356,235 @@ describe("share links", () => {
     const notes = (await (
       await api(`/api/shows/${showId}/snapshot`, { cookie: bp.cookie })
     ).json()) as SnapshotResponse;
-    expect(notes.tables.notes).toHaveLength(1);
+    // The note has no session: a Tech 2 link doesn't see it.
+    expect(notes.tables.notes).toEqual([]);
     expect(notes.tables.attachments).toEqual([]);
+  });
+
+  it("notes presets enforce their session and person, in the snapshot and live", async () => {
+    const { admin, showId, ids } = await setup();
+    const zoe = newId();
+    const abe = newId();
+    const n2 = newId();
+    const n3 = newId();
+    expect(
+      (
+        await mutate(showId, admin, [
+          { op: "create", table: "persons", id: zoe, fields: { name: "Zoe" } },
+          { op: "create", table: "persons", id: abe, fields: { name: "Abe" } },
+          { op: "update", table: "notes", id: ids.note, fields: { session: "Tech 1" } },
+          { op: "create", table: "notes", id: n2, fields: { body: "Abe's", session: "Tech 1" } },
+          {
+            op: "create",
+            table: "notes",
+            id: n3,
+            fields: { body: "Zoe later", session: "Tech 2" },
+          },
+          { op: "link", table: "notes", id: ids.note, field: "assignees", targetId: zoe },
+          { op: "link", table: "notes", id: n2, field: "assignees", targetId: abe },
+          { op: "link", table: "notes", id: n3, field: "assignees", targetId: zoe },
+        ])
+      ).status,
+    ).toBe(200);
+    const made = await createLink(showId, admin, {
+      kind: "print",
+      table: "notes",
+      preset: "by-person",
+      options: { session: "Tech 1", person: zoe },
+    });
+    expect(made.link.options).toEqual({ session: "Tech 1", person: zoe });
+    // Options only mean something for notes presets.
+    const cues = await createLink(showId, admin, {
+      kind: "view",
+      table: "cues",
+      options: { session: "x", person: zoe },
+    });
+    expect(cues.link.options).toEqual({});
+
+    const { cookie } = await openLink(made.path);
+    const snap = (await (
+      await api(`/api/shows/${showId}/snapshot`, { cookie })
+    ).json()) as SnapshotResponse;
+    expect(snap.tables.notes.map((n) => n.id)).toEqual([ids.note]);
+    expect(Object.keys(snap.joins.noteAssignees)).toEqual([ids.note]);
+
+    // Live: any change to notes makes the viewer refetch (its filter is re-applied).
+    const res = await api(`/api/shows/${showId}/ws`, { cookie, headers: WS_HEADERS });
+    const viewer = collect(res.webSocket as WebSocket);
+    await viewer.next(isType("hello"));
+    await viewer.next(isType("version"));
+    await mutate(showId, admin, [
+      { op: "update", table: "notes", id: n2, fields: { body: "Abe's, edited" } },
+    ]);
+    const msg = await viewer.next(
+      (m): m is ServerMessage => m.type === "ops" || m.type === "version",
+    );
+    expect(msg.type).toBe("version");
+    // Cue edits still arrive as ops.
+    await mutate(showId, admin, [
+      { op: "update", table: "cues", id: ids.cue, fields: { description: "x" } },
+    ]);
+    expect((await viewer.next(isType("ops"))).ops).toHaveLength(1);
+    viewer.ws.close();
+  });
+
+  it("never sends people's contact details or user ids to a share viewer", async () => {
+    const { admin, showId, ids } = await setup();
+    const person = newId();
+    expect(
+      (
+        await mutate(showId, admin, [
+          {
+            op: "create",
+            table: "persons",
+            id: person,
+            fields: { name: "Sue", role: "SM", email: "sue@secret.test", phone: "555-0100" },
+          },
+          { op: "link", table: "cues", id: ids.cue, field: "assignees", targetId: person },
+        ])
+      ).status,
+    ).toBe(200);
+    const { path } = await createLink(showId, admin, { kind: "view", table: "cues" });
+    const { cookie } = await openLink(path);
+    const text = await (await api(`/api/shows/${showId}/snapshot`, { cookie })).text();
+    expect(text).not.toContain("secret.test");
+    expect(text).not.toContain("555-0100");
+    const me = (
+      (await (await api("/api/me", { cookie: admin })).json()) as { user: { id: string } }
+    ).user.id;
+    expect(text).not.toContain(me);
+    const snap = JSON.parse(text) as SnapshotResponse;
+    expect(snap.tables.persons[0]).toMatchObject({
+      id: person,
+      name: "Sue",
+      role: "SM",
+      email: null,
+    });
+
+    const res = await api(`/api/shows/${showId}/ws`, { cookie, headers: WS_HEADERS });
+    const viewer = collect(res.webSocket as WebSocket);
+    await viewer.next(isType("hello"));
+    await mutate(showId, admin, [
+      {
+        op: "update",
+        table: "persons",
+        id: person,
+        fields: { email: "new@secret.test", role: "ASM" },
+      },
+      { op: "update", table: "cues", id: ids.cue, fields: { description: "y" } },
+    ]);
+    const ops = await viewer.next(isType("ops"));
+    const sent = JSON.stringify(ops);
+    expect(sent).not.toContain("secret.test");
+    expect(sent).not.toContain(me);
+    expect(sent).toContain("ASM");
+    viewer.ws.close();
+  });
+
+  it("a member can't forge the share header: a normal member socket, closed on logout-all", async () => {
+    const { admin, showId } = await setup();
+    const user = await newUser(admin, "Forger");
+    await post(`/api/shows/${showId}/members`, { email: user.email, role: "editor" }, admin);
+    const forged = JSON.stringify({
+      linkId: "x",
+      showId,
+      tables: ["notes"],
+      attachmentTables: [],
+      viewId: null,
+      viewTable: null,
+      fullPersons: true,
+      notes: null,
+      expiresAt: null,
+    });
+    const res = await api(`/api/shows/${showId}/ws`, {
+      cookie: user.cookie,
+      headers: {
+        ...WS_HEADERS,
+        "X-Cuesheet-Share": forged,
+        "X-Cuesheet-User": "someone-else",
+        "X-Cuesheet-Role": "owner",
+      },
+    });
+    expect(res.status).toBe(101);
+    const s = collect(res.webSocket as WebSocket);
+    const hello = await s.next(isType("hello"));
+    // A member's hello names who's here (share sockets never get names) — as themselves.
+    expect(hello.users?.map((u) => u.id)).toContain(user.id);
+    expect(hello.users?.map((u) => u.id)).not.toContain("someone-else");
+    expect((await post("/api/auth/logout-all", {}, user.cookie)).status).toBe(200);
+    expect(await s.closedWith()).toBe(4003);
+  });
+
+  it("the DO refuses X-Cuesheet-* headers without the Worker's marker", async () => {
+    const stub = env.SHOW.get(env.SHOW.idFromName("forged-headers"));
+    await stub.sync("forged-headers", "Forged");
+    const res = await stub.fetch("http://do/ws", {
+      headers: { Upgrade: "websocket", "X-Cuesheet-User": "u" },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("closes a share link's sockets when it expires (alarm), and on the next broadcast", async () => {
+    const { admin, showId, ids } = await setup();
+    const stub = env.SHOW.get(env.SHOW.idFromName(showId));
+    const open = async (ms: number) => {
+      const { path } = await createLink(showId, admin, {
+        kind: "view",
+        table: "cues",
+        expiresAt: Date.now() + ms,
+      });
+      const { cookie } = await openLink(path);
+      const res = await api(`/api/shows/${showId}/ws`, { cookie, headers: WS_HEADERS });
+      expect(res.status).toBe(101);
+      const s = collect(res.webSocket as WebSocket);
+      await s.next(isType("hello"));
+      return s;
+    };
+    const a = await open(1200);
+    const b = await open(1300);
+    // The alarm is set for the earliest expiry.
+    const alarm = await runInDurableObject(stub, (_i, state) => state.storage.getAlarm());
+    expect(alarm).toBeGreaterThan(Date.now());
+    await new Promise((r) => setTimeout(r, 1400));
+    // Expired: the alarm closes them (miniflare may already have run it on time).
+    await runDurableObjectAlarm(stub);
+    expect(await a.closedWith()).toBe(4003);
+    expect(await b.closedWith()).toBe(4003);
+    // …and so would the next broadcast.
+    const c = await open(800);
+    await new Promise((r) => setTimeout(r, 900));
+    await mutate(showId, admin, [
+      { op: "update", table: "cues", id: ids.cue, fields: { description: "late" } },
+    ]);
+    await c.next(isType("revoked"));
+    expect(await c.closedWith()).toBe(4003);
+  });
+
+  it("attachment deletes reach share viewers only for their table's files", async () => {
+    const { admin, showId, contentFile, noteFile } = await setup();
+    const { path } = await createLink(showId, admin, { kind: "view", table: "content" });
+    const { cookie } = await openLink(path);
+    const res = await api(`/api/shows/${showId}/ws`, { cookie, headers: WS_HEADERS });
+    const viewer = collect(res.webSocket as WebSocket);
+    await viewer.next(isType("hello"));
+    await mutate(showId, admin, [{ op: "delete", table: "attachments", id: noteFile }]);
+    expect((await viewer.next(isType("ops"))).ops).toEqual([]);
+    await mutate(showId, admin, [{ op: "delete", table: "attachments", id: contentFile }]);
+    expect((await viewer.next(isType("ops"))).ops).toEqual([
+      expect.objectContaining({ op: "delete", table: "attachments", id: contentFile }),
+    ]);
+    viewer.ws.close();
+  });
+
+  it("a revoked link counts against the IP once an hour, however often it's reopened", async () => {
+    const { admin, showId } = await setup();
+    const { link, path } = await createLink(showId, admin, { kind: "view", table: "cues" });
+    await api(`/api/shows/${showId}/share-links/${link.id}`, { method: "DELETE", cookie: admin });
+    const token = path.split("/").at(-1) as string;
+    const ip = { "CF-Connecting-IP": "203.0.113.90" };
+    for (let i = 0; i < 15; i++) {
+      expect((await api(`/api/share/${token}`, { headers: ip })).status).toBe(410);
+    }
   });
 
   it("rate-limits bad tokens per IP (429 + Retry-After)", async () => {

@@ -20,7 +20,14 @@ import { randomToken, sha256Hex } from "../auth/bytes";
 import { clearSessionCookie, readSessionToken, serializeSessionCookie } from "../auth/cookie";
 import { requireAdmin, requireAuth } from "../auth/middleware";
 import { hashPassword, needsRehash, verifyPassword } from "../auth/password";
-import { clearKey, clientIp, recordFailure, retryAfter, tooMany } from "../auth/rate-limit";
+import {
+  clearKey,
+  clientIp,
+  loginLimits,
+  recordFailure,
+  retryAfter,
+  tooMany,
+} from "../auth/rate-limit";
 import {
   createSession,
   deleteSession,
@@ -78,8 +85,8 @@ export const authRoutes = new Hono<AppEnv>()
     if (!email || !password) return c.json({ error: "Email and password are required" }, 400);
 
     const now = Date.now();
-    const emailKey = `login:email:${email}`;
-    const keys = [emailKey, `login:ip:${clientIp(c)}`];
+    const keys = loginLimits(email, clientIp(c));
+    const emailIpKey = keys[0] as string;
     const wait = await retryAfter(c.env.DB, keys, now);
     if (wait > 0) return tooMany(c, wait);
 
@@ -99,7 +106,7 @@ export const authRoutes = new Hono<AppEnv>()
       return c.json({ error: WRONG_LOGIN }, 401);
     }
     // A typo or two before getting it right shouldn't count against the account later.
-    await clearKey(c.env.DB, emailKey);
+    await clearKey(c.env.DB, emailIpKey);
     if (needsRehash(user.passwordHash)) {
       // Upgrade to the current hashing parameters while we have the plaintext.
       await c.var.db
@@ -242,7 +249,13 @@ export const authRoutes = new Hono<AppEnv>()
     }
     await deleteUserSessions(c.var.db, user.id);
     await disconnectUser(c.env, c.var.db, user.id);
-    await clearKey(c.env.DB, `login:email:${user.email}`);
+    // (No LIKE: D1 caps LIKE patterns at 50 bytes, shorter than a long email's key.)
+    const prefix = `login:emailip:${user.email}|`;
+    await c.env.DB.prepare(
+      "DELETE FROM rate_limit_events WHERE key = ?1 OR substr(key, 1, ?2) = ?3",
+    )
+      .bind(`login:email:${user.email}`, prefix.length, prefix)
+      .run();
     const token = await createSession(c.var.db, user.id);
     c.header("Set-Cookie", serializeSessionCookie(token, { secure: isHttps(c) }));
     return c.json({ user: toUserDTO(user) } satisfies MeResponse);

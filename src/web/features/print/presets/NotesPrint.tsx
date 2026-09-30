@@ -68,6 +68,8 @@ function useParamState(name: string): [string | null, (v: string | null) => void
 export function NotesPrint({ preset }: { preset: NotesPreset }) {
   const ws = useWorkspace();
   const share = useShareMode();
+  // A share link that fixes the session / person (enforced by the server) hides its picker.
+  const fixed = share?.options ?? {};
   const state = useShowStore(selectState);
   const [orientation, setOrientation] = useOrientation("portrait");
   const [session, setSession] = useParamState("session");
@@ -119,39 +121,45 @@ export function NotesPrint({ preset }: { preset: NotesPreset }) {
       }
       controls={
         <>
-          <label className={styles.control}>
-            Session{" "}
-            <select
-              aria-label="Session"
-              value={session ?? ""}
-              onChange={(e) => setSession(e.target.value || null)}
-            >
-              <option value="">All sessions</option>
-              {sessions.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-              {session && !sessions.includes(session) && <option value={session}>{session}</option>}
-            </select>
-          </label>
+          {!fixed.session && (
+            <label className={styles.control}>
+              Session{" "}
+              <select
+                aria-label="Session"
+                value={session ?? ""}
+                onChange={(e) => setSession(e.target.value || null)}
+              >
+                <option value="">All sessions</option>
+                {sessions.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+                {session && !sessions.includes(session) && (
+                  <option value={session}>{session}</option>
+                )}
+              </select>
+            </label>
+          )}
           {preset === "by-person" && (
             <>
-              <label className={styles.control}>
-                Person{" "}
-                <select
-                  aria-label="Person"
-                  value={person ?? ""}
-                  onChange={(e) => setPerson(e.target.value || null)}
-                >
-                  <option value="">Everyone</option>
-                  {allPeople.map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {g.title}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              {!fixed.person && (
+                <label className={styles.control}>
+                  Person{" "}
+                  <select
+                    aria-label="Person"
+                    value={person ?? ""}
+                    onChange={(e) => setPerson(e.target.value || null)}
+                  >
+                    <option value="">Everyone</option>
+                    {allPeople.map((g) => (
+                      <option key={g.id} value={g.id}>
+                        {g.title}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <label className={styles.control}>
                 <input
                   type="checkbox"
@@ -225,7 +233,7 @@ export function NotesPrint({ preset }: { preset: NotesPreset }) {
                 {columns.map((c) => (
                   <td
                     key={c.key}
-                    data-nowrap={c.key === "cue" || c.key === "priority" || undefined}
+                    data-num={c.key === "cue" || c.key === "priority" || undefined}
                     className={c.key === "body" ? styles.noteBody : undefined}
                   >
                     {c.cell(r)}
@@ -258,42 +266,58 @@ function Distribute({
   onClose: () => void;
 }) {
   const ws = useWorkspace();
-  const isOwner = ws.canEdit; // editors and the owner manage share links
+  const canShare = ws.canEdit; // editors and the owner manage share links
   const [links, setLinks] = useState<ShareLinkDTO[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [known, setKnown] = useState(() => rememberedLinks(ws.showId));
   useEffect(() => {
-    if (!isOwner) return;
+    if (!canShare) return;
     api
       .shareLinks(ws.showId)
       .then((r) => setLinks(r.links))
       .catch(() => setLinks([]));
-  }, [isOwner, ws.showId]);
-  const known = rememberedLinks(ws.showId);
-  const link = (links ?? []).find(
-    (l) =>
-      l.preset === "by-person" &&
-      l.revokedAt === null &&
-      (l.expiresAt === null || l.expiresAt > Date.now()) &&
-      (l.options.session ?? null) === session &&
-      known[l.id],
-  );
-  const path = link ? known[link.id] : undefined;
+  }, [canShare, ws.showId]);
+  const people = groups.filter((g) => g.person);
+  /** This person's live link for this session (session + person enforced by the server). */
+  const pathFor = (personId: string): string | undefined => {
+    const link = (links ?? []).find(
+      (l) =>
+        l.preset === "by-person" &&
+        l.revokedAt === null &&
+        (l.expiresAt === null || l.expiresAt > Date.now()) &&
+        (l.options.session ?? null) === session &&
+        l.options.person === personId &&
+        known[l.id],
+    );
+    return link ? known[link.id] : undefined;
+  };
+  const missing = people.filter((g) => !pathFor(g.id));
   const subject = `${ws.showName} notes${session ? ` – ${session}` : ""}`;
 
-  const create = async () => {
+  // One link per recipient: each sees only their own notes for this session.
+  const createAll = async () => {
     setError(null);
+    setBusy(true);
     try {
-      const made = await api.createShareLink(ws.showId, {
-        kind: "print",
-        table: "notes",
-        preset: "by-person",
-        options: session ? { session } : {},
-        label: subject,
-      });
-      rememberLink(ws.showId, made.link.id, made.path);
-      setLinks((l) => [made.link, ...(l ?? [])]);
+      const made: ShareLinkDTO[] = [];
+      for (const g of missing) {
+        const r = await api.createShareLink(ws.showId, {
+          kind: "print",
+          table: "notes",
+          preset: "by-person",
+          options: session ? { session, person: g.id } : { person: g.id },
+          label: `${g.title} – ${subject}`,
+        });
+        rememberLink(ws.showId, r.link.id, r.path);
+        made.push(r.link);
+      }
+      setKnown(rememberedLinks(ws.showId));
+      setLinks((l) => [...made, ...(l ?? [])]);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -310,51 +334,51 @@ function Distribute({
         </button>
       </div>
       <p className="muted">
-        {path ? (
+        {canShare ? (
           <>
-            Emails include each person's printable list:{" "}
-            <code data-testid="distribute-share-link">{shareUrl(path)}</code>
-          </>
-        ) : isOwner ? (
-          <>
-            Emails carry the notes as text.{" "}
-            <button
-              type="button"
-              onClick={() => void create()}
-              data-testid="distribute-create-link"
-            >
-              Create a share link
-            </button>{" "}
-            to add a printable list for each person.
+            Each email can carry a personal read-only link: each recipient sees only their notes
+            {session ? ` for ${session}` : ""}.{" "}
+            {missing.length > 0 && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void createAll()}
+                data-testid="distribute-create-link"
+              >
+                Create {missing.length === 1 ? "a link" : `${missing.length} links`}
+              </button>
+            )}
           </>
         ) : (
-          "Emails carry the notes as text (an editor can add a share link)."
+          "Emails carry the notes as text (an editor can add personal links)."
         )}
       </p>
       {error && <p className="error">{error}</p>}
       <ul className={styles.distributeList}>
-        {groups
-          .filter((g) => g.person)
-          .map((g) => {
-            const personal = path ? `${shareUrl(path)}?person=${encodeURIComponent(g.id)}` : null;
-            const body = notesEmailBody(g, { show: ws.showName, session, link: personal });
-            return (
-              <li key={g.id} data-testid="distribute-person">
-                <span>
-                  {g.title}{" "}
-                  <span className="muted">
-                    ({g.rows.filter((r) => isOpen(r.note)).length} open)
-                  </span>
-                </span>
-                <a href={mailtoHref(g.person?.email ?? null, subject, body)}>
-                  Email{g.person?.email ? "" : " (no address)"}
-                </a>
-                <Link to={notesPrintUrl(ws.showId, "by-person", { session, person: g.id })}>
-                  Print only theirs
-                </Link>
-              </li>
-            );
-          })}
+        {people.map((g) => {
+          const path = pathFor(g.id);
+          const personal = path ? shareUrl(path) : null;
+          const body = notesEmailBody(g, { show: ws.showName, session, link: personal });
+          return (
+            <li key={g.id} data-testid="distribute-person">
+              <span>
+                {g.title}{" "}
+                <span className="muted">({g.rows.filter((r) => isOpen(r.note)).length} open)</span>
+              </span>
+              <a href={mailtoHref(g.person?.email ?? null, subject, body)}>
+                Email{g.person?.email ? "" : " (no address)"}
+              </a>
+              {personal && (
+                <code className={styles.personalLink} data-testid="distribute-share-link">
+                  {personal}
+                </code>
+              )}
+              <Link to={notesPrintUrl(ws.showId, "by-person", { session, person: g.id })}>
+                Print only theirs
+              </Link>
+            </li>
+          );
+        })}
       </ul>
     </section>
   );

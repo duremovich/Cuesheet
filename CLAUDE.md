@@ -96,7 +96,9 @@ Before finishing any task: `pnpm check && pnpm e2e`.
 - **DO code.** `src/worker/do/ShowDO.ts`. Expose operations as RPC methods on the class
   (the Worker calls `env.SHOW.get(env.SHOW.idFromName(showId)).method()`); only WebSockets
   go through `fetch`. The Worker checks auth + membership before calling the DO; the DO
-  trusts its caller. Use the Hibernation API (`ctx.acceptWebSocket`, `webSocketMessage`,
+  trusts its caller. **Never forward client headers to the DO**: the socket route builds a
+  fresh `Headers` (identity in `X-Cuesheet-*` plus the `X-Cuesheet-Internal` marker), and
+  `ShowDO.fetch` refuses `X-Cuesheet-*` headers without the marker. Use the Hibernation API (`ctx.acceptWebSocket`, `webSocketMessage`,
   `webSocketClose`); don't keep per-socket state in memory, use
   `serializeAttachment`. New DO classes need a `migrations` entry in `wrangler.jsonc`
   (`new_sqlite_classes`) and an export from `src/worker/index.ts`.
@@ -287,7 +289,8 @@ for a second trace, but `failOnFlakyTests` still fails the run.
   .send("Emulation.setCPUThrottlingRate", {rate: 6})`. Fix the app when the race is in
   the app.
 - **Rate limits are shared.** Failed logins and bad invite/reset/share tokens count toward
-  per-IP limits (10 a minute), and every test's IP is the same locally. Keep deliberate
+  per-IP limits (sign-in: 50 an hour per IP; tokens: 10 a minute), and every test's IP is
+  the same locally. Keep deliberate
   failures to one or two per test; a test that needs more (or a worker test) sends its own
   `CF-Connecting-IP` header. Never fail logins for the shared admin's email.
 - **Parallel runs.** Each run wipes and uses `.wrangler/e2e-state-<port>`. Another run
@@ -1071,9 +1074,9 @@ views" below).
   each of its cues, "No cue" last); `session` absent = all sessions (pure logic in
   `presets/notes.ts`). **Distribute notes** (by person): per assignee a `mailto:` (their
   People email; subject "<show> notes – <session>"; the notes as text, capped at 1,500
-  characters; plus `<share link>?person=<id>` when this browser knows a live by-person
-  share link for that session, else the owner can create one there) and "Print only
-  theirs". **Content list** (`content?preset=content`: small thumbnail, name, current
+  characters; plus that person's own share link (`options: {session, person}`, enforced
+  by the server) when this browser knows one; editors create the missing ones there, one
+  per recipient) and "Print only theirs". Numbers (cue, P) never wrap (`data-num`). **Content list** (`content?preset=content`: small thumbnail, name, current
   version, status, scene, cues, surfaces; by scene) and **Surface sheet**
   (`surfaces?preset=surfaces`: a card per surface with its image, size in m and ft-in,
   pixels, PPI, aspect, regions). ⌘K: "Print notes by person/cue (<current session>)",
@@ -1092,7 +1095,8 @@ views" below).
   live table; `print`: a print layout), `table`, `view_id` (a *shared* view of that table;
   a view link without one is given the table's shared default at creation), `preset`
   (`SHARE_PRESETS` in `src/shared/share.ts`: calling-script, cuesheet, by-person, by-cue,
-  content, surfaces), `options` JSON (`{session, orient}`), `label`, `created_by`,
+  content, surfaces), `options` JSON (`{session, person, orient}`; session/person only for
+  notes presets, **enforced by the server**), `label`, `created_by`,
   `created_at`, `expires_at`, `revoked_at`, `last_used_at`. Editors and the owner:
   `GET/POST /api/shows/:id/share-links`, `DELETE …/:linkId` (revoke: sets `revoked_at`,
   `ShowDO.disconnectShare(linkId)` sends `revoked` and closes its sockets with 4003),
@@ -1120,10 +1124,19 @@ views" below).
   notes), `views` (only the one view), `attachments` (only on the table's rows); presets
   have their own table lists (`PRESET_TABLES`). `snapshotForShare(scope)` empties every
   other table (unknown/new tables too), drops joins between tables out of scope and their
-  select options. A share socket (`X-Cuesheet-Share` header with the scope; tagged
-  `share:<linkId>`, attachment `share`) gets each batch through `filterOps` (no personal
-  views; out-of-scope ops dropped; possibly an empty `ops` message so versions stay
-  gap-free). **Adding a table:** decide whether share links of which tables may see it
+  select options. **Rows are scrubbed** (`scrubRow`): no user ids (`created_by`,
+  `updated_by`, `completed_by` → ""/null), people as `{id, name, role}` everywhere except a
+  People link (which keeps group and custom fields), and never `email`, `phone`,
+  `organization`, `user_id`. **Notes presets** (`scope.notes`) see only notes of their
+  session and, with `options.person`, assigned to that person (joins cut to match). A
+  share socket (`X-Cuesheet-Share` header with the scope; tagged `share:<linkId>`,
+  attachment `share`) gets each batch through `filterOps` (no personal views; out-of-scope
+  ops dropped; fields scrubbed; attachment deletes only for its table's files, found via
+  `pending_r2_deletes.row`; possibly an empty `ops` message so versions stay gap-free). A
+  batch touching notes or people sends a notes preset's sockets `{type:"version"}`
+  instead, so they refetch their filtered snapshot. **Expiry**: `scope.expiresAt`; expired
+  share sockets are closed before every broadcast and by the DO alarm (one alarm shared
+  with the R2 purge, set for the earliest expiry when a share socket opens). **Adding a table:** decide whether share links of which tables may see it
   (`RELATED` / `PRESET_TABLES`); by default they don't.
 - **The page** renders the target on a normal `ShowStoreProvider` (the share cookie makes
   the snapshot/socket/file URLs work unchanged), with a viewer `Workspace` and
@@ -1131,24 +1144,32 @@ views" below).
   print mode (`PrintTable`) keeping the viewer's theme, with "Live", the theme toggle and a
   read-only row expand (`share-open-row` → `share-row-details`); a `print` link is the
   layout (light). No Back link, tabs, panels or presence names. The target's URL
-  parameters (`view`, `layout`, `preset`, `session`) are put in the URL first; the
-  viewer's own (e.g. `?person=` from a "Distribute notes" email) are kept. When the socket
+  parameters (`view`, `layout`, `preset`, `session`, `person`) are put in the URL (the
+  link's values win); the session/person pickers hide when the link fixes them. At
+  ≤ 600 px wide tables scroll in their own box and drop fixed column widths, so the page
+  never scrolls sideways. When the socket
   is refused/revoked the page re-resolves and shows the 404/410 page (`share-gone`).
 - **Show settings → Sharing** (`show/ShareSettings.tsx`, editors and owner): pick a shared
   view (live or "as a print layout") or a print layout, session (notes presets), expiry,
   label → the link once (`share-scope-note` states what it shows); Regenerate / Revoke
   per link. This browser remembers the links it made (`ShareSettingsTokens.ts`,
   `cuesheet.shareLinks.<showId>`) to copy again and for "Distribute notes"; revoking
-  forgets it. Also the owner's JSON export link.
+  forgets it. The owner's **Download backup** is its own section (Show settings → Backup).
+- **Distribute notes** mints one by-person link per recipient (`options: {session,
+  person}`), so each email's link shows only that person's notes for that session.
+- **Resolve failures** count against the IP; a revoked/expired link at most once per link
+  per hour (`recordFailureOnce`), so its old viewers reopening it don't lock their office out.
 
 ## Account security (M5b, R24)
 
 - **Rate limiting** (`auth/rate-limit.ts`): a sliding-window log in D1
   `rate_limit_events(key, at)`; **failures only** are counted (wrong password, unknown
-  email, bad invite / reset / share token), 10 a minute and 50 an hour per key
-  (`DEFAULT_WINDOWS`). Keys: `login:email:<email>` and `login:ip:<ip>` (both checked before
-  the password; a success clears the email key), `invite:ip:`, `reset:ip:`, `share:ip:`,
-  `password:user:<id>`. Over a limit: 429 + `Retry-After` (seconds until the window has
+  email, bad invite / reset / share token). A `Limit` is a key with its windows (a bare
+  key: `DEFAULT_WINDOWS`, 10 a minute and 50 an hour). Sign-in (`loginLimits`):
+  `login:emailip:<email>|<ip>` 10/min + 50/h (so nobody can lock an account out from
+  elsewhere), `login:email:<email>` 100/h, `login:ip:<ip>` 50/h; a success clears the
+  email+IP key, a reset clears the email's keys (no LIKE: D1 caps LIKE patterns at 50
+  bytes). Others: `invite:ip:`, `reset:ip:`, `share:ip:`, `password:user:<id>`. Over a limit: 429 + `Retry-After` (seconds until the window has
   room) and a message that says nothing about the account. The IP is
   `CF-Connecting-IP` ("unknown" locally, so tests set it). Every function takes `now`, so
   tests move time by passing it (or by aging rows).
@@ -1166,8 +1187,11 @@ views" below).
   out everywhere, signs in, clears the login lock). Page: `pages/ResetPasswordPage.tsx`;
   the form is on the Shows page for admins.
 - **Invites** carry an optional `show_id` + `role` (`POST /api/invites {email, showId?,
-  role?}`: admins anyone; a show's owner only to their show). Accepting joins that show;
-  `GET /api/invites/:token` returns `showName`/`role` for the page.
+  role?}`: admins anyone; a show's owner only to their show). It answers the same **200**
+  whether or not the email has an account (no account oracle; accepting one for an
+  existing account is refused). Accepting joins that show; `GET /api/invites/:token`
+  returns `showName`/`role` for the page. Transferring a show ends the old owner's open
+  invites into it.
 - **Secure cookies**: `isHttps(c)` is also true whenever `ENVIRONMENT` is "production".
 
 ## Deploy and security headers (M5b; docs/deploy.md)
@@ -1185,17 +1209,27 @@ views" below).
   (`assets.run_worker_first: ["/*", "!/assets/*"]`, binding `ASSETS`), which adds a CSP
   built from the page's inline scripts (sha256 of index.html's theme script; `'self'`,
   `'wasm-unsafe-eval'`, `worker-src 'self' blob:` for pdf.js, `img-src/media-src 'self'
-  data: blob:`, `connect-src 'self' ws(s)://host`, `frame-ancestors 'none'`), plus
+  data: blob:`, `connect-src 'self' wss://host` (`ws://` only on local http),
+  `frame-ancestors 'none'`, `report-uri /api/csp-report` + `report-to` →
+  `POST /api/csp-report` logs and answers 204), plus
   `X-Frame-Options`, HSTS (https), `Referrer-Policy`, `Permissions-Policy`, `nosniff`,
   `X-Robots-Tag: noindex` (API responses get all but the CSP; `public/robots.txt`
   disallows all). The CSP is off under `vite dev` only (`import.meta.env.DEV`), so **the
   e2e build runs with it**: a new inline script, eval, or a third-party origin will show up
   as a failing test (`e2e/security.spec.ts` collects `securitypolicyviolation` events).
   pdf.js runs under it (its worker is a same-origin chunk).
+- **Logs**: log through `logError` / `redactTokens` (`security.ts`): share tokens in
+  `/s/<token>` and `/api/share/<token>` become `[token]`. Production has invocation logs
+  off (they record URLs) and a 0.1 head sampling rate.
+- **wrangler commands** other than `wrangler deploy` take `--config wrangler.jsonc`: a build
+  writes `.wrangler/deploy/config.json`, redirecting wrangler to `dist/`.
 - `GET /api/health` → `{ok, d1, do}` (a `SELECT 1` and `ping()` on a fixed `__health__`
   ShowDO); 503 when either fails. `GET /api/shows/:id/export.json` (owner): the whole
   show as JSON (`routes/backup.ts`); the `scheduled` handler dumps D1 to R2 weekly
-  (`backupD1`, 13 kept) and prunes sessions/invites/rate-limit rows.
+  (`backupD1`, `_backups/d1/`, 13 kept; they hold password and token hashes) and prunes
+  sessions/invites/rate-limit rows. **Show data is in the DOs, not D1**: the weekly dump
+  doesn't cover it; owners download `export.json` (Show settings → Backup) and DO
+  point-in-time recovery is the other net (docs/deploy.md).
 
 ## Theme and colors
 

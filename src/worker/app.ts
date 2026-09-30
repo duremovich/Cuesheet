@@ -9,7 +9,7 @@ import { authRoutes } from "./routes/auth";
 import { inviteRoutes } from "./routes/invites";
 import { shareRoutes } from "./routes/share";
 import { showRoutes } from "./routes/shows";
-import { baseSecurityHeaders } from "./security";
+import { baseSecurityHeaders, logError, redactTokens } from "./security";
 import type { AppEnv } from "./types";
 
 export const app = new Hono<AppEnv>().basePath("/api");
@@ -35,17 +35,30 @@ app.get("/health", async (c) => {
     await c.env.DB.prepare("SELECT 1").first();
     checks.d1 = true;
   } catch (e) {
-    console.error("health: D1", e);
+    logError("health: D1", e);
   }
   try {
     await c.env.SHOW.get(c.env.SHOW.idFromName("__health__")).ping();
     checks.do = true;
   } catch (e) {
-    console.error("health: DO", e);
+    logError("health: DO", e);
   }
   const ok = checks.d1 && checks.do;
   c.header("Cache-Control", "no-store");
   return c.json({ ok, ...checks }, ok ? 200 : 503);
+});
+
+/**
+ * CSP violation reports (report-uri / report-to): logged, token-redacted, 204. Before the
+ * CSRF check: browsers send them cross-context with their own content types.
+ */
+app.post("/csp-report", async (c) => {
+  const len = Number(c.req.header("Content-Length") ?? "0");
+  if (len > 0 && len <= 16 * 1024) {
+    const body = await c.req.text().catch(() => "");
+    console.warn("csp-report", redactTokens(body.slice(0, 16 * 1024)));
+  }
+  return c.body(null, 204);
 });
 
 // Reject cross-origin form posts (SameSite=Lax already blocks most CSRF; this is belt and braces).
@@ -66,6 +79,6 @@ app.onError((err, c) => {
   if (err instanceof HTTPException) {
     return c.json({ error: err.message || "Request rejected" }, err.status);
   }
-  console.error(err);
+  logError(`${c.req.method} ${new URL(c.req.url).pathname}`, err);
   return c.json({ error: "Internal error" }, 500);
 });

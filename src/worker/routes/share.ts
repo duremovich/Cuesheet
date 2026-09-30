@@ -9,10 +9,11 @@
 // `Path=/api/shows/<showId>`. The show's own GET routes the page needs (show info,
 // snapshot, WebSocket, attachment files, script text) then admit that cookie as a *share
 // principal* (`requireAuthOrShare`, before `requireMembership`), with role viewer and
-// `c.var.share` = the link's scope; every other route answers 401 for it (and 404 for
-// another show). The snapshot and the socket's ops are cut down to the scope in the DO
-// (src/worker/share-filter.ts); attachment files only for rows of the link's table.
-// Revoking closes the link's sockets; its page then shows "revoked" (410).
+// `c.var.share` = the link's scope; every other route of that show answers 403 ("read-only")
+// and other shows 401. The snapshot and the socket's ops are cut down to the scope in the
+// DO (src/worker/share-filter.ts: people as name + role, no user ids; notes presets only
+// their session / person); attachment files only for rows of the link's table. Revoking
+// or expiry closes the link's sockets; its page then shows "revoked or expired" (410).
 import { and, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
@@ -20,6 +21,7 @@ import {
   type CreateShareLinkResponse,
   isSharePreset,
   MAX_SHARE_LABEL,
+  parseShareOptions,
   type ShareInfoResponse,
   type ShareKind,
   type ShareLinkDTO,
@@ -29,26 +31,19 @@ import {
 } from "../../shared/share";
 import { DATA_TABLES, type DataTableName } from "../../shared/tables";
 import { randomToken, sha256Hex } from "../auth/bytes";
-import { clientIp, recordFailure, retryAfter, tooMany } from "../auth/rate-limit";
+import {
+  clientIp,
+  recordFailure,
+  recordFailureOnce,
+  retryAfter,
+  tooMany,
+} from "../auth/rate-limit";
 import { isLive, type LinkRow, linkByToken, SHARE_COOKIE } from "../auth/share-auth";
 import { schema } from "../db/d1/client";
 import { requireMembership, type ShowEnv, showStub } from "./shows";
 import { isHttps, readJsonObject, str } from "./util";
 
 const SHARE_COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
-
-function parseOptions(json: string | null): ShareOptions {
-  if (!json) return {};
-  try {
-    const o = JSON.parse(json) as Record<string, unknown>;
-    const out: ShareOptions = {};
-    if (typeof o.session === "string") out.session = o.session;
-    if (o.orient === "landscape" || o.orient === "portrait") out.orient = o.orient;
-    return out;
-  } catch {
-    return {};
-  }
-}
 
 function toDTO(l: LinkRow): ShareLinkDTO {
   return {
@@ -57,7 +52,7 @@ function toDTO(l: LinkRow): ShareLinkDTO {
     table: l.table as DataTableName,
     viewId: l.viewId,
     preset: isSharePreset(l.preset) ? l.preset : null,
-    options: parseOptions(l.options),
+    options: parseShareOptions(l.options),
     label: l.label,
     createdBy: l.createdBy,
     createdAt: l.createdAt,
@@ -113,7 +108,8 @@ export const shareRoutes = new Hono<ShowEnv>()
       return c.json({ error: "This link doesn't exist" }, 404);
     }
     if (!isLive(link, now)) {
-      await recordFailure(c.env.DB, keys, now);
+      // Its old viewers keep reopening it: count it against the IP once an hour at most.
+      await recordFailureOnce(c.env.DB, `share:gone:${link.id}`, keys, now);
       return c.json({ error: "This link has been revoked or has expired" }, 410);
     }
     await c.var.db
@@ -137,7 +133,7 @@ export const shareRoutes = new Hono<ShowEnv>()
     } satisfies ShareInfoResponse);
   })
 
-  // ---- the owner's links (Show settings → Sharing) ----
+  // ---- editors' and the owner's links (Show settings → Sharing) ----
   .get("/shows/:id/share-links", requireMembership, requireEditor, async (c) => {
     const rows = await c.var.db
       .select()
@@ -172,13 +168,11 @@ export const shareRoutes = new Hono<ShowEnv>()
     ) {
       return c.json({ error: "The expiry must be in the future" }, 400);
     }
-    const options: ShareOptions = {};
-    const rawOpts = (body.options ?? {}) as Record<string, unknown>;
-    if (typeof rawOpts.session === "string" && rawOpts.session.trim()) {
-      options.session = rawOpts.session.trim().slice(0, 100);
-    }
-    if (rawOpts.orient === "landscape" || rawOpts.orient === "portrait") {
-      options.orient = rawOpts.orient;
+    const options: ShareOptions = parseShareOptions(body.options ?? {});
+    const notesPreset = preset === "by-person" || preset === "by-cue";
+    if (!notesPreset) {
+      delete options.session;
+      delete options.person;
     }
     // A view link shows a shared view of the table: the one asked for, else its default.
     let viewId: string | null = null;

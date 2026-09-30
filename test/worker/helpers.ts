@@ -3,7 +3,12 @@ import { exports } from "cloudflare:workers";
 import { expect } from "vitest";
 import type { CreateInviteResponse, ShowSummaryDTO } from "../../src/shared/api";
 import type { ServerMessage } from "../../src/shared/ws";
-import { type ShowDO, USER_ID_HEADER } from "../../src/worker/do/ShowDO";
+import {
+  INTERNAL_HEADER,
+  INTERNAL_MARKER,
+  type ShowDO,
+  USER_ID_HEADER,
+} from "../../src/worker/do/ShowDO";
 
 export const ADMIN = { email: "admin@test.local", password: "test-password-123" };
 export const ORIGIN = "http://localhost";
@@ -106,7 +111,7 @@ export function collect(ws: WebSocket) {
 /** Open a WebSocket straight into a DO. */
 export async function connectDO(stub: DurableObjectStub<ShowDO>, userId = "user-1") {
   const res = await stub.fetch("http://do/ws", {
-    headers: { Upgrade: "websocket", [USER_ID_HEADER]: userId },
+    headers: { Upgrade: "websocket", [USER_ID_HEADER]: userId, [INTERNAL_HEADER]: INTERNAL_MARKER },
   });
   expect(res.status).toBe(101);
   if (!res.webSocket) throw new Error("no webSocket on response");

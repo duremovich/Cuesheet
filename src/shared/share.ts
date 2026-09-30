@@ -26,8 +26,31 @@ export function isSharePreset(v: unknown): v is SharePreset {
 
 /** Preset options kept with a link (the print page's query parameters). */
 export interface ShareOptions {
+  /** Notes presets: only notes of this session (enforced by the server). */
   session?: string;
+  /** Notes presets: only notes assigned to this person id (enforced by the server). */
+  person?: string;
   orient?: "landscape" | "portrait";
+}
+
+/** Read stored/sent options leniently: unknown keys and bad values are dropped. */
+export function parseShareOptions(raw: unknown): ShareOptions {
+  let o: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      o = JSON.parse(raw);
+    } catch {
+      return {};
+    }
+  }
+  if (!o || typeof o !== "object") return {};
+  const r = o as Record<string, unknown>;
+  const out: ShareOptions = {};
+  if (typeof r.session === "string" && r.session.trim())
+    out.session = r.session.trim().slice(0, 100);
+  if (typeof r.person === "string" && /^[\w-]{1,64}$/.test(r.person)) out.person = r.person;
+  if (r.orient === "landscape" || r.orient === "portrait") out.orient = r.orient;
+  return out;
 }
 
 export interface ShareLinkDTO {
@@ -45,7 +68,7 @@ export interface ShareLinkDTO {
   lastUsedAt: number | null;
 }
 
-/** POST /api/shows/:id/share-links (owner). */
+/** POST /api/shows/:id/share-links (editors and the owner). */
 export interface CreateShareLinkRequest {
   kind: ShareKind;
   table: DataTableName;
@@ -102,12 +125,18 @@ export interface ShareScope {
   tables: TableName[];
   /** Attachments are visible only when they belong to rows of these tables. */
   attachmentTables: TableName[];
-  /**
-   * Views visible: this view id, or (null) the shared default views of `viewTable`. No
-   * views for presets.
-   */
+  /** The one shared view a view link shows (null: none; presets have no views). */
   viewId: string | null;
   viewTable: DataTableName | null;
+  /**
+   * People's full rows (contact details) only for a link to the People table itself;
+   * everywhere else a person is `{id, name, role}` (share-filter.ts).
+   */
+  fullPersons: boolean;
+  /** Notes presets: which notes the link may see (server-enforced). Null: no filter. */
+  notes: { session: string | null; person: string | null } | null;
+  /** Epoch ms after which the link's sockets are closed (null: never). */
+  expiresAt: number | null;
 }
 
 export function shareScope(link: {
@@ -116,39 +145,42 @@ export function shareScope(link: {
   table: string;
   viewId: string | null;
   preset: string | null;
+  options?: ShareOptions;
+  expiresAt?: number | null;
 }): ShareScope {
   const table = (DATA_TABLES as readonly string[]).includes(link.table)
     ? (link.table as DataTableName)
     : null;
+  const base = {
+    linkId: link.id,
+    showId: link.showId,
+    expiresAt: link.expiresAt ?? null,
+    viewId: null,
+    viewTable: null,
+    fullPersons: false,
+    notes: null,
+  };
   if (isSharePreset(link.preset)) {
     const tables = [...PRESET_TABLES[link.preset]];
     const main = SHARE_PRESETS[link.preset].table;
+    const notesPreset = link.preset === "by-person" || link.preset === "by-cue";
     return {
-      linkId: link.id,
-      showId: link.showId,
+      ...base,
       tables,
       attachmentTables: tables.includes("attachments") ? [main] : [],
-      viewId: null,
-      viewTable: null,
+      notes: notesPreset
+        ? { session: link.options?.session ?? null, person: link.options?.person ?? null }
+        : null,
     };
   }
-  if (!table) {
-    return {
-      linkId: link.id,
-      showId: link.showId,
-      tables: [],
-      attachmentTables: [],
-      viewId: null,
-      viewTable: null,
-    };
-  }
+  if (!table) return { ...base, tables: [], attachmentTables: [] };
   return {
-    linkId: link.id,
-    showId: link.showId,
+    ...base,
     tables: [table, ...RELATED[table], "views", "attachments"],
     attachmentTables: [table],
     viewId: link.viewId,
     viewTable: table,
+    fullPersons: table === "persons",
   };
 }
 

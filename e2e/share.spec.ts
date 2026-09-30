@@ -153,6 +153,18 @@ test("share a print layout: SM cue sheet, light, without signing in", async ({ b
   ).toBeVisible();
   await expect(viewer.getByTestId("share-open-row")).toHaveCount(0);
   await expect(viewer.getByRole("button", { name: "Print / Save as PDF" })).toBeVisible();
+  const overflow = () =>
+    viewer.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+  expect(await overflow()).toBeLessThanOrEqual(0);
+
+  // A live view link fits the phone too (wide tables scroll inside their own box).
+  await owner.keyboard.press("Escape");
+  const live = await createLink(owner, "Cues · All cues");
+  await viewer.goto(live);
+  await expect(viewer.getByTestId("share-open-row").first()).toBeVisible();
+  expect(await overflow()).toBeLessThanOrEqual(0);
 });
 
 test("an unknown share link says so", async ({ browser }) => {
