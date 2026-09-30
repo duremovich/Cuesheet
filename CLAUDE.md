@@ -500,14 +500,17 @@ views" below).
 - **Units model** (`src/shared/units.ts`). A measurement is stored as a plain number of
   **meters** (field type `measurement`, SQLite REAL; the engine refuses negatives and
   non-numbers). Units (`m cm mm ft-in ft in`) are only for display and typing. The
-  **active unit** is the view's `config.unit` (the toolbar's m / cm / ft-in toggle, which
-  changes the view like any other view setting) → the user's preference
-  (`cuesheet.unit.<userId>` in localStorage: Show settings → My unit, or the calculator's
-  toggle; `useUserUnit`/`setUserUnit` in `features/views/units.tsx`, live across grids)
-  → the show's `default_unit` (the ShowDO `meta` row, via the `meta` op; Show settings →
+  **active unit** is the view's `config.unit` override (only via Fields → **Unit
+  override**, editors or a personal view's owner; the toolbar then shows a "View unit: …"
+  chip; it's a view change like any other: a draft on a shared view) → the user's
+  preference (`cuesheet.unit.<userId>` in localStorage: the toolbar's m / cm / ft-in
+  toggle, which never touches the view, Show settings → My unit, or the calculator's
+  toggle; `useUserUnit`/`setUserUnit` in `features/views/units.tsx`, live across grids
+  and tabs) → the show's `default_unit` (the ShowDO `meta` row, via the `meta` op; Show settings →
   Show default, editors) → meters. `useViewConfig` resolves it and hands it to the
   columns (`withUnit`: `Column.unit` on measurement columns and length formulas), so
-  cells, the row panel, filters and color rules all use it.
+  cells, the row panel (History included: `formatStored(…, unit)`; pixel sizes `w×h`),
+  filters and color rules all use it.
 - **Parsing** (`parseLength(text, activeUnit)` → `{m}` | `{error}` | null for empty):
   `4.5` (in the active unit; ft-in: decimal feet), `4.5 m`, `450cm`, `1,200 mm`, `177in`,
   `14.75ft`, `14'`, `9"`, `14'9"`, `14' 9"`, `14' 9`, `14 ft 9 in`, fractions (`14' 9 1/2"`,

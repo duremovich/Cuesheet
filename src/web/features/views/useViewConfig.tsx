@@ -63,8 +63,10 @@ import { colorPresets } from "./presets";
 import {
   hasMeasurements,
   resolveUnit,
+  setUserUnit,
   UnitToggle,
   useUserUnit,
+  ViewUnitChip,
   withUnit,
   withUnitFields,
 } from "./units";
@@ -920,9 +922,17 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
         actions={actions}
         sortPresets={setup.sortPresets}
         sortNow={canEdit ? setup.sortNow : undefined}
+        unitOverride={showUnits ? { editable: canEdit || isPersonal } : undefined}
       />
       {showUnits && (
-        <UnitToggle unit={unit} onChange={(u) => actions.update((c) => ({ ...c, unit: u }))} />
+        <>
+          {/* Your unit (a preference in this browser), never the view's. */}
+          <UnitToggle
+            unit={resolveUnit(undefined, userUnit, showUnit)}
+            onChange={(u) => setUserUnit(userId, u)}
+          />
+          {config.unit && <ViewUnitChip unit={config.unit} />}
+        </>
       )}
     </>
   );

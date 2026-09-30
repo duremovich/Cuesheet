@@ -321,7 +321,14 @@ export function RowPanel<Row>({
         )}
         {active === "notes" && notesSubject && <NotesPanel subject={notesSubject} />}
         {active === "content" && table === "cues" && <CueContentCards cueId={recordId} />}
-        {active === "history" && <PanelHistory table={table} id={recordId} labels={labels} />}
+        {active === "history" && (
+          <PanelHistory
+            table={table}
+            id={recordId}
+            labels={labels}
+            unit={columns.find((c) => c.type === "measurement")?.unit}
+          />
+        )}
         {extraTabs?.find((x) => x.id === active)?.render()}
       </div>
     </aside>

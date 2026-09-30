@@ -74,7 +74,8 @@ to try on the **Cues** tab:
   (e.g. "Tech 2") once, then ↓/↑ (or Space) to move through cues, type, Enter; ⌘/Ctrl+G
   jumps to a cue number. On a phone, **＋** opens quick add: pick a cue, type, Add note.
 - **Surfaces** tab: the 15 projection surfaces with widths and heights in meters; regions
-  (CH02.1) sit under their parent (CH02). Flip the toolbar's **m / cm / ft-in** toggle, or
+  (CH02.1) sit under their parent (CH02). Flip the toolbar's **m / cm / ft-in** toggle
+  (your unit, everywhere; a view can pin its own in *Fields → Unit override*), or
   type `14'9"` / `450cm` / `4.5` into a Width cell (a bare number is in the unit you're
   looking at). Type `1920x1080` into **Pixels** and PPI, pitch and aspect fill in.
   **Space** → **Calculator**: lock PPI, pixels or the physical size, then change another;

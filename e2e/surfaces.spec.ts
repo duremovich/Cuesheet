@@ -98,13 +98,17 @@ test("import → 15 surfaces in meters; ft-in toggle; typing 4'6\" stores meters
   await expect(cellOf(lpro, "channel")).toHaveText("CH02");
   await expect(cellOf(rowByName(page, "FULL WALL"), "width")).toHaveText("16.50 m");
 
-  // The toolbar toggle: the whole view switches at once.
+  // The toolbar toggle is your unit (this browser): the grid switches, the view doesn't.
   await expect(unitButton(page, "m")).toHaveAttribute("aria-pressed", "true");
   await unitButton(page, "ft-in").click();
   await expect(cellOf(lpro, "width")).toHaveText(`14' 9 1/8"`);
   await expect(cellOf(lpro, "height")).toHaveText(`13' 1 1/2"`);
+  await expect(page.getByText("Unsaved changes")).toHaveCount(0);
   await unitButton(page, "cm").click();
   await expect(cellOf(lpro, "width")).toHaveText("450.0 cm");
+  // Kept across a reload.
+  await page.reload();
+  await expect(cellOf(rowByName(page, "L PRO"), "width")).toHaveText("450.0 cm");
   await unitButton(page, "m").click();
 
   // Feet and inches typed into a meters column: stored in meters, shown in m.
@@ -118,6 +122,26 @@ test("import → 15 surfaces in meters; ft-in toggle; typing 4'6\" stores meters
   await typeInto(page, cellOf(truss, "height"), "tall");
   await page.keyboard.press("Escape");
   await expect(cellOf(truss, "height")).toHaveText("1.50 m");
+
+  // History shows lengths in the active unit.
+  await unitButton(page, "ft-in").click();
+  await cellOf(truss, "name").click();
+  await page.keyboard.press("Space");
+  const rp = page.getByTestId("row-panel");
+  await rp.getByRole("tab", { name: "History" }).click();
+  await expect(rp.getByTestId("history")).toContainText(`1' 7 5/8" → 4' 6"`);
+  await rp.getByRole("button", { name: "Close panel" }).click();
+
+  // A view-level override (Fields → Unit override) wins over your unit; a chip says so.
+  const fields = await openPanel(page, "Fields");
+  await fields.getByLabel("Unit override").selectOption("cm");
+  await closePanel(page, "Fields");
+  await expect(page.getByTestId("view-unit-chip")).toHaveText("View unit: cm");
+  await expect(cellOf(lpro, "width")).toHaveText("450.0 cm");
+  await expect(page.getByText("Unsaved changes")).toBeVisible();
+  await page.getByRole("button", { name: "Discard" }).click();
+  await expect(page.getByTestId("view-unit-chip")).toHaveCount(0);
+  await expect(cellOf(lpro, "width")).toHaveText(`14' 9 1/8"`);
 });
 
 test("pixel size → PPI, calculator with a PPI lock, regions", async ({ browser }) => {

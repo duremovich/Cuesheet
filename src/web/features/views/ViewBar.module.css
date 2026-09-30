@@ -85,6 +85,15 @@
   gap: var(--space-2);
 }
 
+.unitChip {
+  font-size: 12px;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-subtle);
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
 .dirtyBadge {
   font-size: 12px;
   padding: 2px var(--space-2);

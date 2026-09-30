@@ -78,7 +78,23 @@ export function withUnitFields<C extends { type: string; resultType?: string; un
   return new Map(entries.map(([k, c]) => [k, usesUnit(c) && c.unit !== unit ? { ...c, unit } : c]));
 }
 
-/** m / cm / ft-in: sets the view's unit (every unit is still accepted when typing). */
+/** Shown in the toolbar when the view sets its own unit (Fields → Unit override). */
+export function ViewUnitChip({ unit }: { unit: Unit }) {
+  return (
+    <span
+      className={styles.unitChip}
+      data-testid="view-unit-chip"
+      title={`This view always shows ${UNIT_LABELS[unit]} (Fields → Unit override)`}
+    >
+      View unit: {unit}
+    </span>
+  );
+}
+
+/**
+ * m / cm / ft-in: your unit (a per-browser preference, live across grids). A view's unit
+ * override still wins (ViewUnitChip). Every unit is accepted when typing.
+ */
 export function UnitToggle({ unit, onChange }: { unit: Unit; onChange: (unit: Unit) => void }) {
   const shown = TOGGLE_UNITS.includes(unit) ? TOGGLE_UNITS : [...TOGGLE_UNITS, unit];
   return (

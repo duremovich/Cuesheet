@@ -95,22 +95,9 @@ Things the first build had to decide; each is easy to change.
 
 ## Units, formulas and surfaces (M3b decisions to confirm)
 
-- **ft-in rounding.** Feet and inches display to the nearest 1/8" (`14' 9 1/8"`),
-  configurable in code (`FT_IN_DENOMINATOR`), not yet per show. Editing shows the exact
-  value (`14' 9.165"`), so committing it unchanged writes nothing. Is 1/8" right for set
-  measurements, or should it be 1/16"?
 - **Default unit.** Meters when nothing is set. The show default lives in the ShowDO
   `meta` row (M3a owned D1 migrations this round); move it to D1 `shows` if it ever needs
   to be listed across shows. Is ft-in the better default for US shows?
-- **The toolbar unit toggle changes the view.** It's the view's unit override, so on a
-  shared view it's a draft (Save/Discard) for editors and a personal copy for viewers.
-  Your own preference (Show settings → My unit, or the calculator's toggle) applies when
-  the view has no override. Should the toggle be a per-browser overlay instead, like
-  column widths?
-- **A bare number in ft-in** is decimal feet (`14.75` = 14' 9"). A bare number in a
-  filter value is in the view's active unit.
-- **Negative lengths** are refused (input and server). Offsets (a surface's position)
-  might need them later.
 - **Pixels are plain numbers** in formulas, so `pixel_width / width` is a `#UNIT` error
   and pixels-per-length goes through `PPI()`; length × length (areas) is an error too.
 - **Surfaces import.** Surfaces-Gallery.csv has 16 rows, the last one blank: 15 surfaces
@@ -118,14 +105,8 @@ Things the first build had to decide; each is easy to change.
   export's Breakdown.Surfaces column is empty; links resolve by surface name or channel
   when it has values. `content.resolution` stays text (M3a owns content); the
   `pixel_size` field type exists for it and for custom fields.
-- **Calculator.** The default lock is the physical size, or the pixel size for a region
-  of a parent with a pixel canvas (ux.md asks for "pixel size read-only" there: it's the
-  default lock rather than read-only). The aspect lock starts off. The region diagram
-  shows the region's share, not its position (surfaces have no offsets yet).
-- **Custom formula columns** ("Add formula column" behind a flag, a `computed_fields`
-  table) weren't built: view configs validate column keys against a fixed per-table list
-  (`VIEW_FIELDS`), which custom columns need to extend first. They come with custom
-  fields (M5); the engine is ready.
+- **Calculator.** The aspect lock starts off. The region diagram shows the region's
+  share, not its position (surfaces have no offsets yet).
 
 ## Infrastructure
 
@@ -183,3 +164,14 @@ Things the first build had to decide; each is easy to change.
 - **A table always has a shared view** (M2a review): the server refuses to delete the last
   one; drafts of shared views survive reloads and never overwrite a newer save (rebase or
   discard); viewers' copies are reused; M1c widths migrate to a per-user overlay.
+- **Units (M3b)** → CLAUDE.md "Units, formulas and surfaces": the toolbar's m / cm /
+  ft-in toggle sets *your* unit (per browser, everywhere), never the view; a view can pin
+  a unit only through Fields → Unit override (editors; a "View unit" chip shows it).
+  Order: view override → your unit → show default → meters. ft-in displays to the
+  nearest 1/8" (editing shows the exact value). Negative lengths are refused. A bare
+  number in ft-in is decimal feet (`14.75` = 14' 9"). The row panel's History shows
+  lengths in the active unit.
+- **Surface calculator (M3b)**: for a region of a parent with a pixel canvas, the pixel
+  size is the *default lock*, not read-only.
+- **Custom formula columns**: deferred to M5 with custom fields (the engine and the
+  built-in surface formulas are in M3b).
