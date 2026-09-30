@@ -17,6 +17,20 @@ summarized at the bottom.
 - The Personnel table has a *Scenes* link: is that "which scenes this cast member is in"?
   Does it need to be core, or is a custom field fine?
 
+### Raised by the M1 importer
+
+- The video team (Casey Brennan, Morgan Ellis, Riley Sato) are cue assignees, note
+  assignees and content creators but aren't in the *Personnel* export, so ~125 links are
+  dropped with warnings. Should the importer create a Person for unmatched names?
+- Cue scene is derived from the linked content's scene (content scene from its `SSS-` name
+  prefix when the Scene column is empty). 45 of 120 cues end up *Unassigned*, mostly
+  sub-cues like 2.10/2.20 with no content. Should a cue with no content inherit the scene
+  when the nearest cues before and after it agree?
+- Airtable's `Created Time` has no time zone; the importer reads it as UTC. Should it use
+  the show's (venue's) zone?
+- Content `Version` values ("2.0", "4.0") aren't imported yet; they become ContentVersion
+  records when those exist.
+
 ## Product
 
 - **Script formats.** What do scripts usually arrive as: text PDF, scanned PDF, Word,

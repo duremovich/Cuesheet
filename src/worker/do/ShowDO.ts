@@ -182,8 +182,8 @@ export class ShowDO extends DurableObject<Env> {
 
   override async webSocketMessage(_ws: WebSocket, _message: string | ArrayBuffer): Promise<void> {
     // Heartbeat pings never get here: the runtime answers PING_FRAME with PONG_FRAME
-    // without waking the object (see the constructor). M0 has no other client messages;
-    // M1 adds edits.
+    // without waking the object (see the constructor). Edits arrive over HTTP
+    // (POST /mutate → mutate()), not the socket; the socket only carries broadcasts.
   }
 
   override async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
