@@ -174,7 +174,13 @@ function fileHeaders(object: R2Object, filename: string, download: boolean): Hea
   h.set("ETag", object.httpEtag);
   h.set("Cache-Control", "private, max-age=31536000, immutable");
   h.set("X-Content-Type-Options", "nosniff");
-  h.set("Content-Security-Policy", "default-src 'none'; img-src 'self'; media-src 'self'; sandbox");
+  // Never run as a page of ours. (Not for PDFs: Chrome's viewer refuses sandboxed ones.)
+  if (h.get("Content-Type") !== "application/pdf") {
+    h.set(
+      "Content-Security-Policy",
+      "default-src 'none'; img-src 'self'; media-src 'self'; sandbox",
+    );
+  }
   const safe = filename.replace(/["\\]/g, "_");
   h.set(
     "Content-Disposition",

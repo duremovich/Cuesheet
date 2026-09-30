@@ -72,7 +72,19 @@ to try on the **Cues** tab:
   `*` for a general note.
 - **Tech mode** (**Tech** in the header, **⌘/Ctrl+Shift+.**, or ⌘K → Tech mode): set the **Session**
   (e.g. "Tech 2") once, then ↓/↑ (or Space) to move through cues, type, Enter; ⌘/Ctrl+G
-  jumps to a cue number. On a phone, **＋** opens quick add: pick a cue, type, Add note.
+  jumps to a cue number. On a phone, **＋** opens quick add: pick a cue, type, Add note;
+  📷 takes (or picks) a photo that's attached to the note.
+- **Content versions**: open a content item's panel (Content tab, Space) → **Versions** →
+  **+ Add version** (next Vnn, today, current). The cue list's content chips show the
+  current version (`105-001-VAMP · V03`); **Set current** switches it.
+- **Images**: drop a PNG/JPEG onto a content item's **Attachments** cell (or paste a
+  screenshot into it, or **+ Add files** in its panel): a thumbnail appears in the grid,
+  on the cue list's content chips and in the cue panel's content cards; click it for the
+  lightbox (←/→, Download, Delete with Undo). Paste or drop a photo into a note's compose
+  box and it's attached when you save the note. Files go to R2 (local: `.wrangler/state`),
+  25 MB each, 2 GB per show (usage in ⚙ Show settings).
+- **Gallery**: **Gallery** in the Content view bar shows cards with each item's first
+  image; *View ▾ → + Content gallery* makes it your own view.
 
 Undo (⌘Z / ⌘⇧Z) covers cell edits made in that grid; inserts, moves, deletes and "Sort
 now" aren't undoable yet. Column widths, order, filters, sorts, grouping, row height and
