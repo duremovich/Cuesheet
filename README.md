@@ -108,11 +108,12 @@ to try on the **Cues** tab:
   **Show settings** has the show's default unit and your own. Drop set photos onto a
   surface's **Images** cell.
 
-- **Sharing** (owner): ⚙ Show settings → **Sharing** → pick a view (or a print layout:
+- **Sharing** (editors and the owner): ⚙ Show settings → **Sharing** → pick a view (or a print layout:
   calling script, SM cue sheet, notes by person / by cue, content list, surface sheet),
   optionally an expiry → **Create link**. Open it in a private window: no sign-in, just
-  that view, read-only and live (edit a cue in the other window). **Revoke** closes it at
-  once.
+  that table, read-only and live (edit a cue in the other window). A link shows the whole
+  table, not just the view's filtered rows. **Regenerate** replaces a lost link;
+  **Revoke** closes it at once. Hover the presence pill to see who's connected.
 - **Print layouts**: ⌘K → *Print notes by person* (per-person page breaks, a tick box per
   note, **Distribute notes**: an email per person), *Print notes by cue*, *Print content
   list*, *Print surface sheet* (sizes in m and ft-in, pixels, PPI). Printed pages carry

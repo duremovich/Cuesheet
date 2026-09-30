@@ -26,7 +26,13 @@ import { normalizeEmail } from "../auth/session";
 import { requireAuthOrShare, shareResourceGuard } from "../auth/share-auth";
 import { schema } from "../db/d1/client";
 import { RESERVED_KEYS } from "../do/ops-engine";
-import { ROLE_HEADER, SESSION_ID_HEADER, SHARE_SCOPE_HEADER, USER_ID_HEADER } from "../do/ShowDO";
+import {
+  NAME_HEADER,
+  ROLE_HEADER,
+  SESSION_ID_HEADER,
+  SHARE_SCOPE_HEADER,
+  USER_ID_HEADER,
+} from "../do/ShowDO";
 import { buildAirtableImport, type CsvFile } from "../import/airtable";
 import type { AppEnv } from "../types";
 import * as attachments from "./attachments";
@@ -239,6 +245,7 @@ export const showRoutes = new Hono<ShowEnv>()
     } else {
       headers.set(USER_ID_HEADER, c.var.user.id);
       headers.set(ROLE_HEADER, c.var.role);
+      headers.set(NAME_HEADER, encodeURIComponent(c.var.user.name));
       // So logout can close exactly this browser's sockets (ShowDO.disconnectSession).
       headers.set(SESSION_ID_HEADER, await sha256Hex(c.var.sessionToken));
     }

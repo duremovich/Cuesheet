@@ -1,8 +1,10 @@
-// Show settings → Sharing (R23, owner only): read-only links to one view or print layout,
-// opened without signing in at /s/<token>. Pick what to share, optionally an expiry and a
-// label; the link is shown once (the server keeps only its hash; this browser remembers
-// the ones it made so they can be copied again, ShareSettingsTokens.ts). Revoking closes
-// open viewers at once. Also the owner's JSON export (backups).
+// Show settings → Sharing (R23, editors and the owner): read-only links to one table (as
+// a view) or a print layout, opened without signing in at /s/<token>. The page says plainly
+// that a link shows the whole table, not just the view's filtered rows. Pick what to share,
+// optionally an expiry and a label; the link is shown once (the server keeps only its hash;
+// this browser remembers the ones it made so they can be copied again,
+// ShareSettingsTokens.ts); "Regenerate" gives a live link a new token. Revoking closes open
+// viewers at once. Also the owner's JSON export (backups).
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { SHARE_PRESETS, type ShareLinkDTO, type SharePreset } from "../../../shared/share";
 import type { DataTableName } from "../../../shared/tables";
@@ -131,6 +133,23 @@ export function SharingSection() {
     );
   };
 
+  const regenerate = async (link: ShareLinkDTO) => {
+    if (!window.confirm("Make a new link with the same settings? The current one stops working.")) {
+      return;
+    }
+    setError(null);
+    try {
+      const made = await api.regenerateShareLink(ws.showId, link.id);
+      forgetLink(ws.showId, link.id);
+      rememberLink(ws.showId, made.link.id, made.path);
+      setKnown(rememberedLinks(ws.showId));
+      setCreated({ id: made.link.id, url: shareUrl(made.path) });
+      load();
+    } catch (err) {
+      setError(handleError(err));
+    }
+  };
+
   const revoke = async (link: ShareLinkDTO) => {
     if (!window.confirm("Revoke this link? Anyone viewing it is disconnected at once.")) return;
     setError(null);
@@ -183,6 +202,15 @@ export function SharingSection() {
             </optgroup>
           </select>
         </label>
+        {target && (
+          <p className={styles.scopeNote} data-testid="share-scope-note">
+            {target.preset
+              ? "This link shows the chosen layout, live."
+              : `This link shows the whole ${
+                  TABS.find((t) => t.table === target.table)?.label ?? target.table
+                } table (live) or the chosen layout — not just this view's filtered rows.`}
+          </p>
+        )}
         {target && !target.preset && (
           <label className={styles.check}>
             <input type="checkbox" name="print" /> As a print layout (instead of the live table)
@@ -261,6 +289,16 @@ export function SharingSection() {
                 {st === "active" && (
                   <button
                     type="button"
+                    aria-label={`Regenerate ${l.label || describe(l, viewName)}`}
+                    title="A new link with the same settings; the current one stops working"
+                    onClick={() => void regenerate(l)}
+                  >
+                    Regenerate
+                  </button>
+                )}
+                {st === "active" && (
+                  <button
+                    type="button"
                     data-destructive=""
                     aria-label={`Revoke ${l.label || describe(l, viewName)}`}
                     onClick={() => void revoke(l)}
@@ -273,10 +311,12 @@ export function SharingSection() {
           })}
         </ul>
       )}
-      <p className={styles.hint}>
-        Backup: <a href={exportUrl(ws.showId)}>download everything as JSON</a> (data, members, file
-        list).
-      </p>
+      {ws.role === "owner" && (
+        <p className={styles.hint}>
+          Backup: <a href={exportUrl(ws.showId)}>download everything as JSON</a> (data, members,
+          file list).
+        </p>
+      )}
     </section>
   );
 }

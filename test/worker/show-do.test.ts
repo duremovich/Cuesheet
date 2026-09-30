@@ -83,6 +83,7 @@ describe("ShowDO", () => {
       showId: "show-ws",
       clients: 1,
       readOnly: 0,
+      users: [{ id: "alice", name: "Someone", readOnly: false }],
     });
 
     const b = await connect(stub, "bob");
@@ -91,6 +92,10 @@ describe("ShowDO", () => {
       type: "presence",
       clients: 2,
       readOnly: 0,
+      users: [
+        { id: "alice", name: "Someone", readOnly: false },
+        { id: "bob", name: "Someone", readOnly: false },
+      ],
     });
     expect(await stub.clientCount()).toBe(2);
 
@@ -102,6 +107,7 @@ describe("ShowDO", () => {
       type: "presence",
       clients: 1,
       readOnly: 0,
+      users: [{ id: "alice", name: "Someone", readOnly: false }],
     });
     a.ws.close(1000, "bye");
   });

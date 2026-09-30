@@ -136,34 +136,18 @@ Things the first build had to decide; each is easy to change.
 - **Print** is the browser's print dialog / Save as PDF: no server-side PDF. The calling
   script prints the whole script; a page range isn't offered.
 
-## Sharing, security and deploy (M5b decisions to confirm)
+## Sharing, security and deploy (M5b)
 
-- **What a share link sees.** A link shows one table (plus the tables its grid labels
-  links from: a cue link sees scene names and content chips, not notes) or one print
-  layout; files only on rows of its table (a cue list link's content thumbnails don't
-  load). Row-level filtering stays on the client: someone with the link and the API could
-  read the whole table, not just the view's filtered rows. Fine for SM/director links?
-- **Links are shown once.** Only a hash is stored, so only the browser that made a link can
-  copy it again (Show settings → Sharing; "Distribute notes" uses it). Lost it? Revoke and
-  make another. Or should owners be able to see links again (stored encrypted)?
+- **Row-level scoping of share links (later hardening pass).** A view link shows the
+  *whole* table (live), not just the view's filtered rows: the view's filters, sorts and
+  columns shape the rendering on the client, and the Sharing UI says so. Someone with the
+  link and the API can read every row of that table (and the label tables its grid needs:
+  a cue link sees scene names and content chips, never notes). A hardening pass could
+  evaluate the view's filters in the ShowDO (snapshot and live ops), which needs the
+  filter evaluator on the server and re-checking rows as they change in and out of the
+  filter.
 - **One share cookie per show per browser.** Opening a second link of the same show in
   one browser replaces the first (its tab keeps working until it reloads). Rare enough?
-- **Owner-only sharing.** Editors can't create links. OK?
-- **Rate limiting** counts only failures (wrong password, bad invite/reset/share token):
-  10 a minute and 50 an hour per email and per IP (sliding windows in D1), so a team
-  behind one office IP signing in all day never trips it. A locked email frees itself as
-  failures age out; an admin reset link also clears it. Tighter?
-- **Password change** signs out the account's other sessions; an admin reset signs out all
-  of them. Password reset links last 24 h (invites 7 days).
-- **Invites to a show**: owners (not only admins) may create invite links that join their
-  show with a role. Should any member be able to?
-- **Transfer ownership** makes the old owner an editor. Should there be co-owners?
-- **Read-only presence**: presence counts read-only sockets (viewers, share links) with an
-  eye; there are still no names in presence (R22's avatars are not built yet).
-- **Plan.** Workers Paid ($5) is recommended: PBKDF2 at 100,000 iterations is more CPU than
-  the Free plan's 10 ms per request, so sign-in may fail on Free (docs/deploy.md).
-- **Backups** are weekly D1 dumps to R2 (13 kept) plus per-show JSON exports on demand;
-  there's no import of an export yet, and no automatic R2 copy. Enough?
 - **Compatibility date** is 2026-08-22, the newest the local test runtime
   (`@cloudflare/vitest-pool-workers`) supports; bump it together with that package.
 
@@ -181,6 +165,19 @@ Things the first build had to decide; each is easy to change.
 - A shot list example for the Shot table.
 
 ## Answered
+
+- **Share link tokens** (M5b): shown once (only a hash is stored); a lost or leaked link
+  is replaced with **Regenerate** (a new token, same settings; the old link stops
+  working). Editors and the owner manage links. → CLAUDE.md "Share links"
+- **Rate limits** (M5b), as built: failures only, 10 a minute and 50 an hour per email and
+  per IP (and per bad invite/reset/share token source). → CLAUDE.md "Account security"
+- **Invites into a show** (M5b): a show's owner (not only admins) may invite people into
+  their show with a role.
+- **Co-owners** (M5b): no; one owner per show, transfer makes the old owner an editor.
+- **Backups** (M5b), as built: weekly D1 dumps to R2 (13 kept) plus per-show JSON exports
+  on demand. → docs/deploy.md
+- **Presence names** (M5b, R22): the presence pill lists who's connected by name (share
+  visitors as "Guest (read-only)"; guests see counts only).
 
 - **Sign-in for SM/director** (M5b): a read-only share link is enough; no account needed
   (owners make them in Show settings → Sharing). → CLAUDE.md "Share links"

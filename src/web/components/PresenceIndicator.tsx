@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import type { ShowSocketState } from "../lib/useShowSocket";
 import styles from "./PresenceIndicator.module.css";
 
@@ -28,19 +29,36 @@ export function EyeIcon() {
 }
 
 /**
- * Connection status and who's here: client count, and how many of them are read-only
- * (viewers and share links, with an eye). `self`: you are read-only here (viewer, share
- * page), shown as "Read-only"; `bare`: just the status (share pages show no counts).
+ * Connection status and who's here (R22): client count, and how many of them are read-only
+ * (viewers and share links, with an eye). Hovering the count names who's connected;
+ * clicking it lists them (share visitors as "Guest (read-only)"). `self`: you are
+ * read-only here (viewer, share page), shown as "Read-only"; `bare`: just the status
+ * (share pages show no counts or names).
  */
 export function PresenceIndicator({
   status,
   clients,
   readOnly = 0,
+  users = [],
   self,
   bare,
 }: ShowSocketState & { self?: boolean; bare?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      if (!wrap.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [open]);
+  const names = users.map((u) => (u.readOnly ? `${u.name} (read-only)` : u.name)).join(", ");
+  const countText = `${clients} ${clients === 1 ? "client" : "clients"}`;
   return (
     <div
+      ref={wrap}
       className={styles.presence}
       data-testid="presence"
       data-status={status}
@@ -51,10 +69,49 @@ export function PresenceIndicator({
     >
       <span className={`${styles.dot} ${styles[status]}`} aria-hidden="true" />
       <span>{LABEL[status]}</span>
-      {status === "connected" && !bare && (
+      {status === "connected" && !bare && users.length === 0 && (
         <span className={styles.count} data-testid="presence-count">
-          {clients} {clients === 1 ? "client" : "clients"}
+          {countText}
         </span>
+      )}
+      {status === "connected" && !bare && users.length > 0 && (
+        <button
+          type="button"
+          ref={button}
+          className={styles.countButton}
+          title={names}
+          aria-expanded={open}
+          aria-haspopup="true"
+          aria-label={`${countText}: who's here`}
+          onClick={() => setOpen((o) => !o)}
+        >
+          <span className={styles.count} data-testid="presence-count">
+            {countText}
+          </span>
+        </button>
+      )}
+      {open && status === "connected" && (
+        <ul
+          className={styles.list}
+          data-testid="presence-list"
+          aria-label="Who's here"
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              setOpen(false);
+              button.current?.focus();
+            }
+          }}
+        >
+          {users.map((u) => (
+            <li key={u.id} data-read-only={u.readOnly || undefined}>
+              {u.readOnly && <EyeIcon />}
+              {u.name}
+              {u.readOnly && !u.id.startsWith("share:") ? (
+                <span className={styles.count}> read-only</span>
+              ) : null}
+            </li>
+          ))}
+        </ul>
       )}
       {status === "connected" && !bare && readOnly > 0 && (
         <span

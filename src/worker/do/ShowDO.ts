@@ -24,7 +24,7 @@ import {
   type ScriptRow,
   type ScriptVersionRow,
 } from "../../shared/tables";
-import { PING_FRAME, PONG_FRAME, type ServerMessage } from "../../shared/ws";
+import { PING_FRAME, PONG_FRAME, type PresenceUser, type ServerMessage } from "../../shared/ws";
 import migrations from "../db/do/migrations/migrations.js";
 import * as schema from "../db/do/schema";
 import { filterOps, filterSnapshot } from "../share-filter";
@@ -50,6 +50,10 @@ export const SESSION_ID_HEADER = "X-Cuesheet-Session";
 
 /** Header with the opener's role (read-only sockets are counted in presence). */
 export const ROLE_HEADER = "X-Cuesheet-Role";
+/** Header with the opener's display name, URI-encoded (presence lists names). */
+export const NAME_HEADER = "X-Cuesheet-Name";
+/** How a share link's visitors appear in members' presence lists. */
+export const GUEST_NAME = "Guest (read-only)";
 /** Header carrying a share link's scope (JSON `ShareScope`) for a share viewer's socket. */
 export const SHARE_SCOPE_HEADER = "X-Cuesheet-Share";
 
@@ -107,11 +111,19 @@ const UPLOAD_PREFIX = "upload:";
 
 interface SocketAttachment {
   userId: string;
+  /** Display name for presence (members: from D1; share visitors: GUEST_NAME). */
+  name?: string;
   sessionId?: string;
   /** Viewers and share links: shown in presence as read-only. */
   readOnly?: boolean;
   /** A share link's viewer: receives only what the link's scope allows. */
   share?: ShareScope;
+}
+
+interface Presence {
+  clients: number;
+  readOnly: number;
+  users: PresenceUser[];
 }
 
 export class ShowDO extends DurableObject<Env> {
@@ -604,18 +616,29 @@ export class ShowDO extends DurableObject<Env> {
     const sessionId = request.headers.get(SESSION_ID_HEADER) ?? undefined;
     const { 0: client, 1: server } = new WebSocketPair();
     this.ctx.acceptWebSocket(server, sessionId ? [userId, sessionTag(sessionId)] : [userId]);
+    let name = GUEST_NAME;
+    if (!share) {
+      try {
+        name = decodeURIComponent(request.headers.get(NAME_HEADER) ?? "") || "Someone";
+      } catch {
+        name = "Someone";
+      }
+    }
     server.serializeAttachment({
       userId,
+      name,
       ...(sessionId ? { sessionId } : {}),
       readOnly: !!share || request.headers.get(ROLE_HEADER) === "viewer",
       ...(share ? { share } : {}),
     } satisfies SocketAttachment);
 
-    const { clients, readOnly } = this.presence();
-    this.send(server, { type: "hello", showId: meta.showId, clients, readOnly });
+    const p = this.presence();
+    this.send(server, { type: "hello", showId: meta.showId, ...this.presenceFor(server, p) });
     // Lets the client notice changes it missed while disconnected (and refetch).
     this.send(server, { type: "version", version: currentVersion(this.ctx.storage.sql) });
-    this.broadcast({ type: "presence", clients, readOnly }, server);
+    for (const ws of this.openSockets()) {
+      if (ws !== server) this.send(ws, { type: "presence", ...this.presenceFor(ws, p) });
+    }
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -642,19 +665,48 @@ export class ShowDO extends DurableObject<Env> {
     this.broadcastPresence(gone);
   }
 
-  /** Open sockets (minus `gone`), and how many of them are read-only. */
-  private presence(gone: WebSocket[] = []): { clients: number; readOnly: number } {
+  /**
+   * Open sockets (minus `gone`): how many, how many read-only, and who (one entry per user
+   * or share link; read-only if any of their sockets is).
+   */
+  private presence(gone: WebSocket[] = []): Presence {
     const open = this.openSockets().filter((ws) => !gone.includes(ws));
-    const readOnly = open.filter(
-      (ws) => (ws.deserializeAttachment() as SocketAttachment | null)?.readOnly,
-    ).length;
-    return { clients: open.length, readOnly };
+    let readOnly = 0;
+    const users = new Map<string, PresenceUser>();
+    for (const ws of open) {
+      const att = ws.deserializeAttachment() as SocketAttachment | null;
+      if (!att) continue;
+      if (att.readOnly) readOnly++;
+      const seen = users.get(att.userId);
+      if (seen) seen.readOnly = seen.readOnly || !!att.readOnly;
+      else
+        users.set(att.userId, {
+          id: att.userId,
+          name: att.name ?? "Someone",
+          readOnly: !!att.readOnly,
+        });
+    }
+    // Members by name, then share links' guests (a stable order for the list).
+    const guest = (u: PresenceUser) => (u.id.startsWith("share:") ? 1 : 0);
+    const list = [...users.values()].sort(
+      (x, y) =>
+        guest(x) - guest(y) ||
+        x.name.localeCompare(y.name) ||
+        (x.id < y.id ? -1 : x.id > y.id ? 1 : 0),
+    );
+    return { clients: open.length, readOnly, users: list };
+  }
+
+  /** Presence as `ws` may see it: share visitors get the counts, never members' names. */
+  private presenceFor(ws: WebSocket, p: Presence): Presence | Omit<Presence, "users"> {
+    const att = ws.deserializeAttachment() as SocketAttachment | null;
+    return att?.share ? { clients: p.clients, readOnly: p.readOnly } : p;
   }
 
   private broadcastPresence(gone: WebSocket[] = []): void {
-    const { clients, readOnly } = this.presence(gone);
+    const p = this.presence(gone);
     for (const ws of this.openSockets()) {
-      if (!gone.includes(ws)) this.send(ws, { type: "presence", clients, readOnly });
+      if (!gone.includes(ws)) this.send(ws, { type: "presence", ...this.presenceFor(ws, p) });
     }
   }
 

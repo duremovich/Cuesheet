@@ -1,5 +1,8 @@
-// Read-only share links (R23). The owner creates a link to one table/view or print layout
-// (Show settings → Sharing); anyone with `/s/<token>` sees it without signing in.
+// Read-only share links (R23). Editors and the owner create a link to one table (a view
+// of it) or a print layout (Show settings → Sharing); anyone with `/s/<token>` sees it
+// without signing in. A link shows its whole table, not just the view's filtered rows
+// (the view only shapes the rendering). Tokens are shown once; "Regenerate" revokes a link
+// and makes a new one with the same settings.
 //
 // How a viewer gets in: the page calls `GET /api/share/:token`, which answers what the
 // link shows and sets an HttpOnly cookie `cs_share=<token>` scoped to
@@ -64,9 +67,10 @@ function toDTO(l: LinkRow): ShareLinkDTO {
   };
 }
 
-const requireOwner = createMiddleware<ShowEnv>(async (c, next) => {
-  if (c.var.share || c.var.role !== "owner") {
-    return c.json({ error: "Only the show's owner can do that" }, 403);
+/** Editors and the owner manage share links. */
+const requireEditor = createMiddleware<ShowEnv>(async (c, next) => {
+  if (c.var.share || (c.var.role !== "owner" && c.var.role !== "editor")) {
+    return c.json({ error: "Only editors can manage share links" }, 403);
   }
   await next();
 });
@@ -134,7 +138,7 @@ export const shareRoutes = new Hono<ShowEnv>()
   })
 
   // ---- the owner's links (Show settings → Sharing) ----
-  .get("/shows/:id/share-links", requireMembership, requireOwner, async (c) => {
+  .get("/shows/:id/share-links", requireMembership, requireEditor, async (c) => {
     const rows = await c.var.db
       .select()
       .from(schema.shareLinks)
@@ -142,7 +146,7 @@ export const shareRoutes = new Hono<ShowEnv>()
       .orderBy(desc(schema.shareLinks.createdAt));
     return c.json({ links: rows.map(toDTO) } satisfies ShareLinksResponse);
   })
-  .post("/shows/:id/share-links", requireMembership, requireOwner, async (c) => {
+  .post("/shows/:id/share-links", requireMembership, requireEditor, async (c) => {
     const body = await readJsonObject(c);
     if (!body) return c.json({ error: "Expected a JSON object" }, 400);
     const kind = body.kind;
@@ -208,7 +212,7 @@ export const shareRoutes = new Hono<ShowEnv>()
       201,
     );
   })
-  .delete("/shows/:id/share-links/:linkId", requireMembership, requireOwner, async (c) => {
+  .delete("/shows/:id/share-links/:linkId", requireMembership, requireEditor, async (c) => {
     const linkId = c.req.param("linkId");
     const [revoked] = await c.var.db
       .update(schema.shareLinks)
@@ -218,4 +222,50 @@ export const shareRoutes = new Hono<ShowEnv>()
     if (!revoked) return c.json({ error: "No such link" }, 404);
     await showStub(c.env, c.var.show.id).disconnectShare(linkId);
     return c.json({ ok: true });
-  });
+  })
+  // A new token for a live link (the old one lost, or leaked): revokes it and makes a link
+  // with the same target, options, label and expiry.
+  .post(
+    "/shows/:id/share-links/:linkId/regenerate",
+    requireMembership,
+    requireEditor,
+    async (c) => {
+      const old = await c.var.db
+        .select()
+        .from(schema.shareLinks)
+        .where(
+          and(
+            eq(schema.shareLinks.id, c.req.param("linkId")),
+            eq(schema.shareLinks.showId, c.var.show.id),
+          ),
+        )
+        .get();
+      if (!old) return c.json({ error: "No such link" }, 404);
+      if (!isLive(old)) {
+        return c.json({ error: "That link is revoked or expired; create a new one" }, 400);
+      }
+      const token = randomToken();
+      const now = Date.now();
+      const row = {
+        ...old,
+        id: crypto.randomUUID(),
+        tokenHash: await sha256Hex(token),
+        createdBy: c.var.user.id,
+        createdAt: now,
+        revokedAt: null,
+        lastUsedAt: null,
+      } satisfies LinkRow;
+      await c.var.db.batch([
+        c.var.db
+          .update(schema.shareLinks)
+          .set({ revokedAt: now })
+          .where(eq(schema.shareLinks.id, old.id)),
+        c.var.db.insert(schema.shareLinks).values(row),
+      ]);
+      await showStub(c.env, c.var.show.id).disconnectShare(old.id);
+      return c.json(
+        { link: toDTO(row), path: sharePath(token) } satisfies CreateShareLinkResponse,
+        201,
+      );
+    },
+  );

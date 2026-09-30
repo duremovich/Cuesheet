@@ -105,7 +105,7 @@ function SettingsBody({
       <StorageUsage />
       {/* Members and Sharing: ShareSettingsMembers.tsx / ShareSettings.tsx (M5b). */}
       <MembersSection members={members} onMembersChanged={onMembersChanged} />
-      {ws.role === "owner" && <SharingSection />}
+      {ws.canEdit && <SharingSection />}
     </div>
   );
 }

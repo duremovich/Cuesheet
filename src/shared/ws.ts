@@ -22,12 +22,24 @@ export interface OpsMessage {
 }
 
 /** Sent to a client right after it connects. */
+/** Someone connected to the show (one entry per member or share link). */
+export interface PresenceUser {
+  /** User id, or `share:<linkId>` for a share link's visitors. */
+  id: string;
+  /** The member's name; share visitors are "Guest (read-only)". */
+  name: string;
+  /** Viewers and share links. */
+  readOnly: boolean;
+}
+
 export interface HelloMessage {
   type: "hello";
   showId: string;
   clients: number;
   /** How many of `clients` are read-only (viewers and share links). */
   readOnly?: number;
+  /** Who is connected (not sent to share links' visitors). */
+  users?: PresenceUser[];
 }
 
 /** Broadcast to every client whenever someone joins or leaves (or a role changes). */
@@ -36,6 +48,8 @@ export interface PresenceMessage {
   clients: number;
   /** How many of `clients` are read-only (viewers and share links). */
   readOnly?: number;
+  /** Who is connected (not sent to share links' visitors). */
+  users?: PresenceUser[];
 }
 
 export interface PongMessage {

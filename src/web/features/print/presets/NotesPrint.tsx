@@ -258,7 +258,7 @@ function Distribute({
   onClose: () => void;
 }) {
   const ws = useWorkspace();
-  const isOwner = ws.role === "owner";
+  const isOwner = ws.canEdit; // editors and the owner manage share links
   const [links, setLinks] = useState<ShareLinkDTO[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -328,7 +328,7 @@ function Distribute({
             to add a printable list for each person.
           </>
         ) : (
-          "Emails carry the notes as text (the show's owner can add a share link)."
+          "Emails carry the notes as text (an editor can add a share link)."
         )}
       </p>
       {error && <p className="error">{error}</p>}

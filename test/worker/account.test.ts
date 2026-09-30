@@ -296,18 +296,43 @@ describe("invites and members", () => {
     expect((await api(`/api/shows/${show.id}`, { cookie: viewer.cookie })).status).toBe(404);
   });
 
-  it("counts viewers' sockets as read-only in presence", async () => {
+  it("presence: names who's here, viewers and share visitors read-only; guests get no names", async () => {
     const admin = await loginAdmin();
     const show = await createShow(admin, "Presence");
     const viewer = await newUser(admin, "Watcher");
     await post(`/api/shows/${show.id}/members`, { email: viewer.email, role: "viewer" }, admin);
     const mine = await openSocket(show.id, admin);
     const theirs = await openSocket(show.id, viewer.cookie);
+    const admins = await api("/api/me", { cookie: admin });
+    const me = ((await admins.json()) as { user: { id: string } }).user.id;
     expect(await mine.next(isType("presence"))).toEqual({
       type: "presence",
       clients: 2,
       readOnly: 1,
+      users: [
+        { id: me, name: "Admin", readOnly: false },
+        { id: viewer.id, name: "Watcher", readOnly: true },
+      ],
     });
+    // A share link's visitor: listed as a guest; it sees counts, never names.
+    const link = (await (
+      await post(`/api/shows/${show.id}/share-links`, { kind: "view", table: "cues" }, admin)
+    ).json()) as { link: { id: string }; path: string };
+    const token = link.path.split("/").at(-1) as string;
+    const guest = await openSocket(show.id, `cs_share=${token}`);
+    const seen = await mine.next(
+      (m): m is ServerMessage => m.type === "presence" && m.clients === 3,
+    );
+    expect(seen).toMatchObject({
+      readOnly: 2,
+      users: [
+        { id: me },
+        { id: viewer.id },
+        { id: `share:${link.link.id}`, name: "Guest (read-only)", readOnly: true },
+      ],
+    });
+    guest.ws.close();
+    await mine.next((m): m is ServerMessage => m.type === "presence" && m.clients === 2);
     await api(`/api/shows/${show.id}/members/${viewer.id}`, {
       method: "PATCH",
       body: JSON.stringify({ role: "editor" }),

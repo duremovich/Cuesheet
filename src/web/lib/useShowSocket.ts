@@ -1,7 +1,12 @@
 // One WebSocket per open show page. Reconnects with backoff after network drops; stops for
 // good if the server refuses the upgrade (signed out, not a member, show gone, bad origin).
 import { useEffect, useRef, useState } from "react";
-import { PING_FRAME, parseServerMessage, type ServerMessage } from "../../shared/ws";
+import {
+  PING_FRAME,
+  type PresenceUser,
+  parseServerMessage,
+  type ServerMessage,
+} from "../../shared/ws";
 import { ApiError, api, showSocketUrl } from "./api";
 
 export type SocketStatus = "connecting" | "connected" | "disconnected" | "unauthorized";
@@ -11,6 +16,8 @@ export interface ShowSocketState {
   clients: number;
   /** How many of `clients` are read-only (viewers, share links). */
   readOnly?: number;
+  /** Who is connected (members see names; share visitors don't get this). */
+  users?: PresenceUser[];
 }
 
 const HEARTBEAT_MS = 25_000;
@@ -73,7 +80,12 @@ export function useShowSocket(
         }
         if (msg?.type === "hello" || msg?.type === "presence") {
           attempt = 0;
-          setState({ status: "connected", clients: msg.clients, readOnly: msg.readOnly ?? 0 });
+          setState({
+            status: "connected",
+            clients: msg.clients,
+            readOnly: msg.readOnly ?? 0,
+            users: msg.users ?? [],
+          });
         }
       };
       ws.onclose = async () => {

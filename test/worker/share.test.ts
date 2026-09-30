@@ -84,15 +84,28 @@ async function openLink(path: string, headers: Record<string, string> = {}) {
 }
 
 describe("share links", () => {
-  it("only the owner creates, lists and revokes links; bad requests are refused", async () => {
+  it("editors and the owner manage links; others can't; bad requests are refused", async () => {
     const { admin, showId } = await setup();
     const editor = await newUser(admin, "Editor");
     await post(`/api/shows/${showId}/members`, { email: editor.email, role: "editor" }, admin);
     const body = { kind: "view", table: "cues" };
-    expect((await post(`/api/shows/${showId}/share-links`, body, editor.cookie)).status).toBe(403);
-    expect((await api(`/api/shows/${showId}/share-links`, { cookie: editor.cookie })).status).toBe(
-      403,
-    );
+    for (const role of ["commenter", "viewer"] as const) {
+      const u = await newUser(admin, role);
+      await post(`/api/shows/${showId}/members`, { email: u.email, role }, admin);
+      expect((await post(`/api/shows/${showId}/share-links`, body, u.cookie)).status).toBe(403);
+      expect((await api(`/api/shows/${showId}/share-links`, { cookie: u.cookie })).status).toBe(
+        403,
+      );
+    }
+    const byEditor = await createLink(showId, editor.cookie, body);
+    expect(
+      (
+        await api(`/api/shows/${showId}/share-links/${byEditor.link.id}`, {
+          method: "DELETE",
+          cookie: editor.cookie,
+        })
+      ).status,
+    ).toBe(200);
     const bad = [
       { kind: "nope", table: "cues" },
       { kind: "view", table: "users" },
@@ -115,7 +128,7 @@ describe("share links", () => {
     const list = (await (
       await api(`/api/shows/${showId}/share-links`, { cookie: admin })
     ).json()) as ShareLinksResponse;
-    expect(list.links.map((l) => l.id)).toEqual([link.id]);
+    expect(list.links.map((l) => l.id)).toEqual([link.id, byEditor.link.id]);
     // Only a hash of the token is stored.
     const row = await env.DB.prepare("SELECT token_hash FROM share_links WHERE id = ?")
       .bind(link.id)
@@ -260,6 +273,37 @@ describe("share links", () => {
     expect(await viewer.closedWith()).toBe(4003);
     expect((await api(`/api/share/${token}`)).status).toBe(410);
     expect((await api(`/api/shows/${showId}/snapshot`, { cookie })).status).toBe(401);
+  });
+
+  it("regenerate: a new token with the same settings; the old one stops working", async () => {
+    const { admin, showId } = await setup();
+    const { link, path } = await createLink(showId, admin, {
+      kind: "print",
+      table: "notes",
+      preset: "by-cue",
+      options: { session: "Tech 1" },
+      label: "Notes",
+    });
+    const old = await openLink(path);
+    const res = await post(`/api/shows/${showId}/share-links/${link.id}/regenerate`, {}, admin);
+    expect(res.status).toBe(201);
+    const made = (await res.json()) as CreateShareLinkResponse;
+    expect(made.link.id).not.toBe(link.id);
+    expect(made.path).not.toBe(path);
+    expect(made.link).toMatchObject({
+      kind: "print",
+      table: "notes",
+      preset: "by-cue",
+      options: { session: "Tech 1" },
+      label: "Notes",
+      revokedAt: null,
+    });
+    expect((await api(`/api/share/${old.token}`)).status).toBe(410);
+    expect((await openLink(made.path)).res.status).toBe(200);
+    // A revoked link can't be regenerated.
+    expect(
+      (await post(`/api/shows/${showId}/share-links/${link.id}/regenerate`, {}, admin)).status,
+    ).toBe(400);
   });
 
   it("expired links answer 410", async () => {

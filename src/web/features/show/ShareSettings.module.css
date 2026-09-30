@@ -156,3 +156,11 @@
 .invite button {
   align-self: flex-start;
 }
+
+.scopeNote {
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  border-left: 3px solid var(--color-warning);
+  background: var(--color-warning-subtle);
+  font-size: 12px;
+}

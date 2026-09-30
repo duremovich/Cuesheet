@@ -42,6 +42,9 @@ async function createLink(page: Page, target: string, opts: { print?: boolean } 
   await page.getByRole("button", { name: "Show settings" }).click();
   const sharing = page.getByTestId("sharing");
   await sharing.getByLabel("What to share").selectOption({ label: target });
+  await expect(sharing.getByTestId("share-scope-note")).toContainText(
+    target.includes(" · ") ? "not just this view's filtered rows" : "the chosen layout",
+  );
   if (opts.print) await sharing.getByText("As a print layout").click();
   await sharing.getByLabel("Label").fill("For the SM");
   await sharing.getByRole("button", { name: "Create link" }).click();
@@ -79,6 +82,15 @@ test("share a view: read-only, live, row details, revoke → 410", async ({ brow
   await viewer.getByRole("button", { name: "Switch to light theme" }).click();
   await expect(html).toHaveAttribute("data-theme", "light");
 
+  // The owner's presence names the visitor as a guest (the visitor sees no names).
+  await owner.keyboard.press("Escape");
+  await expect(owner.getByTestId("presence")).toHaveAttribute("data-clients", "2");
+  await owner.getByRole("button", { name: /who's here/ }).click();
+  const list = owner.getByTestId("presence-list");
+  await expect(list).toContainText("Guest (read-only)");
+  await expect(list).toContainText("Admin");
+  await expect(viewer.getByTestId("presence-list")).toHaveCount(0);
+
   // The owner edits a cue; the viewer sees it without reloading.
   const cues = (await snapshot(owner, showId)).tables.cues.filter((c) => !c.is_section);
   const first = cues[0];
@@ -111,6 +123,7 @@ test("share a view: read-only, live, row details, revoke → 410", async ({ brow
   expect(write.status()).toBe(403);
 
   // Revoke: the open page shows that the link is gone.
+  await owner.getByRole("button", { name: "Show settings" }).click();
   owner.once("dialog", (d) => void d.accept());
   await owner.getByRole("button", { name: "Revoke For the SM" }).click();
   await expect(owner.getByTestId("share-links").locator("li")).toHaveAttribute(

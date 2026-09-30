@@ -200,7 +200,12 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   `PATCH/DELETE .../members/:userId` (owner only; the user must already have an account;
   the owner can't be changed or removed), `POST .../transfer {userId}` (owner: that member
   becomes the owner, you an editor; both get `{type:"role"}`), `POST .../leave` (anyone
-  but the owner; closes their sockets). Show settings → Members
+  but the owner; closes their sockets). **Presence** (R22): the DO keeps each socket's name
+  (`X-Cuesheet-Name`, URI-encoded; share visitors "Guest (read-only)") and sends
+  `hello`/`presence` with `{clients, readOnly, users: [{id, name, readOnly}]}` (one entry
+  per user or share link; members by name, guests last). Share visitors get the counts
+  without `users`. The pill keeps the count; hovering names people, clicking lists them
+  (`presence-list`). Show settings → Members
   (`show/ShareSettingsMembers.tsx`) has the role descriptions, "Make owner" (confirm),
   "Leave this show", and, when an added email has no account, "Create invite link" (an
   invite that joins this show with the chosen role). Presence counts read-only sockets
@@ -1088,9 +1093,14 @@ views" below).
   a view link without one is given the table's shared default at creation), `preset`
   (`SHARE_PRESETS` in `src/shared/share.ts`: calling-script, cuesheet, by-person, by-cue,
   content, surfaces), `options` JSON (`{session, orient}`), `label`, `created_by`,
-  `created_at`, `expires_at`, `revoked_at`, `last_used_at`. Owner only:
+  `created_at`, `expires_at`, `revoked_at`, `last_used_at`. Editors and the owner:
   `GET/POST /api/shows/:id/share-links`, `DELETE …/:linkId` (revoke: sets `revoked_at`,
-  `ShowDO.disconnectShare(linkId)` sends `revoked` and closes its sockets with 4003).
+  `ShowDO.disconnectShare(linkId)` sends `revoked` and closes its sockets with 4003),
+  `POST …/:linkId/regenerate` (live links only: revokes it and creates a link with the
+  same target, options, label and expiry; the token is shown once, so this is how a lost
+  or leaked link is replaced). **A view link shows the whole table** (live), not just the
+  view's filtered rows (the view shapes the rendering on the client); the Sharing UI says
+  so, and row-level scoping is an open question for a hardening pass.
 - **How a viewer gets in** (`routes/share.ts`, `auth/share-auth.ts`). `/s/<token>` (the
   SPA, `features/share/SharePage.tsx`) calls `GET /api/share/:token` (no auth;
   rate-limited on failures per IP; 404 unknown, 410 revoked/expired; `X-Robots-Tag:
@@ -1124,9 +1134,10 @@ views" below).
   parameters (`view`, `layout`, `preset`, `session`) are put in the URL first; the
   viewer's own (e.g. `?person=` from a "Distribute notes" email) are kept. When the socket
   is refused/revoked the page re-resolves and shows the 404/410 page (`share-gone`).
-- **Show settings → Sharing** (`show/ShareSettings.tsx`, owner): pick a shared view (live
-  or "as a print layout") or a print layout, session (notes presets), expiry, label →
-  the link once. This browser remembers the links it made (`ShareSettingsTokens.ts`,
+- **Show settings → Sharing** (`show/ShareSettings.tsx`, editors and owner): pick a shared
+  view (live or "as a print layout") or a print layout, session (notes presets), expiry,
+  label → the link once (`share-scope-note` states what it shows); Regenerate / Revoke
+  per link. This browser remembers the links it made (`ShareSettingsTokens.ts`,
   `cuesheet.shareLinks.<showId>`) to copy again and for "Distribute notes"; revoking
   forgets it. Also the owner's JSON export link.
 

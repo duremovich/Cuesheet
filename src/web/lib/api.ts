@@ -189,6 +189,13 @@ export const api = {
   shareLinks: (id: string) => request<ShareLinksResponse>("GET", showPath(id, "/share-links")),
   createShareLink: (id: string, body: CreateShareLinkRequest) =>
     request<CreateShareLinkResponse>("POST", showPath(id, "/share-links"), body),
+  /** Revoke a live link and make a new one with the same settings (tokens show once). */
+  regenerateShareLink: (id: string, linkId: string) =>
+    request<CreateShareLinkResponse>(
+      "POST",
+      showPath(id, `/share-links/${encodeURIComponent(linkId)}/regenerate`),
+      {},
+    ),
   revokeShareLink: (id: string, linkId: string) =>
     request<{ ok: true }>("DELETE", showPath(id, `/share-links/${encodeURIComponent(linkId)}`)),
   /** Resolve `/s/<token>` (no sign-in; sets the show's share cookie). */

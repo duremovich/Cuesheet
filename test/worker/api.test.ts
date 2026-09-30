@@ -175,7 +175,7 @@ describe("API", () => {
       ws.addEventListener("message", (e) => resolve(JSON.parse(e.data as string)), { once: true }),
     );
     ws.accept();
-    expect(await first).toEqual({ type: "hello", showId: show.id, clients: 1, readOnly: 0 });
+    expect(await first).toMatchObject({ type: "hello", showId: show.id, clients: 1, readOnly: 0 });
     ws.close(1000, "done");
   });
 
