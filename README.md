@@ -80,7 +80,7 @@ to try on the **Cues** tab:
 - **Images**: drop a PNG/JPEG onto a content item's **Attachments** cell (or paste a
   screenshot into it, or **+ Add files** in its panel): a thumbnail appears in the grid,
   on the cue list's content chips and in the cue panel's content cards; click it for the
-  lightbox (←/→, Download, Delete with Undo). Paste or drop a photo into a note's compose
+  lightbox (←/→, Download, Delete with Undo: deleted files stay in R2 for a day). Paste or drop a photo into a note's compose
   box and it's attached when you save the note. Files go to R2 (local: `.wrangler/state`),
   25 MB each, 2 GB per show (usage in ⚙ Show settings).
 - **Gallery**: **Gallery** in the Content view bar shows cards with each item's first

@@ -28,7 +28,6 @@ import { USER_ID_HEADER } from "../do/ShowDO";
 import { buildAirtableImport, type CsvFile } from "../import/airtable";
 import type { AppEnv } from "../types";
 import * as attachments from "./attachments";
-import { releaseFiles } from "./files";
 import {
   declaredTooLarge,
   jsonBody,
@@ -248,8 +247,7 @@ export const showRoutes = new Hono<ShowEnv>()
       if (res.opIndex !== undefined) err.opIndex = res.opIndex;
       return c.json(err, res.status);
     }
-    const { ok: _ok, freed, ...out } = res;
-    if (freed.length) c.executionCtx.waitUntil(releaseFiles(c.env, c.var.show.id, freed));
+    const { ok: _ok, ...out } = res;
     return jsonBody<MutateResponse>(c, out);
   })
   .get("/shows/:id/history", requireMembership, async (c) => {

@@ -108,6 +108,7 @@ describe("Airtable import", () => {
     expect(versions.find((v) => v.content_id === vampRow?.id)).toMatchObject({
       version: "V02",
       is_current: true,
+      status: "Available",
     });
     expect(body.warnings.some((w) => /Version values not imported/.test(w))).toBe(false);
     expect(scenes[0]).toMatchObject({ number: "99", name: "Preshow" });

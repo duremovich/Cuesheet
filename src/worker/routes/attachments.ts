@@ -79,6 +79,18 @@ export async function uploadUrl(c: C): Promise<Response> {
   if ((await storageUsed(c.env, c.var.show.id)) + size > SHOW_STORAGE_LIMIT_BYTES) {
     return c.json({ error: full }, 413);
   }
+  const o = body?.originalSize;
+  const originalSize =
+    o &&
+    typeof o === "object" &&
+    Number.isInteger(o.width) &&
+    Number.isInteger(o.height) &&
+    o.width > 0 &&
+    o.height > 0 &&
+    o.width < 1_000_000 &&
+    o.height < 1_000_000
+      ? { width: o.width, height: o.height }
+      : undefined;
   const attachmentId = newId();
   await stub(c).reserveUpload(attachmentId, {
     userId: c.var.user.id,
@@ -88,6 +100,7 @@ export async function uploadUrl(c: C): Promise<Response> {
     filename,
     contentType: type.contentType,
     size,
+    ...(originalSize ? { originalSize } : {}),
   });
   return c.json({
     attachmentId,
@@ -158,6 +171,7 @@ export async function upload(c: C): Promise<Response> {
           r2_key: key,
           width: size?.width ?? null,
           height: size?.height ?? null,
+          ...(pending.originalSize ? { custom: { original_size: pending.originalSize } } : {}),
         },
       },
     ],

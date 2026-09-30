@@ -40,6 +40,14 @@ CREATE TABLE `content_versions` (
 );
 --> statement-breakpoint
 CREATE INDEX `content_versions_content_idx` ON `content_versions` (`content_id`);--> statement-breakpoint
+CREATE TABLE `pending_r2_deletes` (
+	`attachment_id` text PRIMARY KEY NOT NULL,
+	`r2_key` text NOT NULL,
+	`size` integer NOT NULL,
+	`deleted_at` integer NOT NULL
+);
+--> statement-breakpoint
+CREATE INDEX `pending_r2_deletes_at_idx` ON `pending_r2_deletes` (`deleted_at`);--> statement-breakpoint
 -- Default select options for content_versions.status (docs/spec/data-model.md).
 INSERT INTO `field_options` (`table`, `field`, `value`, `color`, `position`) VALUES
   ('content_versions', 'status', 'Rendering', 'yellow', 0),

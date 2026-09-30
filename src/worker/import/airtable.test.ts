@@ -50,12 +50,14 @@ describe("Airtable import helpers", () => {
       "105-001-VAMP,2.0,,,,,,",
       "105-002-X,,,,,,,",
     ].join("\n");
-    const plan = buildAirtableImport([{ name: "Content-Grid view.csv", text: csv }], {});
+    const plan = buildAirtableImport([{ name: "Content-Grid view.csv", text: csv }], {
+      "content_versions.status": [{ value: "Available", color: "green" }],
+    });
     expect(plan.created).toMatchObject({ content: 2, content_versions: 1 });
     const vamp = plan.ops.find((o) => o.op === "create" && o.table === "content");
     const version = plan.ops.find((o) => o.op === "create" && o.table === "content_versions");
     expect(version).toMatchObject({
-      fields: { content_id: vamp?.id, version: "V02", is_current: true },
+      fields: { content_id: vamp?.id, version: "V02", is_current: true, status: "Available" },
     });
   });
 

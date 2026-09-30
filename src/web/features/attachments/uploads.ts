@@ -42,12 +42,14 @@ type Listener = () => void;
 
 interface Entry {
   item: UploadItem;
-  file: Blob;
+  file: File;
   ready: Promise<unknown>;
   started: boolean;
 }
 
 let seq = 0;
+
+const tooBig = (name: string) => `${name} is over ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB`;
 
 export class UploadQueue {
   private entries: Entry[] = [];
@@ -58,7 +60,17 @@ export class UploadQueue {
 
   constructor(
     private readonly transport: UploadTransport,
-    private readonly opts: { concurrency?: number; onError?: (item: UploadItem) => void } = {},
+    private readonly opts: {
+      concurrency?: number;
+      onError?: (item: UploadItem) => void;
+      /**
+       * Runs before the upload (after `ready`): e.g. scale a huge photo down
+       * (`shrinkLargeImage`). The size limit applies to what it returns.
+       */
+      prepare?: (
+        file: File,
+      ) => Promise<{ file: Blob; originalSize?: { width: number; height: number } }>;
+    } = {},
   ) {}
 
   /**
@@ -85,11 +97,8 @@ export class UploadQueue {
       };
       const type = checkAttachmentType(file.type, item.filename);
       if ("error" in type) Object.assign(item, { status: "error", error: type.error });
-      else if (file.size > MAX_ATTACHMENT_BYTES) {
-        Object.assign(item, {
-          status: "error",
-          error: `${item.filename} is over ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB`,
-        });
+      else if (file.size > MAX_ATTACHMENT_BYTES && !this.opts.prepare) {
+        Object.assign(item, { status: "error", error: tooBig(item.filename) });
       }
       this.entries.push({ item, file, ready, started: item.status === "error" });
       added.push(item);
@@ -153,15 +162,21 @@ export class UploadQueue {
         throw new Error("The record wasn't saved, so its files weren't uploaded");
       }
       this.update(entry, { status: "uploading" });
+      const prepared = this.opts.prepare
+        ? await this.opts.prepare(entry.file)
+        : { file: entry.file as Blob };
+      if (prepared.file.size > MAX_ATTACHMENT_BYTES) throw new Error(tooBig(item.filename));
+      if (prepared.file.size !== item.size) this.update(entry, { size: prepared.file.size });
       const reserved = await this.transport.reserve(item.showId, {
         table: item.target.table,
         recordId: item.target.recordId,
         field: item.target.field ?? "attachments",
         filename: item.filename,
         contentType: entry.file.type,
-        size: item.size,
+        size: prepared.file.size,
+        ...(prepared.originalSize ? { originalSize: prepared.originalSize } : {}),
       });
-      await this.transport.put(reserved.uploadUrl, entry.file, reserved.contentType, (loaded) =>
+      await this.transport.put(reserved.uploadUrl, prepared.file, reserved.contentType, (loaded) =>
         this.update(entry, { loaded }),
       );
       this.entries = this.entries.filter((e) => e !== entry);

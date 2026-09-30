@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { type DrizzleSqliteDODatabase, drizzle } from "drizzle-orm/durable-sqlite";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import type { Role, ShowMetaDTO } from "../../shared/api";
+import { thumbnailKey } from "../../shared/attachments";
 import type { HistoryEntry, MutateResponse, ResolvedOp, SnapshotResponse } from "../../shared/ops";
 import {
   type AttachmentRow,
@@ -20,11 +21,12 @@ import {
   Batch,
   currentVersion,
   decodeRow,
-  type FreedFile,
+  dueR2Deletes,
   type HistoryQuery,
   loadFieldOptions,
   type MutationContext,
   OpError,
+  R2_DELETE_DELAY_MS,
   readHistory,
   readSnapshot,
   seedDefaultViews,
@@ -44,7 +46,7 @@ export const ACCESS_REVOKED_CODE = 4003;
 const MAX_BROADCAST_BYTES = 256 * 1024;
 
 export type MutateResult =
-  | ({ ok: true; freed: FreedFile[] } & MutateResponse)
+  | ({ ok: true } & MutateResponse)
   | { ok: false; status: 400 | 403; error: string; opIndex?: number };
 
 /** An upload reserved by POST /attachments/upload-url, waiting for its PUT. */
@@ -56,6 +58,7 @@ export interface PendingUpload {
   filename: string;
   contentType: string;
   size: number;
+  originalSize?: { width: number; height: number };
   expiresAt: number;
 }
 
@@ -148,7 +151,51 @@ export class ShowDO extends DurableObject<Env> {
       throw e;
     }
     if (result.version !== result.prevVersion) this.broadcastBatch(result, ctx, batch.viewOwners);
-    return { ok: true, ...result, freed: batch.freed };
+    if (batch.filesDeleted > 0) await this.schedulePurge(Date.now() + R2_DELETE_DELAY_MS);
+    return { ok: true, ...result };
+  }
+
+  // ---- deferred R2 deletes (Undo can restore a deleted file for a day) ----
+
+  private async schedulePurge(at: number): Promise<void> {
+    const current = await this.ctx.storage.getAlarm();
+    if (current === null || current > at) await this.ctx.storage.setAlarm(at);
+  }
+
+  /**
+   * Purge the R2 objects (file + thumbnail) of attachments deleted more than a day ago,
+   * give their bytes back to D1 `shows.storage_bytes`, and schedule the next purge.
+   */
+  override async alarm(): Promise<void> {
+    await this.purgeDeletedFiles(Date.now());
+  }
+
+  /** The alarm's work, at `now` (tests pass a time). Returns how many files went. */
+  async purgeDeletedFiles(now: number): Promise<number> {
+    const meta = await this.getMeta();
+    const { due, next } = dueR2Deletes(this.ctx.storage.sql, now);
+    if (meta && due.length > 0) {
+      const keys = due.flatMap((d) => [d.r2_key, thumbnailKey(meta.showId, d.attachment_id)]);
+      await this.env.FILES.delete(keys);
+      const bytes = due.reduce((n, d) => n + d.size, 0);
+      if (bytes > 0) {
+        await this.env.DB.prepare(
+          "UPDATE shows SET storage_bytes = max(0, storage_bytes - ?1) WHERE id = ?2",
+        )
+          .bind(bytes, meta.showId)
+          .run();
+      }
+      for (const d of due) {
+        this.ctx.storage.sql.exec(
+          "DELETE FROM pending_r2_deletes WHERE attachment_id = ?",
+          d.attachment_id,
+        );
+      }
+    }
+    // More than one batch due (500 at a time) → again soon; else when the next one is due.
+    const again = due.length >= 500 ? now + 1000 : next;
+    if (again !== null) await this.ctx.storage.setAlarm(again);
+    return due.length;
   }
 
   // ---- attachments (the Worker streams the bytes; see routes/attachments.ts) ----

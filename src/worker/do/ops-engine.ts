@@ -50,17 +50,13 @@ export interface MutationContext {
   allowCreatedAt?: boolean;
   /**
    * The upload route only: may create `attachments` rows (with their server-set fields).
-   * Clients can't; they upload (see routes/attachments.ts).
+   * Clients can't, except to restore a deleted one (Undo) whose file is still kept.
    */
   upload?: boolean;
 }
 
-/** An attachment row this batch deleted: its R2 objects go after commit (best effort). */
-export interface FreedFile {
-  id: string;
-  r2_key: string;
-  size: number;
-}
+/** How long a deleted attachment's R2 objects are kept (for Undo) before the alarm purges them. */
+export const R2_DELETE_DELAY_MS = 24 * 60 * 60 * 1000;
 
 export class OpError extends Error {
   constructor(
@@ -177,8 +173,8 @@ export class Batch {
    * sends them only to that owner's sockets.
    */
   readonly viewOwners = new Map<string, string>();
-  /** Attachments deleted by this batch (directly or by cascade). */
-  readonly freed: FreedFile[] = [];
+  /** Attachments this batch deleted (directly or by cascade): their files wait for purge. */
+  filesDeleted = 0;
   private options: Map<string, Set<string>> | null = null;
   private opIndex = 0;
   private readonly now: number;
@@ -528,7 +524,8 @@ export class Batch {
 
   private create(table: TableName, id: string, fields: FieldValues, placement: Placement) {
     this.checkRole(table, null, fields);
-    if (table === "attachments" && !this.ctx.upload) {
+    const restoring = table === "attachments" && !this.ctx.upload ? this.pendingFile(id) : null;
+    if (table === "attachments" && !this.ctx.upload && !restoring) {
       this.fail("Files are attached by uploading them", 403);
     }
     if (this.getRow(table, id)) this.fail(`${table} ${id} already exists`);
@@ -552,7 +549,16 @@ export class Batch {
         row[name] = this.validate(table, name, spec, value, table === "attachments");
       }
     }
-    if (table === "attachments") this.prepareAttachment(row);
+    if (table === "attachments") {
+      if (restoring) {
+        // Undo: the same file (kept in R2 until purged) comes back under the same id.
+        if (row.r2_key !== restoring.r2_key || row.size !== restoring.size) {
+          this.fail("A restored attachment must keep its file", 400);
+        }
+        this.sql.exec("DELETE FROM pending_r2_deletes WHERE attachment_id = ?", id);
+      }
+      this.prepareAttachment(row);
+    }
     if (table === "content_versions") this.prepareVersion(row);
     if (table === "views") {
       if (!isDataTable(row.table)) this.fail("views.table is required");
@@ -596,6 +602,18 @@ export class Batch {
       this.afterViewWrite(id);
     }
     if (table === "content_versions") this.afterVersionWrite(id);
+  }
+
+  /** A deleted attachment whose file is still kept (restorable), or null. */
+  private pendingFile(id: string): { r2_key: string; size: number } | null {
+    return (
+      this.sql
+        .exec<{ r2_key: string; size: number }>(
+          "SELECT r2_key, size FROM pending_r2_deletes WHERE attachment_id = ?",
+          id,
+        )
+        .toArray()[0] ?? null
+    );
   }
 
   /** A new attachment: its record must exist and have that attachment field. */
@@ -849,7 +867,15 @@ export class Batch {
       for (const f of files) this.remove("attachments", f.id as string, f);
     }
     if (table === "attachments") {
-      this.freed.push({ id, r2_key: String(before.r2_key), size: Number(before.size) || 0 });
+      // The file stays in R2 for a day so Undo can bring it back; the DO's alarm purges it.
+      this.sql.exec(
+        "INSERT OR REPLACE INTO pending_r2_deletes (attachment_id, r2_key, size, deleted_at) VALUES (?, ?, ?, ?)",
+        id,
+        before.r2_key,
+        Number(before.size) || 0,
+        this.now,
+      );
+      this.filesDeleted++;
     }
     this.sql.exec(`DELETE FROM ${q(table)} WHERE id = ?`, id);
     this.log(table, id, "*", decodeRow(table, before), undefined);
@@ -1061,4 +1087,25 @@ export function readHistory(sql: SqlStorage, query: HistoryQuery, userId?: strin
       new: r.new,
       clientId: r.client_id,
     }));
+}
+
+/** Deleted attachments' files due for purge at `now`, and when the next one is due. */
+export function dueR2Deletes(
+  sql: SqlStorage,
+  now: number,
+): { due: { attachment_id: string; r2_key: string; size: number }[]; next: number | null } {
+  const cutoff = now - R2_DELETE_DELAY_MS;
+  const due = sql
+    .exec<{ attachment_id: string; r2_key: string; size: number }>(
+      "SELECT attachment_id, r2_key, size FROM pending_r2_deletes WHERE deleted_at <= ? ORDER BY deleted_at LIMIT 500",
+      cutoff,
+    )
+    .toArray();
+  const later = sql
+    .exec<{ t: number | null }>(
+      "SELECT min(deleted_at) AS t FROM pending_r2_deletes WHERE deleted_at > ?",
+      cutoff,
+    )
+    .one().t;
+  return { due, next: later === null ? null : later + R2_DELETE_DELAY_MS };
 }

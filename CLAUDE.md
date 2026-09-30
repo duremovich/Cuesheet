@@ -203,7 +203,8 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   prefix); a cue still without one takes the scene when the nearest scene-bearing cues
   before and after it (CSV order) agree, else stays Unassigned. Note `created by` names go
   to `custom.created_by_name`; `Created Time` is read as UTC. A content row's `Version`
-  ("2.0") becomes one current `content_versions` record labelled "V02" (`versionLabel`).
+  ("2.0") becomes one current `content_versions` record labelled "V02" (`versionLabel`),
+  status Available.
 - **Writing an e2e test.** Add `e2e/<feature>.spec.ts`. Use helpers in `e2e/helpers.ts`
   (`login`, `createShow`, `uniqueName`). Tests run in parallel against one server whose DB
   persists for the run, so make data unique (`uniqueName`) and don't assume an empty DB.
@@ -317,7 +318,8 @@ views" below).
   author · time; ✎ or double-click edits the body in place (Enter saves, Escape cancels;
   if someone else deletes the note meanwhile, a toast says the edit was discarded and
   focus goes to `NoteFocusContext`, the tech compose box), × deletes at once with an
-  "Undo" toast for 8 s (`noteRestoreOps`: recreate with the same id, fields and links). A note's session defaults to the show's current session and is editable per
+  "Undo" toast for 8 s (`noteRestoreOps`: recreate with the same id, fields and links,
+  plus `attachmentRestoreOps` for its photos, whose files the server still keeps). A note's session defaults to the show's current session and is editable per
   note (the Session column / the note's Fields tab). Editability is `canEditNote` (editors: all notes; commenters: their own;
   viewers: none), mirroring the server; viewers get no compose box.
 - **Compose grammar** (`parseNoteText` in `features/notes/compose.ts`): Enter saves,
@@ -533,17 +535,26 @@ views" below).
   `thumb_key`, `position`. Which fields exist is `ATTACHMENT_FIELDS` in
   `src/shared/tables.ts` (`content.attachments`, `notes.attachments`; field type
   `attachment`, not a column). Rows go through the op engine (history, broadcast), but
-  **only the upload route creates them** (`MutationContext.upload`; a client `create`
-  gets 403); clients may update `position` (reorder) and delete. Permissions follow the
-  record: editors/owner anything, commenters only files on notes they created, viewers
-  nothing. Deleting a record deletes its attachments (explicit delete ops); every deleted
-  attachment row ends up in `Batch.freed`, and `/mutate` deletes its R2 object and
-  thumbnail and gives the bytes back after the response (`releaseFiles` in
-  `routes/files.ts`, `waitUntil`, best effort: a failure leaves an orphaned object, never
-  a row without a file).
+  **only the upload route creates new ones** (`MutationContext.upload`; a client `create`
+  gets 403, except a restore, below); clients may update `position` (reorder) and delete.
+  Permissions follow the record: editors/owner anything, commenters only files on notes
+  they created, viewers nothing. Deleting a record deletes its attachments (explicit
+  delete ops).
+- **Deletes are deferred in R2, so Undo works.** Deleting an attachment row (directly or
+  by cascade) never deletes its R2 objects synchronously: the engine records it in the DO
+  table `pending_r2_deletes` (`attachment_id`, `r2_key`, `size`, `deleted_at`) and the
+  ShowDO schedules its alarm. **Undo** (of a file delete, or of a note delete with photos)
+  is a client `create` of the attachment with its old id and fields
+  (`attachmentRestoreOps`); the engine accepts it only while the id is pending and the
+  `r2_key` and `size` match, and removes it from the list. The alarm
+  (`ShowDO.alarm` → `purgeDeletedFiles(now)`, `dueR2Deletes`) deletes the file and its
+  thumbnail from R2 for entries older than **24 h** (`R2_DELETE_DELAY_MS`), gives their
+  bytes back to D1 `shows.storage_bytes` (only then), and reschedules itself for the next
+  one. So clients send deletes at once; Undo is offered for 8 s (the toast), and the
+  server would accept it for a day.
 - **Routes** (`routes/attachments.ts`, registered in `shows.ts` behind
   `requireMembership`): `POST /api/shows/:id/attachments/upload-url {table, recordId,
-  field?, filename, contentType, size}` checks role, record, type and size and the storage
+  field?, filename, contentType, size, originalSize?}` checks role, record, type and size and the storage
   cap, and reserves an id in the DO (`reserveUpload`, 1 h, only for that user) →
   `{attachmentId, uploadUrl, contentType}`. R2 presigned URLs need API credentials we
   don't have locally, so `uploadUrl` is our own `PUT /api/shows/:id/attachments/:aid`,
@@ -564,14 +575,18 @@ views" below).
   Vite plugin): longest side 320 px (`THUMB_MAX`), JPEG for JPEG sources, PNG otherwise,
   stored in R2 and recorded with `ShowDO.setThumbKey` (not an edit: no history, no version
   bump; clients derive the URL from the id). Images already ≤ 320 px are served as their
-  own thumbnail. Images over 16 MP aren't decoded (a Worker has 128 MB): the thumb route
-  answers 404 and the client shows the original (`Thumb`'s `onError`).
+  own thumbnail. The Worker decodes at most 4096 × 4096 px (`MAX_DECODE_PIXELS`, ≈ 64 MB;
+  a Worker has 128 MB), so **the client scales bigger photos down before upload**
+  (`resize.ts` `shrinkLargeImage`, the queue's `prepare`: PNG/JPEG/WebP over 16.7 MP →
+  longest side ≤ 4096 px via `OffscreenCanvas`, `resizeTarget` in `shared/attachments.ts`)
+  and sends the original dimensions (`originalSize` → the row's `custom.original_size`).
+  Thumbnails therefore always exist for app uploads; for anything else too large (a raw
+  API upload) the thumb route answers 404 and `Thumb` falls back to the original.
 - **Client** (`features/attachments/`): `selectors.ts` (`attachmentsOf`, `thumbnailOf` =
   the first image, cached per map), `uploads.ts` (`UploadQueue`: client-side type/size
-  checks, reserve + PUT with progress through `putFile` (XMLHttpRequest), two at a time,
-  optional `ready` promise), `state.ts` (the page's queue, the open lightbox, deletes
-  waiting out their Undo: the delete op is sent after 8 s, since R2 bytes can't come back;
-  pending ones are sent with `keepalive` on pagehide or when leaving the show),
+  checks, `prepare` (the resize above), reserve + PUT with progress through `putFile`
+  (XMLHttpRequest), two at a time, optional `ready` promise), `state.ts` (the page's queue
+  and the open lightbox; `useDeleteFile` deletes at once and offers Undo),
   `Attachments.tsx` (`Thumb`, `AttachmentStrip`, `attachmentColumn`, `AttachmentsField`,
   the lightbox and `AttachmentsHost`, mounted once in `ShowWorkspace`). Upload errors
   toast.

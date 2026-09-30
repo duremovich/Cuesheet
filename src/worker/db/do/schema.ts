@@ -251,6 +251,22 @@ export const attachments = sqliteTable(
   (t) => [index("attachments_record_idx").on(t.table, t.record_id)],
 );
 
+/**
+ * R2 objects of deleted attachments, kept for 24 h so Undo can bring a file back (a
+ * restore recreates the row with the same id and removes it from here). The DO's alarm
+ * purges older ones from R2 and only then gives the bytes back to `shows.storage_bytes`.
+ */
+export const pending_r2_deletes = sqliteTable(
+  "pending_r2_deletes",
+  {
+    attachment_id: text("attachment_id").primaryKey(),
+    r2_key: text("r2_key").notNull(),
+    size: integer("size").notNull(),
+    deleted_at: integer("deleted_at").notNull(),
+  },
+  (t) => [index("pending_r2_deletes_at_idx").on(t.deleted_at)],
+);
+
 /** Per-show select options (`table.field` → values). Seeded by migration 0002. */
 export const field_options = sqliteTable(
   "field_options",

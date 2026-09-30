@@ -1,6 +1,7 @@
 // Attachments (R13) on the client: a record's files in order, and its thumbnail (the first
 // image). Cached per `attachments` map so results keep their identity until a file changes.
 import { attachmentKind, isImageType } from "../../../shared/attachments";
+import type { Op } from "../../../shared/ops";
 import type { AttachmentRow } from "../../../shared/tables";
 
 type Files = ReadonlyMap<string, AttachmentRow>;
@@ -85,4 +86,30 @@ export function positionAt(list: readonly AttachmentRow[], movingId: string, to:
   if (before === null) return (after as number) - 1;
   if (after === null) return before + 1;
   return (before + after) / 2;
+}
+
+/**
+ * Undo of a delete: recreate the rows with their ids, pointing at the same R2 files (the
+ * server keeps them for a day after a delete and only accepts a restore that matches).
+ */
+export function attachmentRestoreOps(files: readonly AttachmentRow[]): Op[] {
+  return files.map((f) => ({
+    op: "create",
+    table: "attachments",
+    id: f.id,
+    fields: {
+      table: f.table,
+      record_id: f.record_id,
+      field: f.field,
+      filename: f.filename,
+      content_type: f.content_type,
+      size: f.size,
+      r2_key: f.r2_key,
+      width: f.width,
+      height: f.height,
+      thumb_key: f.thumb_key,
+      position: f.position,
+      custom: f.custom,
+    },
+  }));
 }

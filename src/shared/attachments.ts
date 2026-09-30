@@ -171,3 +171,31 @@ export function imageSize(bytes: Uint8Array): { width: number; height: number } 
   }
   return null;
 }
+
+/**
+ * Largest image the Worker decodes for a thumbnail (width × height ≈ 64 MB of RGBA); the
+ * client scales bigger photos down before uploading them (`resizeTarget`), so every
+ * uploaded image gets a thumbnail.
+ */
+export const MAX_DECODE_PIXELS = 4096 * 4096;
+/** Longest side of an image the client scaled down before upload. */
+export const RESIZE_LONGEST = 4096;
+
+/**
+ * The size to scale an image to before upload, or null to upload it as it is (it's within
+ * MAX_DECODE_PIXELS). The result fits both RESIZE_LONGEST and MAX_DECODE_PIXELS.
+ */
+export function resizeTarget(
+  width: number,
+  height: number,
+): { width: number; height: number } | null {
+  if (width <= 0 || height <= 0 || width * height <= MAX_DECODE_PIXELS) return null;
+  const scale = Math.min(
+    RESIZE_LONGEST / Math.max(width, height),
+    Math.sqrt(MAX_DECODE_PIXELS / (width * height)),
+  );
+  return {
+    width: Math.max(1, Math.floor(width * scale)),
+    height: Math.max(1, Math.floor(height * scale)),
+  };
+}

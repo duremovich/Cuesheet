@@ -16,7 +16,7 @@ import { Chip } from "../../components/grid";
 import { optionColor } from "../../components/grid/Chip";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
 import { AttachmentStrip, uploadQueue } from "../attachments/Attachments";
-import { attachmentsOf } from "../attachments/selectors";
+import { attachmentRestoreOps, attachmentsOf } from "../attachments/selectors";
 import { useRecordUploads } from "../attachments/uploads";
 import { useWorkspace } from "../show/workspace";
 import { canEditNote, formatTimestamp } from "./columns";
@@ -215,11 +215,16 @@ export const NoteCard = memo(function NoteCard({
                 const state = store.getState();
                 const linkedCues = state.joins.noteCues.get(note.id) ?? [];
                 const linkedPeople = state.joins.noteAssignees.get(note.id) ?? [];
+                // Its photos go with it; the server keeps their files for a day, so Undo
+                // brings them back too.
+                const photos = attachmentsOf(state.tables.attachments, "notes", note.id);
                 // Built when Undo runs, so links to records deleted meanwhile are dropped.
-                const restore = () =>
-                  noteRestoreOps(note, linkedCues, linkedPeople, (table, id) =>
+                const restore = () => [
+                  ...noteRestoreOps(note, linkedCues, linkedPeople, (table, id) =>
                     store.getState().tables[table].has(id),
-                  );
+                  ),
+                  ...attachmentRestoreOps(photos),
+                ];
                 store
                   .mutate([{ op: "delete", table: "notes", id: note.id }])
                   .then(() =>

@@ -22,24 +22,11 @@ summarized at the bottom.
 - Airtable's `Created Time` has no time zone; the importer reads it as UTC. Should it use
   the show's (venue's) zone?
 - (Answered, M3a) Content `Version` values ("2.0", "4.0") are imported as one current
-  ContentVersion each ("V02", "V04"; status and date left empty).
+  ContentVersion each ("V02", "V04"; status Available, no date).
 
 Answered (M1): names missing from Personnel (the video team) become new people on import;
 cues without content take the scene of the cues around them when both sides agree (on the
 example base: 17 inferred, 28 left Unassigned). See CLAUDE.md, "Airtable import".
-
-### Raised by M3a (versions, attachments, gallery)
-
-- **Undoing a deleted note with photos** brings the note back without its photos: deleting
-  a record deletes its files from R2 at once. Keep it, confirm first when a note has
-  photos, or delay R2 deletes (a trash) so Undo can restore them?
-- **Thumbnails of very large images** (over 16 MP, e.g. 48 MP phone photos) aren't made in
-  the Worker (memory); the grid then loads the original. Resize on the phone before upload
-  (canvas), or use Cloudflare Images when deployed?
-- **Version date** is a day (`YYYY-MM-DD`), not a datetime; is a time ever needed?
-- **Imported versions** get no status; should they default to "Available"?
-- **Storage cap**: 2 GB per show, thumbnails not counted. Is that the right number, and
-  should the cap be per show or per team?
 
 ## Product
 
@@ -162,6 +149,15 @@ Things the first build had to decide; each is easy to change.
 - **Where files live** (M3a): uploaded to the app's R2 bucket (25 MB per file, 2 GB per
   show; images, PDF, MP4/MOV, text; HEIC refused with a hint). Thumbnails are generated in
   the Worker with Photon (WASM). Full-res media stays out. → CLAUDE.md "Attachments"
+- **Deleted files and Undo** (M3a): R2 objects of deleted attachments are kept for 24 h
+  (a `pending_r2_deletes` list in the DO, purged by its alarm, bytes released only then),
+  so Undo of a file or of a note with photos restores them. → CLAUDE.md "Attachments"
+- **Very large photos** (M3a): images over 16.7 MP are scaled down in the browser before
+  upload (longest side ≤ 4096 px), keeping the original size in `custom.original_size`;
+  thumbnails always exist.
+- **Version date** (M3a): a day (`YYYY-MM-DD`) is enough. Imported versions are
+  Available.
+- **Storage cap** (M3a): 2 GB per show (thumbnails not counted).
 - **Gallery** (M3a): a view layout option; the grid stays the default for Content (a
   "Content gallery" preset is one click away). → CLAUDE.md "Saved views"
 - **A table always has a shared view** (M2a review): the server refuses to delete the last

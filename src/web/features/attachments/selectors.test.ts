@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { AttachmentRow } from "../../../shared/tables";
-import { attachmentsOf, fileLabel, positionAt, thumbnailOf } from "./selectors";
+import {
+  attachmentRestoreOps,
+  attachmentsOf,
+  fileLabel,
+  positionAt,
+  thumbnailOf,
+} from "./selectors";
 
 let seq = 0;
 function file(fields: Partial<AttachmentRow>): AttachmentRow {
@@ -64,5 +70,33 @@ describe("attachment selectors", () => {
     expect(positionAt(list, (a as AttachmentRow).id, 1)).toBe(2.5); // between b and c
     expect(positionAt(list, (a as AttachmentRow).id, 2)).toBe(4); // after c
     expect(positionAt([], "x", 0)).toBe(1);
+  });
+
+  it("Undo recreates deleted files with their ids, pointing at the same R2 objects", () => {
+    const f = file({
+      r2_key: "shows/s/f/a.png",
+      custom: { original_size: { width: 1, height: 2 } },
+    });
+    expect(attachmentRestoreOps([f])).toEqual([
+      {
+        op: "create",
+        table: "attachments",
+        id: f.id,
+        fields: {
+          table: "content",
+          record_id: "c1",
+          field: "attachments",
+          filename: f.filename,
+          content_type: "image/png",
+          size: 10,
+          r2_key: "shows/s/f/a.png",
+          width: null,
+          height: null,
+          thumb_key: null,
+          position: f.position,
+          custom: { original_size: { width: 1, height: 2 } },
+        },
+      },
+    ]);
   });
 });

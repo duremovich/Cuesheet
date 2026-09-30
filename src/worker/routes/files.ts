@@ -1,7 +1,6 @@
-// R2 bookkeeping shared by the attachment routes and /mutate: the per-show storage counter in
-// D1 (`shows.storage_bytes`) and deleting files whose attachment rows are gone.
-import { SHOW_STORAGE_LIMIT_BYTES, thumbnailKey } from "../../shared/attachments";
-import type { FreedFile } from "../do/ops-engine";
+// The per-show storage counter in D1 (`shows.storage_bytes`) used by the attachment routes.
+// Bytes of deleted files are given back when the ShowDO's alarm purges them (a day later).
+import { SHOW_STORAGE_LIMIT_BYTES } from "../../shared/attachments";
 
 /**
  * Add `bytes` to the show's storage if it stays within the limit. Returns false (nothing
@@ -29,24 +28,4 @@ export async function storageUsed(env: Env, showId: string): Promise<number> {
     .bind(showId)
     .first<{ n: number }>();
   return row?.n ?? 0;
-}
-
-/**
- * After a batch deleted attachment rows: delete their files and thumbnails from R2 and give
- * the bytes back. Best effort (runs in `waitUntil`); a failure leaves an orphaned object,
- * never a row pointing at nothing.
- */
-export async function releaseFiles(env: Env, showId: string, freed: FreedFile[]): Promise<void> {
-  if (freed.length === 0) return;
-  try {
-    const keys = freed.flatMap((f) => [f.r2_key, thumbnailKey(showId, f.id)]);
-    for (let i = 0; i < keys.length; i += 1000) await env.FILES.delete(keys.slice(i, i + 1000));
-  } catch (e) {
-    console.error("R2 delete failed", e);
-  }
-  await releaseStorage(
-    env,
-    showId,
-    freed.reduce((n, f) => n + f.size, 0),
-  );
 }

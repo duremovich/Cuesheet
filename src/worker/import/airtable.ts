@@ -195,6 +195,11 @@ export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions
     sceneByText.get(text.toLowerCase()) ?? sceneByNumber.get(/\d+/.exec(text)?.[0] ?? "") ?? null;
 
   // ---- content ----
+  const availableStatus = fieldOptions["content_versions.status"]?.some(
+    (o) => o.value === "Available",
+  )
+    ? "Available"
+    : null;
   const contentByName = new Map<string, string>();
   const contentScene = new Map<string, string | null>();
   for (const r of byKind.get("content") ?? []) {
@@ -229,7 +234,13 @@ export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions
         op: "create",
         table: "content_versions",
         id: newId(),
-        fields: { content_id: id, version, is_current: true },
+        fields: {
+          content_id: id,
+          version,
+          is_current: true,
+          // The current render: Available (when the show has that status option).
+          status: availableStatus,
+        },
       });
       created.content_versions++;
     }

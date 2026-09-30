@@ -1,11 +1,11 @@
 // Image thumbnails in the Worker with Photon (Rust → WASM, `@cf-wasm/photon`, which ships a
 // workerd build). Decoding needs width × height × 4 bytes of WASM memory, so images above
-// MAX_PIXELS aren't thumbnailed (a Worker has 128 MB); clients fall back to the original.
+// MAX_PIXELS (the client scales photos down before upload) get none; clients show the original.
 import { PhotonImage, resize, SamplingFilter } from "@cf-wasm/photon";
-import { imageSize, THUMB_MAX } from "../../shared/attachments";
+import { imageSize, MAX_DECODE_PIXELS, THUMB_MAX } from "../../shared/attachments";
 
-/** 16 megapixels ≈ 64 MB decoded. */
-export const MAX_PIXELS = 16_000_000;
+/** 4096 × 4096 ≈ 64 MB decoded; the client scales bigger photos down before upload. */
+export const MAX_PIXELS = MAX_DECODE_PIXELS;
 
 export function thumbnailSize(width: number, height: number, max = THUMB_MAX) {
   const scale = Math.min(1, max / Math.max(width, height));

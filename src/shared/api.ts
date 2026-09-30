@@ -139,6 +139,11 @@ export interface UploadUrlRequest {
   filename: string;
   contentType: string;
   size: number;
+  /**
+   * The picture's size before the client scaled it down (images over 16 MP are resized to
+   * ≤ 4096 px before upload); kept in the attachment's `custom.original_size`.
+   */
+  originalSize?: { width: number; height: number };
 }
 
 export interface UploadUrlResponse {

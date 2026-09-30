@@ -1,6 +1,7 @@
 // Attachments (R13, S4): upload-url → PUT into R2 → row through the op engine; download,
 // thumbnails (Photon), roles, types, sizes, the per-show storage cap, and cleanup of R2
 // objects when rows (or their records) are deleted.
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { UploadUrlResponse } from "../../src/shared/api";
@@ -133,13 +134,33 @@ async function used(showId: string): Promise<number> {
   return row?.n ?? -1;
 }
 
-/** Cleanup runs in waitUntil: poll for it. */
-async function eventually(check: () => Promise<boolean>, what: string) {
-  for (let i = 0; i < 50; i++) {
-    if (await check()) return;
-    await new Promise((r) => setTimeout(r, 20));
-  }
-  throw new Error(`timed out waiting for ${what}`);
+/** What the client's Undo sends to recreate a deleted attachment (attachmentRestoreOps). */
+function restoreFields(f: AttachmentRow) {
+  const { table, record_id, field, filename, content_type, size, r2_key, width, height } = f;
+  return {
+    table,
+    record_id,
+    field,
+    filename,
+    content_type,
+    size,
+    r2_key,
+    width,
+    height,
+    thumb_key: f.thumb_key,
+    position: f.position,
+    custom: f.custom,
+  };
+}
+
+/** Attachment ids whose R2 files wait for the purge alarm. */
+async function pending(stub: DurableObjectStub): Promise<string[]> {
+  return runInDurableObject(stub, (_i, s) =>
+    s.storage.sql
+      .exec<{ id: string }>("SELECT attachment_id AS id FROM pending_r2_deletes")
+      .toArray()
+      .map((r) => r.id),
+  );
 }
 
 describe("attachments", () => {
@@ -438,7 +459,7 @@ describe("attachments", () => {
     await rename.arrayBuffer();
   });
 
-  it("deleting a file or its record deletes the R2 objects and frees the storage", async () => {
+  it("deletes keep the files for a day: Undo restores them; the alarm purges and frees storage", async () => {
     const { admin, showId, content } = await setup();
     const a = await uploadFile(
       showId,
@@ -457,29 +478,131 @@ describe("attachments", () => {
     await (await api(`${a.reserved.uploadUrl}/thumb`, { cookie: admin })).arrayBuffer();
     expect(await env.FILES.head(thumbnailKey(showId, rowA.id))).not.toBeNull();
     expect(await used(showId)).toBe(rowA.size + rowB.size);
+    const stub = env.SHOW.get(env.SHOW.idFromName(showId));
 
+    // Delete: the row goes at once; the file, its thumbnail and the bytes stay (for Undo).
     const del = await mutate(showId, admin, [{ op: "delete", table: "attachments", id: rowA.id }]);
     expect(del.status).toBe(200);
     await del.arrayBuffer();
-    await eventually(async () => (await env.FILES.head(rowA.r2_key)) === null, "file deleted");
-    await eventually(
-      async () => (await env.FILES.head(thumbnailKey(showId, rowA.id))) === null,
-      "thumb deleted",
-    );
-    await eventually(async () => (await used(showId)) === rowB.size, "storage freed");
+    expect(await env.FILES.head(rowA.r2_key)).not.toBeNull();
+    expect(await used(showId)).toBe(rowA.size + rowB.size);
+    expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).not.toBeNull();
+
+    // Undo: the same row (same id, same file) comes back, and leaves the purge list.
+    const fields = restoreFields(rowA);
+    const forged = await mutate(showId, admin, [
+      {
+        op: "create",
+        table: "attachments",
+        id: rowA.id,
+        fields: { ...fields, r2_key: `shows/${showId}/other/x.png` },
+      },
+    ]);
+    expect(forged.status).toBe(400); // must keep its own file
+    await forged.arrayBuffer();
+    const undo = await mutate(showId, admin, [
+      { op: "create", table: "attachments", id: rowA.id, fields },
+    ]);
+    expect(undo.status, await undo.clone().text()).toBe(200);
+    await undo.arrayBuffer();
+    const back = await api(a.reserved.uploadUrl, { cookie: admin });
+    expect(back.status).toBe(200);
+    await back.arrayBuffer();
+    expect(await pending(stub)).toEqual([]);
 
     // Deleting the content cascades to its attachments (explicit delete ops first).
     const res = await mutate(showId, admin, [{ op: "delete", table: "content", id: content }]);
     const body = (await res.json()) as MutateResponse;
     expect(body.ops.map((o) => [o.op, o.table])).toEqual([
       ["delete", "attachments"],
+      ["delete", "attachments"],
       ["delete", "content"],
     ]);
-    await eventually(async () => (await env.FILES.head(rowB.r2_key)) === null, "file deleted");
-    await eventually(async () => (await used(showId)) === 0, "storage freed");
-    const gone = await api(b.reserved.uploadUrl, { cookie: admin });
-    expect(gone.status).toBe(404);
-    await gone.arrayBuffer();
+    expect((await pending(stub)).sort()).toEqual([rowA.id, rowB.id].sort());
+
+    // The alarm before a day has passed purges nothing and stays scheduled.
+    await runDurableObjectAlarm(stub);
+    expect(await env.FILES.head(rowA.r2_key)).not.toBeNull();
+    expect(await used(showId)).toBe(rowA.size + rowB.size);
+    // A day later (backdated): files and thumbnails go, and so do the bytes.
+    await runInDurableObject(stub, (_i, s) => {
+      s.storage.sql.exec(
+        "UPDATE pending_r2_deletes SET deleted_at = deleted_at - ?",
+        25 * 60 * 60 * 1000,
+      );
+      return s.storage.setAlarm(Date.now() + 60_000);
+    });
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    expect(await env.FILES.head(rowA.r2_key)).toBeNull();
+    expect(await env.FILES.head(rowB.r2_key)).toBeNull();
+    expect(await env.FILES.head(thumbnailKey(showId, rowA.id))).toBeNull();
+    expect(await used(showId)).toBe(0);
+    expect(await pending(stub)).toEqual([]);
+    // Nothing left to purge: no alarm.
+    expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).toBeNull();
+
+    // Too late to restore: the file is gone, so the row can't come back.
+    const late = await mutate(showId, admin, [
+      { op: "create", table: "content", id: content, fields: {} },
+      { op: "create", table: "attachments", id: rowB.id, fields: restoreFields(rowB) },
+    ]);
+    expect(late.status).toBe(403);
+    await late.arrayBuffer();
+  });
+
+  it("Undo of a deleted note brings its photos back (commenter, own note)", async () => {
+    const { admin, showId } = await setup();
+    const commenter = await addMember(showId, admin, "commenter");
+    const note = newId();
+    expect(
+      (
+        await mutate(showId, commenter.cookie, [
+          { op: "create", table: "notes", id: note, fields: { body: "haze" } },
+        ])
+      ).status,
+    ).toBe(200);
+    const up = await uploadFile(
+      showId,
+      commenter.cookie,
+      { table: "notes", recordId: note },
+      { name: "stage.png", type: "image/png", bytes: await png(8, 6) },
+    );
+    const photo = ((await up.put.json()) as { attachment: AttachmentRow }).attachment;
+    const del = await mutate(showId, commenter.cookie, [
+      { op: "delete", table: "notes", id: note },
+    ]);
+    expect(del.status).toBe(200);
+    await del.arrayBuffer();
+    const fields = restoreFields(photo);
+    const undo = await mutate(showId, commenter.cookie, [
+      { op: "create", table: "notes", id: note, fields: { body: "haze" } },
+      { op: "create", table: "attachments", id: photo.id, fields },
+    ]);
+    expect(undo.status, await undo.clone().text()).toBe(200);
+    await undo.arrayBuffer();
+    const snap = await snapshot(showId, admin);
+    expect(snap.tables.attachments.map((f) => [f.id, f.record_id])).toEqual([[photo.id, note]]);
+  });
+
+  it("keeps the original size of a photo the client scaled down", async () => {
+    const { admin, showId, content } = await setup();
+    const bytes = await png(40, 30);
+    const r = await uploadUrl(showId, admin, {
+      table: "content",
+      recordId: content,
+      filename: "big.png",
+      contentType: "image/png",
+      size: bytes.length,
+      originalSize: { width: 8000, height: 6000 },
+    });
+    const reserved = (await r.json()) as UploadUrlResponse;
+    const put = await api(reserved.uploadUrl, { method: "PUT", cookie: admin, body: bytes });
+    const { attachment } = (await put.json()) as { attachment: AttachmentRow };
+    expect(attachment).toMatchObject({
+      width: 40,
+      height: 30,
+      custom: { original_size: { width: 8000, height: 6000 } },
+    });
   });
 
   it("caps a show's storage at 2 GB and reports usage", async () => {

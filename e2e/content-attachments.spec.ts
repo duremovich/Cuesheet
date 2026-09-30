@@ -238,7 +238,6 @@ test("versions: add one, the cue chip shows it, set another current, delete with
 test("attachments: drop a PNG on the content cell, thumbnails everywhere, lightbox, delete with undo", async ({
   browser,
 }) => {
-  test.setTimeout(60_000); // waits out a delete's Undo window
   const { page, showId, vampId, cueId } = await exampleShow(browser);
   await page.goto(`/shows/${showId}/content?content=${vampId}`);
   const cell = contentRow(page, vampId).locator('[data-col="attachments"]');
@@ -304,7 +303,8 @@ test("attachments: drop a PNG on the content cell, thumbnails everywhere, lightb
   const card = cuePanel.getByTestId("content-card").filter({ hasText: "105-001-VAMP" });
   await expectLoaded(card.getByTestId("thumb").locator("img"));
 
-  // Delete from the lightbox with Undo: kept.
+  // Delete from the lightbox: sent at once; Undo brings the same file back (the server
+  // keeps deleted files in R2 for a day).
   await page.goto(`/shows/${showId}/content?content=${vampId}`);
   await contentRow(page, vampId)
     .locator('[data-col="attachments"]')
@@ -312,13 +312,20 @@ test("attachments: drop a PNG on the content cell, thumbnails everywhere, lightb
     .click();
   await lightbox.getByRole("button", { name: "Delete" }).click();
   await expect(contentRow(page, vampId).getByTestId("thumb")).toHaveCount(1);
+  const files = async (): Promise<string[]> =>
+    (await snap(page, showId)).tables.attachments.map((a) => a.filename).sort();
+  await expect.poll(files).toEqual(["vamp-still.png"]);
   await page
     .getByTestId("toast")
     .filter({ hasText: "Deleted vamp-alt.png." })
     .getByRole("button", { name: "Undo" })
     .click();
   await expect(contentRow(page, vampId).getByTestId("thumb")).toHaveCount(2);
-  // …and once the Undo window has passed, a delete goes to the server (and R2).
+  await expect.poll(files).toEqual(["vamp-alt.png", "vamp-still.png"]);
+  await expectLoaded(
+    contentRow(page, vampId).getByRole("button", { name: "Open vamp-alt.png" }).locator("img"),
+  );
+  // Deleted for good this time.
   await page.keyboard.press("Escape");
   await contentRow(page, vampId)
     .locator('[data-col="attachments"]')
@@ -329,17 +336,43 @@ test("attachments: drop a PNG on the content cell, thumbnails everywhere, lightb
   await expect(lightbox.getByTestId("lightbox-filename")).toHaveText("vamp-still.png");
   await page.keyboard.press("Escape");
   await expect(lightbox).toHaveCount(0);
-  await expect
-    .poll(async () => (await snap(page, showId)).tables.attachments.map((a) => a.filename), {
-      timeout: 15_000,
-    })
-    .toEqual(["vamp-still.png"]);
+  await expect.poll(files).toEqual(["vamp-still.png"]);
   const s = await snap(page, showId);
   expect(s.tables.attachments[0]?.record_id).toBe(vampId);
 
   // Storage usage in the show settings.
   await page.getByRole("button", { name: /Show settings/ }).click();
   await expect(page.getByTestId("storage-usage")).toContainText("of 2 GB used");
+});
+
+test("a photo over 16 MP is scaled down in the browser before upload; it gets a thumbnail", async ({
+  browser,
+}) => {
+  const { page, showId, vampId } = await exampleShow(browser);
+  await page.goto(`/shows/${showId}/content?content=${vampId}`);
+  const cell = contentRow(page, vampId).locator('[data-col="attachments"]');
+  await expect(cell).toBeVisible();
+  await dropFiles(cell, [
+    { name: "huge.png", type: "image/png", bytes: png(5000, 4000, [10, 200, 90]) },
+  ]);
+  const thumb = cell.getByTestId("thumb").locator("img");
+  await expectLoaded(thumb);
+  expect(await thumb.evaluate((el) => (el as HTMLImageElement).naturalWidth)).toBe(320);
+  const s = (await (await page.request.get(`/api/shows/${showId}/snapshot`)).json()) as {
+    tables: {
+      attachments: {
+        filename: string;
+        width: number;
+        height: number;
+        custom: { original_size?: { width: number; height: number } };
+      }[];
+    };
+  };
+  expect(s.tables.attachments.find((a) => a.filename === "huge.png")).toMatchObject({
+    width: 4096,
+    height: 3276,
+    custom: { original_size: { width: 5000, height: 4000 } },
+  });
 });
 
 test("gallery: the view toggle shows cards with the image; preset view; 390 px has two columns", async ({
@@ -448,9 +481,23 @@ test("notes: paste an image into the compose box; it's attached once the note is
   await expect(panel.getByTestId("pending-file")).toHaveCount(0);
   const s = await snap(page, showId);
   const saved = s.tables.notes.find((n) => n.body === body);
-  expect(
-    s.tables.attachments.filter((a) => a.record_id === saved?.id).map((a) => a.filename),
-  ).toEqual(["stage.png"]);
+  const photos = async () =>
+    (await snap(page, showId)).tables.attachments
+      .filter((a) => a.record_id === saved?.id)
+      .map((a) => a.filename);
+  expect(await photos()).toEqual(["stage.png"]);
+
+  // Deleting the note deletes its photo; Undo brings both back.
+  await note.getByRole("button", { name: "Delete note" }).click();
+  await expect(note).toHaveCount(0);
+  await expect.poll(photos).toEqual([]);
+  await page
+    .getByTestId("toast")
+    .filter({ hasText: "Note deleted." })
+    .getByRole("button", { name: "Undo" })
+    .click();
+  await expectLoaded(note.getByTestId("thumb").locator("img"));
+  await expect.poll(photos).toEqual(["stage.png"]);
 });
 
 test("quick add: the camera input attaches a photo to the saved note", async ({ browser }) => {

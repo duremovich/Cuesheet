@@ -3,26 +3,15 @@
 // lightbox (prev/next, download, delete with Undo) and <AttachmentsHost>, mounted once in
 // the show workspace. Thumbnails come from GET …/thumb (made by the Worker); when there is
 // none (too large to decode, or not an image) the original / a type label is shown.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { attachmentUrl, formatBytes, thumbnailUrl } from "../../../shared/attachments";
 import type { AttachmentRow } from "../../../shared/tables";
 import type { Column } from "../../components/grid/types";
-import { api } from "../../lib/api";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
 import { useWorkspace, type Workspace } from "../show/workspace";
 import styles from "./Attachments.module.css";
-import { attachmentsOf, fileLabel, isImage, positionAt } from "./selectors";
-import {
-  flushDeletes,
-  openLightbox,
-  scheduleDelete,
-  UNDO_MS,
-  undoDelete,
-  uploadErrors,
-  uploadQueue,
-  useHiddenFiles,
-  useLightbox,
-} from "./state";
+import { attachmentRestoreOps, attachmentsOf, fileLabel, isImage, positionAt } from "./selectors";
+import { openLightbox, uploadErrors, uploadQueue, useLightbox } from "./state";
 import { progressOf, useRecordUploads } from "./uploads";
 
 export { uploadQueue } from "./state";
@@ -37,33 +26,44 @@ export function canAttachTo(
   return ws.role === "commenter" && table === "notes" && record?.created_by === ws.userId;
 }
 
-/** A record's files, minus ones deleted and waiting out their Undo. */
+/** A record's files in order. */
 export function useRecordFiles(table: string, recordId: string, field = "attachments") {
-  const all = useShowStore((s) => attachmentsOf(s.tables.attachments, table, recordId, field));
-  const hidden = useHiddenFiles();
-  return useMemo(() => (hidden.size ? all.filter((f) => !hidden.has(f.id)) : all), [all, hidden]);
+  return useShowStore((s) => attachmentsOf(s.tables.attachments, table, recordId, field));
 }
 
-/** Delete a file with an Undo toast (the delete is sent when the toast runs out). */
+/** How long Undo is offered after deleting a file. */
+const UNDO_MS = 8000;
+
+/**
+ * Delete a file now, with an Undo toast. The server keeps the R2 object for a day (the
+ * DO's alarm purges it), so Undo recreates the row pointing at the same file.
+ */
 export function useDeleteFile() {
   const ws = useWorkspace();
   const store = useShowStoreInstance();
   return useCallback(
     (file: AttachmentRow) => {
-      const ops = [{ op: "delete" as const, table: "attachments" as const, id: file.id }];
-      scheduleDelete(file.id, (keepalive) => {
-        if (keepalive) {
-          void api
-            .mutate(ws.showId, { clientId: store.clientId, ops }, { keepalive: true })
-            .catch(() => undefined);
-        } else {
-          store.mutate(ops).catch((e: unknown) => ws.reportError(e, "delete the file"));
-        }
-      });
-      ws.toast(`Deleted ${file.filename}.`, "info", {
-        duration: UNDO_MS,
-        action: { label: "Undo", run: () => undoDelete(file.id) },
-      });
+      store
+        .mutate([{ op: "delete", table: "attachments", id: file.id }])
+        .then(() =>
+          ws.toast(`Deleted ${file.filename}.`, "info", {
+            duration: UNDO_MS,
+            action: {
+              label: "Undo",
+              run: () => {
+                const state = store.getState();
+                const parent = (
+                  state.tables as unknown as Record<string, ReadonlyMap<string, unknown>>
+                )[file.table];
+                if (!parent?.has(file.record_id)) return; // its record went too
+                store
+                  .mutate(attachmentRestoreOps([file]))
+                  .catch((e: unknown) => ws.reportError(e, "restore the file"));
+              },
+            },
+          }),
+        )
+        .catch((e: unknown) => ws.reportError(e, "delete the file"));
     },
     [ws, store],
   );
@@ -592,10 +592,7 @@ function Lightbox() {
   );
 }
 
-/**
- * Mounted once in the show workspace: the lightbox, upload errors as toasts, and deletes
- * still waiting out their Undo sent when the page is hidden or left.
- */
+/** Mounted once in the show workspace: the lightbox, and upload errors as toasts. */
 export function AttachmentsHost() {
   const ws = useWorkspace();
   const toast = ws.toast;
@@ -607,20 +604,6 @@ export function AttachmentsHost() {
       }),
     [toast],
   );
-  useEffect(() => {
-    const onHide = () => {
-      if (document.visibilityState === "hidden") flushDeletes(true);
-    };
-    const onPageHide = () => flushDeletes(true);
-    window.addEventListener("pagehide", onPageHide);
-    document.addEventListener("visibilitychange", onHide);
-    return () => {
-      window.removeEventListener("pagehide", onPageHide);
-      document.removeEventListener("visibilitychange", onHide);
-      // Leaving the show: send them now.
-      flushDeletes(true);
-      openLightbox(null);
-    };
-  }, []);
+  useEffect(() => () => openLightbox(null), []);
   return <Lightbox />;
 }

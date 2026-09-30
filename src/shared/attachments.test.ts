@@ -6,6 +6,8 @@ import {
   cleanFilename,
   formatBytes,
   imageSize,
+  MAX_DECODE_PIXELS,
+  resizeTarget,
   thumbnailKey,
   thumbnailUrl,
 } from "./attachments";
@@ -89,5 +91,16 @@ describe("attachments (shared)", () => {
     expect(imageSize(webp)).toEqual({ width: 320, height: 240 });
 
     expect(imageSize(new TextEncoder().encode("hello world, not an image"))).toBeNull();
+  });
+
+  it("scales photos over 16.7 MP down to fit 4096 px and MAX_DECODE_PIXELS", () => {
+    expect(resizeTarget(4000, 3000)).toBeNull();
+    expect(resizeTarget(4096, 4096)).toBeNull();
+    expect(resizeTarget(8000, 6000)).toEqual({ width: 4096, height: 3072 });
+    const pano = resizeTarget(20000, 1000);
+    expect(pano).toEqual({ width: 4096, height: 204 });
+    const square = resizeTarget(6000, 6000) as { width: number; height: number };
+    expect(square.width * square.height).toBeLessThanOrEqual(MAX_DECODE_PIXELS);
+    expect(Math.max(square.width, square.height)).toBeLessThanOrEqual(4096);
   });
 });

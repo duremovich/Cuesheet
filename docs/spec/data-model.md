@@ -163,7 +163,7 @@ become version records.
 | --- | --- | --- |
 | `content` | link → Content | |
 | `version` | text | "V03" — text so "V03a" works |
-| `date` | date | `YYYY-MM-DD` (a day; see open questions) |
+| `date` | date | `YYYY-MM-DD` (a day) |
 | `rendered_by` | link → Person | |
 | `changes` | long text | what changed from the previous version |
 | `file_path` | text / URL | |

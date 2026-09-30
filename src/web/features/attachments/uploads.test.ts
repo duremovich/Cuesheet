@@ -139,4 +139,25 @@ describe("upload queue", () => {
       "Show storage is full",
     ]);
   });
+
+  it("prepares files first (a huge photo scaled down) and sends its original size", async () => {
+    const { transport, reserved, puts } = fakeTransport();
+    const small = new Blob([new Uint8Array(10)], { type: "image/jpeg" });
+    const q = new UploadQueue(transport, {
+      prepare: async () => ({ file: small, originalSize: { width: 8000, height: 6000 } }),
+    });
+    // Over the size limit before preparing is fine: the limit applies to what's sent.
+    const big = { name: "huge.jpg", type: "image/jpeg", size: MAX_ATTACHMENT_BYTES + 5 } as File;
+    const [item] = q.add("show", { table: "content", recordId: "c1" }, [big]);
+    expect(item?.status).toBe("waiting");
+    await tick();
+    await tick();
+    expect(reserved[0]).toMatchObject({ size: 10, originalSize: { width: 8000, height: 6000 } });
+    puts[0]?.done.resolve();
+    await q.idle();
+    const tooBig = new UploadQueue(transport, { prepare: async (f) => ({ file: f }) });
+    tooBig.add("show", { table: "content", recordId: "c1" }, [big]);
+    await tooBig.idle();
+    expect(tooBig.getItems()[0]).toMatchObject({ status: "error", error: /over 25 MB/ });
+  });
 });
