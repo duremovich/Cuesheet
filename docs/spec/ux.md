@@ -3,6 +3,16 @@
 How the app behaves in the places where Airtable gets in the way. Requirement IDs refer to
 [requirements.md](requirements.md).
 
+## Theme
+
+*R28*
+
+Dark by default. All colors are theme tokens (background layers, text, borders, accent,
+status colors, select-option palette) so every component, including conditional
+formatting and select chips, renders on both themes. Elevation in dark mode is shown with
+lighter surfaces, not shadows; text contrast meets WCAG AA. A toggle in the header
+switches themes; the choice is remembered per browser. Print layouts are always light.
+
 ## Ordering and sorting
 
 *R1, R2, R3*

@@ -57,6 +57,9 @@ specified in [ux.md](ux.md); the tables in [data-model.md](data-model.md).
   color), free, per view. Rules can use formula fields.
 - **R18 Detail panel** for any record: all fields, linked records, notes, history, images.
 - **R19 Gallery view** for surfaces and content.
+- **R28 Dark mode by default.** The app opens in a dark theme; a light theme is one click
+  away and the choice persists. No pure white surfaces in dark mode; select-option and
+  formatting colors stay readable on both themes.
 - **R20 Script view.** Import a script (PDF, DOCX or Google Doc); read it in the browser
   with cues in the margin at their anchor, showing cue number, trigger type and trigger
   text; place a cue by selecting text; place LX/timecode/visual cues at a position; jump
