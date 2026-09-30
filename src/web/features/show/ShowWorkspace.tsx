@@ -22,7 +22,7 @@ import { CommandPalette, goToCommands, type PaletteCommand } from "../search/Com
 import { prefKey, readPref, writePref } from "../shared/prefs";
 import { Toasts, useToasts } from "../shared/Toasts";
 import type { FocusState } from "../shared/useTableChrome";
-import { techUrl } from "../tech/useTechShortcut";
+import { TECH_SHORTCUT_LABEL, techUrl, useTechShortcut } from "../tech/useTechShortcut";
 import { ShowSettingsButton } from "./ShowSettings";
 import styles from "./ShowWorkspace.module.css";
 import { rowUrl, TABS, type TabKey } from "./tabs";
@@ -60,6 +60,8 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
   const showName = useShowStore((s) => s.show?.name) ?? data.show.name;
   const [searchParams] = useSearchParams();
   const currentCue = searchParams.get("cue");
+  // ⌘/Ctrl+Shift+. anywhere in the show: tech mode at the current cue.
+  useTechShortcut(showId, currentCue);
 
   // Members (for note authors, and Show settings).
   const [members, setMembers] = useState<MemberDTO[] | null>(null);
@@ -211,7 +213,7 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
       {
         id: "tech",
         label: "Tech mode",
-        hint: "T in the cue list",
+        hint: TECH_SHORTCUT_LABEL,
         run: () => navigate(techUrl(showId, currentCue)),
       },
       {
@@ -279,7 +281,8 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
               className={styles.navButton}
               to={techUrl(showId, currentCue)}
               aria-current={pathname.endsWith("/tech") ? "page" : undefined}
-              title="Tech mode (T in the cue list)"
+              title={`Tech mode (${TECH_SHORTCUT_LABEL})`}
+              aria-keyshortcuts="Control+Shift+Period Meta+Shift+Period"
             >
               Tech
             </Link>

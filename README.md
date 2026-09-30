@@ -60,8 +60,9 @@ to try on the **Cues** tab:
   from → to).
 - **Notes**: in a cue's Notes tab type a note and press Enter; click type chips, ⌥1–5 for
   priority, `@name` to assign; click a note's status to cycle Open → In progress → Done.
-  Start a note with `8.5 ` to put it on cue 8.50 instead, or with `*` for a general note.
-- **Tech mode** (**Tech** in the header, or **T** in the cue list): set the **Session**
+  Start a note with `8.5: ` (or `#8.5 `, `q8.5 `) to put it on cue 8.50 instead, or with
+  `*` for a general note.
+- **Tech mode** (**Tech** in the header, **⌘/Ctrl+Shift+.**, or ⌘K → Tech mode): set the **Session**
   (e.g. "Tech 2") once, then ↓/↑ (or Space) to move through cues, type, Enter; ⌘/Ctrl+G
   jumps to a cue number. On a phone, **＋** opens quick add: pick a cue, type, Add note.
 

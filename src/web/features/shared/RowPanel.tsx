@@ -7,8 +7,8 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TableName } from "../../../shared/tables";
 import type { Column } from "../../components/grid/types";
-import { useShowStore } from "../../lib/show-store";
-import type { NotesSubject } from "../notes/compose";
+import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
+import { type NotesSubject, notesFor } from "../notes/compose";
 import { NotesPanel } from "../notes/NotesPanel";
 import { useWorkspace } from "../show/workspace";
 import { CueContentCards } from "./CueContentCards";
@@ -81,17 +81,14 @@ export function RowPanel<Row>({
   );
   const notes = useShowStore((s) => s.tables.notes);
   const noteCues = useShowStore((s) => s.joins.noteCues);
-  const noteCount = useMemo(() => {
-    if (!notesSubject) return 0;
-    let n = 0;
-    for (const note of notes.values()) {
-      if (note.status === "Done") continue;
-      if (notesSubject.table === "cues" && noteCues.get(note.id)?.includes(recordId)) n++;
-      else if (notesSubject.table === "content" && note.content_id === recordId) n++;
-      else if (notesSubject.table === "scenes" && note.scene_id === recordId) n++;
-    }
-    return n;
-  }, [notesSubject, notes, noteCues, recordId]);
+  const cues = useShowStore((s) => s.tables.cues);
+  const store = useShowStoreInstance();
+  // Open notes, by the same definition as the Notes tab (a scene: its notes and its cues').
+  // biome-ignore lint/correctness/useExhaustiveDependencies: notes, links and cues are the inputs
+  const noteCount = useMemo(
+    () => (notesSubject ? notesFor(store.getState(), notesSubject, { openOnly: true }).length : 0),
+    [store, notesSubject?.table, notesSubject?.id, notes, noteCues, cues],
+  );
 
   const labels = useMemo<FieldLabels>(
     () => Object.fromEntries(columns.map((c) => [c.key, c.title])),

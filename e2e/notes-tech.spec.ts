@@ -170,6 +170,16 @@ test("notes panel on a cue: add a typed, prioritised note; cycle it to Done", as
   await page.goto(`/shows/${showId}/notes?note=${saved.id}`);
   await expect(row).toBeVisible(); // the Done group opens to show it
   expect(await rowIndex()).toBeGreaterThan(await groupIndex("Done"));
+
+  // A note's session can be edited on its own, in its row panel.
+  await row.locator('[data-col="body"]').click();
+  await page.keyboard.press("Space");
+  const notePanel = page.getByTestId("row-panel");
+  const session = notePanel.getByRole("textbox", { name: "Session" });
+  await session.fill("Preview 1");
+  await session.press("Enter");
+  await expect(row.locator('[data-col="session"]')).toHaveText("Preview 1");
+  await expect.poll(async () => (await noteByBody(page, showId, body)).session).toBe("Preview 1");
 });
 
 test("tech mode: step with ↓, prefixes, general notes, the session label", async ({ browser }) => {
@@ -178,12 +188,19 @@ test("tech mode: step with ↓, prefixes, general notes, the session label", asy
   await other.goto(`/shows/${showId}/cues`);
   await expect(cueGrid(other)).toBeVisible();
 
-  // T in the cue list opens tech mode at the active cue.
+  // A plain "t" in the cue list types into the cell (type-to-edit wins)…
   await page.goto(`/shows/${showId}/cues`);
   const first = cueGrid(page).getByTestId("grid-row").first().locator('[data-col="number"]');
   await first.click();
+  await expect(page).toHaveURL(/\/cues\?cue=/);
   await page.keyboard.press("t");
-  await expect(page).toHaveURL(/\/tech\?cue=/);
+  await expect(first.getByRole("textbox")).toHaveValue("t");
+  await page.keyboard.press("Escape");
+  await expect(page).toHaveURL(/\/cues/);
+  // …and ⌘/Ctrl+Shift+. opens tech mode at the active cue.
+  const firstId = new URL(page.url()).searchParams.get("cue");
+  await page.keyboard.press("ControlOrMeta+Shift+Period");
+  await expect(page).toHaveURL(new RegExp(`/tech\\?cue=${firstId}`));
   const tech = page.getByTestId("tech-mode");
   const compose = tech.getByRole("textbox", { name: "Tech note" });
   await expect(compose).toBeFocused();
@@ -217,9 +234,13 @@ test("tech mode: step with ↓, prefixes, general notes, the session label", asy
   expect(n1.session).toBe("Tech 2");
   await expect(tech.getByTestId("note").filter({ hasText: onThird })).toBeVisible();
 
-  // "8.5 …" goes to cue 8.50; the current cue stays.
+  // A bare leading number is just text…
+  await page.keyboard.type("8.5 fix");
+  await expect(tech.getByTestId("compose-target")).toHaveText(`→ Cue ${numbers[2]}`);
+  await compose.fill("");
+  // …"8.5: …" goes to cue 8.50; the current cue stays.
   const fade = uniqueName("fix fade");
-  await page.keyboard.type(`8.5 ${fade}`);
+  await page.keyboard.type(`8.5: ${fade}`);
   await expect(tech.getByTestId("compose-target")).toHaveText("→ Cue 8.50");
   await page.keyboard.press("Enter");
   const n2 = await noteByBody(page, showId, fade);

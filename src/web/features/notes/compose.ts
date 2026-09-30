@@ -2,7 +2,8 @@
 // panel: which notes belong to a record, their order, status cycling, and the ops for a
 // new note.
 //
-//   "8.5 needs to be a fade"   → linked to cue 8.5 (= 8.50) instead of the current cue
+//   "8.5: needs to be a fade"  → linked to cue 8.5 (= 8.50) instead of the current cue
+//   "q8.5 …", "Q8.5 …", "#8.5 …" → the same; a bare "8.5 …" is just text
 //   "* order more haze"        → a general note: no cue, no content
 //   "fix edges @Casey"         → assigned to Casey (the @picker does the same)
 import { newId } from "../../../shared/ids";
@@ -35,7 +36,11 @@ interface PersonLike {
   name: string | null;
 }
 
-const CUE_PREFIX = /^(\d+(?:\.\d+)?[A-Za-z]?)\s+([\s\S]*)$/;
+/**
+ * An explicit cue prefix: `q8.5 …`, `Q8.5 …`, `#8.5 …` (then whitespace), or `8.5: …` (a
+ * colon). A bare leading number is just text ("3 people in the wings").
+ */
+const CUE_PREFIX = /^(?:[qQ#](\d+(?:\.\d+)?[A-Za-z]?)\s+|(\d+(?:\.\d+)?[A-Za-z]?):\s*)([\s\S]*)$/;
 const MENTION = /(^|\s)@([^\s@]+)/g;
 
 const squash = (s: string) => s.toLowerCase().replace(/\s+/g, "");
@@ -92,10 +97,11 @@ export function parseNoteText(
     rest = rest.slice(1).trim();
   } else {
     const m = CUE_PREFIX.exec(rest);
-    const cue = m ? findCue(ctx.cues, m[1] as string, ctx.currentCueId) : undefined;
-    if (m && cue) {
-      target = { kind: "cue", cueId: cue.id, number: cue.number ?? (m[1] as string) };
-      rest = (m[2] as string).trim();
+    const typed = m ? ((m[1] ?? m[2]) as string) : "";
+    const cue = m ? findCue(ctx.cues, typed, ctx.currentCueId) : undefined;
+    if (m && cue && (m[3] as string).trim()) {
+      target = { kind: "cue", cueId: cue.id, number: cue.number ?? typed };
+      rest = (m[3] as string).trim();
     }
   }
   const assigneeIds: string[] = [];

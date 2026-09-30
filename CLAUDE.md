@@ -301,13 +301,15 @@ cue live sort, `sortCuesNow`, `openImport`).
   Cards: a status chip button (click cycles Open → In progress → Done via `nextStatus`;
   the server sets `completed_by/at`), type chips, `P<n>`, assignee initials, session,
   author · time; ✎ or double-click edits the body in place (Enter saves, Escape cancels),
-  × deletes. Editability is `canEditNote` (editors: all notes; commenters: their own;
+  × deletes. A note's session defaults to the show's current session and is editable per
+  note (the Session column / the note's Fields tab). Editability is `canEditNote` (editors: all notes; commenters: their own;
   viewers: none), mirroring the server; viewers get no compose box.
 - **Compose grammar** (`parseNoteText` in `features/notes/compose.ts`): Enter saves,
-  Shift+Enter is a newline. A leading cue number and a space (`8.5 needs a fade`; matched
-  with `cueNumberKey`, so 8.5 = 8.50; several matches → the one nearest the current cue
-  in show order) links that cue instead of the panel's record; a number that isn't a cue
-  stays text. A leading `*` makes a general note (no cue, content or scene). `@name`
+  Shift+Enter is a newline. An **explicit** cue prefix links that cue instead of the
+  panel's record: `q8.5 `, `Q8.5 `, `#8.5 ` (then whitespace) or `8.5: ` (a colon);
+  matched with `cueNumberKey`, so 8.5 = 8.50; several matches → the one nearest the
+  current cue in show order. A bare leading number (`3 people in the wings`) is just text,
+  and so is a prefix naming no cue. A leading `*` makes a general note (no cue, content or scene). `@name`
   tokens naming a person (full name without spaces, or a unique first name) assign them
   and drop out of the body; typing `@` at a word start opens the person picker (Escape
   puts the `@` back). A live "→ Cue 14.20" line shows where the note will go. Type chips
@@ -326,18 +328,20 @@ cue live sort, `sortCuesNow`, `openImport`).
   input with suggestions for editors, a label for others); it hides at ≤ 600 px, where
   tech mode and quick-add show their own.
 - **Tech mode** (`features/tech/`, R7), `/shows/:id/tech?cue=<id>`: the header's "Tech"
-  link, ⌘K "Tech mode", or `T` in the cue list when not editing (`useTechShortcut`,
-  capture phase; a cell value starting with "t" then needs Enter/F2 first). Left: a
+  link, ⌘K "Tech mode", or ⌘/Ctrl+Shift+. (period) anywhere in the show
+  (`useTechShortcut` in `ShowWorkspace`, capture phase, matched on `KeyboardEvent.code`
+  "Period"). There is deliberately no bare-letter shortcut: type-to-edit in the grid wins. Left: a
   compact, virtualized cue list (`techRows`: scene headers with open-note counts, section
   dividers, rows with number, description, trigger, status dot, open-note count); right:
   the current cue's notes, or "Scene open notes", or "Content", above a compose box that
   keeps focus. Keys in the compose box: ↓/↑ and Space/Shift+Space move the current cue
   **only while the box is empty**; ⌘/Ctrl+G opens a "Go to cue" prompt (`goToCue`: exact
   number, else prefix); Enter saves on the current cue; Tab / Shift+Tab cycle a single
-  type chip; ⌥1–5, `@`, `*` and `8.5 ` as in the compose grammar. Keys reaching the page
+  type chip; ⌥1–5, `@`, `*` and `8.5: ` / `#8.5 ` as in the compose grammar. Keys reaching the page
   elsewhere (viewers; after clicking a note) move the cue too, and a typed character
   refocuses the compose box. "Follow" (per user) keeps the current cue scrolled to the
-  middle. The current cue is `?cue=` (replace), the cue list's own parameter, so "Cue
+  middle. "Scene open notes" uses the scene definition above (linked to the scene or to
+  any of its cues). The current cue is `?cue=` (replace), the cue list's own parameter, so "Cue
   list" / "Tech" round-trip it. Viewers: list only; commenters: compose.
 - **Quick-add** (`features/quick/QuickAddPage.tsx`), `/shows/:id/quick?cue=<id>`: the
   header's "＋" link on phones, ⌘K "Quick add a note". Cue search (recent picks first,

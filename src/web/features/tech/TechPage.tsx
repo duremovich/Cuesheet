@@ -2,7 +2,7 @@
 // by scene, virtualized) with the current cue highlighted, and the current cue's notes
 // with a compose box that keeps focus. Keys in the compose box: ↓/↑ or Space/Shift+Space
 // (box empty) move the current cue, ⌘/Ctrl+G goes to a typed cue number, Enter saves, Tab
-// cycles the type chips, ⌥1–5 priority, @ assigns, "* …" is a general note, "8.5 …" goes
+// cycles the type chips, ⌥1–5 priority, @ assigns, "* …" is a general note, "8.5: …" (or q8.5 / #8.5) goes
 // to that cue. The current cue is `?cue=`, shared with the cue list.
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -201,7 +201,7 @@ export function TechPage() {
       </div>
       <p className={styles.hint}>
         ↓/↑ or Space: next/previous cue · ⌘G: go to cue · Enter: save · Tab: type · ⌥1–5: priority ·
-        @: assign · “* …”: general note · “8.5 …”: that cue
+        @: assign · “* …”: general note · “8.5: …” or “#8.5 …”: that cue
       </p>
       <div className={styles.layout}>
         <section className={styles.list} aria-label="Cues">

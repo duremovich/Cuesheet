@@ -15,7 +15,6 @@ import { TableFrame, ToolbarButton } from "../shared/TableFrame";
 import styles from "../shared/TableFrame.module.css";
 import { GRID_ACTIONS, useTableChrome } from "../shared/useTableChrome";
 import { useWorkspace } from "../show/workspace";
-import { useTechShortcut } from "../tech/useTechShortcut";
 import { cueColumns, cueEditOps } from "./columns";
 import { cueNumberHints, hintsEqual, type InsertAnchor } from "./cueNumbers";
 import { buildCueViews, type CueView, cueGroups, openNotesByScene } from "./cueViews";
@@ -195,9 +194,6 @@ export function CueGrid() {
     },
     [send],
   );
-
-  // T (not editing): tech mode at the active cue.
-  useTechShortcut(chrome.activeRow);
 
   const onActiveRowChange = chrome.onActiveRowChange;
   const lastActive = useRef<string | null>(null);

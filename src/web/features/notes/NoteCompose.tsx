@@ -1,6 +1,6 @@
 // The note compose box (R6, R7): Enter saves (Shift+Enter: new line), type chips (default:
 // the types you used last, per user), ⌥1–5 priority, `@` assigns through the person
-// picker, and the prefix grammar in ./compose.ts ("8.5 …" links cue 8.5, "* …" is a general
+// picker, and the prefix grammar in ./compose.ts ("8.5: …" / "#8.5 …" link cue 8.5, "* …" is a general
 // note). New notes carry the show's current session. Tech mode adds its own keys through
 // `onNavKey` and cycles type chips with Tab.
 import {

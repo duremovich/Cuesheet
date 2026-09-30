@@ -42,30 +42,50 @@ describe("parseNoteText", () => {
     });
   });
 
-  it("a leading cue number links that cue instead (8.5 = 8.50)", () => {
-    const p = parseNoteText("8.5 needs to be a fade", { ...ctx, currentCueId: "c1" });
-    expect(p.target).toEqual({ kind: "cue", cueId: "c2", number: "8.50" });
-    expect(p.body).toBe("needs to be a fade");
+  it("an explicit prefix links that cue instead: 8.5: / q8.5 / Q8.5 / #8.5 (8.5 = 8.50)", () => {
+    const at1 = { ...ctx, currentCueId: "c1" };
+    for (const text of [
+      "8.5: needs to be a fade",
+      "8.5:needs to be a fade",
+      "q8.5 needs to be a fade",
+      "Q8.5 needs to be a fade",
+      "#8.5 needs to be a fade",
+    ]) {
+      const p = parseNoteText(text, at1);
+      expect(p.target, text).toEqual({ kind: "cue", cueId: "c2", number: "8.50" });
+      expect(p.body, text).toBe("needs to be a fade");
+    }
     // Letters and case: 14.25a = 14.25A.
-    expect(parseNoteText("14.25a strobe", ctx).target).toMatchObject({ cueId: "c4" });
+    expect(parseNoteText("#14.25a strobe", ctx).target).toMatchObject({ cueId: "c4" });
+  });
+
+  it("a bare leading number is just text", () => {
+    expect(parseNoteText("8.5 needs to be a fade", ctx)).toMatchObject({
+      body: "8.5 needs to be a fade",
+      target: { kind: "current" },
+    });
+    expect(parseNoteText("3 people in the wings", ctx).target).toEqual({ kind: "current" });
+    // q/# need a space after the number; a prefix with nothing after it isn't a note.
+    expect(parseNoteText("q8.5x", ctx).target).toEqual({ kind: "current" });
+    expect(parseNoteText("8.5:", ctx).target).toEqual({ kind: "current" });
   });
 
   it("ambiguous numbers pick the cue nearest the current one in show order", () => {
-    expect(parseNoteText("8.5 x", { ...ctx, currentCueId: "c1" }).target).toMatchObject({
+    expect(parseNoteText("8.5: x", { ...ctx, currentCueId: "c1" }).target).toMatchObject({
       cueId: "c2",
     });
-    expect(parseNoteText("8.5 x", { ...ctx, currentCueId: "c4" }).target).toMatchObject({
+    expect(parseNoteText("q8.5 x", { ...ctx, currentCueId: "c4" }).target).toMatchObject({
       cueId: "c5",
     });
     // No current cue: the first in show order. Sections never match.
     expect(findCue(CUES, "8.5", null)?.id).toBe("c2");
   });
 
-  it("a number that isn't a cue stays in the text", () => {
-    const p = parseNoteText("3 people in the wings", ctx);
-    expect(p).toMatchObject({ body: "3 people in the wings", target: { kind: "current" } });
-    // A number alone (no text after it) isn't a prefix.
-    expect(parseNoteText("8.5", ctx).target).toEqual({ kind: "current" });
+  it("a prefixed number that isn't a cue stays in the text", () => {
+    expect(parseNoteText("#99 people in the wings", ctx)).toMatchObject({
+      body: "#99 people in the wings",
+      target: { kind: "current" },
+    });
   });
 
   it("* makes a general note", () => {
@@ -73,8 +93,8 @@ describe("parseNoteText", () => {
       body: "order more haze",
       target: { kind: "general" },
     });
-    expect(parseNoteText("*8.5 not a cue link", ctx)).toMatchObject({
-      body: "8.5 not a cue link",
+    expect(parseNoteText("*8.5: not a cue link", ctx)).toMatchObject({
+      body: "8.5: not a cue link",
       target: { kind: "general" },
     });
   });
@@ -87,7 +107,7 @@ describe("parseNoteText", () => {
     expect(parseNoteText("@morgan hi", ctx).assigneeIds).toEqual([]);
     expect(parseNoteText("@MorganFox hi", ctx).assigneeIds).toEqual(["p3"]);
     // Combined with a cue prefix.
-    expect(parseNoteText("14.20 @morganellis check", ctx)).toMatchObject({
+    expect(parseNoteText("14.20: @morganellis check", ctx)).toMatchObject({
       body: "check",
       target: { kind: "cue", cueId: "c3" },
       assigneeIds: ["p2"],

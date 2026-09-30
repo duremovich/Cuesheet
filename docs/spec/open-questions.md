@@ -84,33 +84,6 @@ Things the first build had to decide; each is easy to change.
   scene with cues moves its cues to Unassigned (server cascade). Should scene deletes
   always confirm?
 
-## Notes and tech mode (M2b decisions to confirm)
-
-- **Current session** is one value per show, shared by everyone (D1
-  `shows.current_session`), set by editors from the header or tech mode, and stamped on
-  new notes. Commenters can't change it. Should people be able to override it for their
-  own notes?
-- **Cue prefix grammar**: a note that *starts* with a cue number and a space links that
-  cue (`8.5 needs a fade`); a number that isn't a cue stays text. "3 people in the wings"
-  on a show with a cue 3 would link cue 3; the compose box shows "→ Cue 3" before you
-  save. Is a stricter form (`q8.5`, `#8.5`) wanted?
-- **`@name`** matches a full name without spaces or a unique first name; the picker that
-  typing `@` opens is the reliable way. Unknown `@words` stay in the text.
-- **`T` opens tech mode** from the cue list when not editing, as ux.md's keyboard table
-  says. That takes `t` away from type-to-edit (Enter/F2 first for values starting with
-  "t"). Keep it, or use Shift+T?
-- **"Follow"** in tech mode keeps the current cue scrolled into view. Should it instead
-  follow another person's current cue (e.g. the SM's)? That needs shared cursor state.
-- **Tech mode keys**: ↓/↑ and Space move the current cue only while the compose box is
-  empty; with text in it they edit the text. ⌘/Ctrl+G is "go to cue" (it overrides the
-  browser's find-next inside tech mode).
-- **Scene notes** (a scene's Notes tab, tech mode's "Scene open notes"): notes whose scene
-  is that scene plus notes on its cues. A note added from a scene panel links only the
-  scene.
-- **History** "Load more" raises the limit (50 at a time, up to 1000) instead of paging
-  by version; fine for one record, revisit if records collect thousands of changes.
-- **Row panel width** is per user (per browser), not per view or table.
-
 ## Infrastructure
 
 - **Sign-in for SM/director.** Do they need accounts, or is a read-only link enough?
@@ -137,7 +110,21 @@ Things the first build had to decide; each is easy to change.
 - **Content versions**: version history per content item. → ContentVersion
 - **Audience**: video team edits; SM, director and other designers view/comment. → R23
 - **Tech entry**: laptop at the tech table and phone/tablet. → R7
-- **Sessions**: notes carry a session label ("Tech 2") that defaults to the show's current
-  session (M2b). → data model (Note.session), CLAUDE.md "Session model"
+- **Sessions** (M2b): one current session per show, shared by the team and set by
+  editors; new notes are stamped with it, and any note's session can be edited on its
+  own. → data model (Note.session), CLAUDE.md "Session model"
+- **Cue prefix in notes** (M2b): only explicit prefixes link a cue: `q8.5 `, `Q8.5 `,
+  `#8.5 `, `8.5: `. A bare leading number is text; `*` makes a general note.
+  → CLAUDE.md "Compose grammar"
+- **Tech mode shortcut** (M2b): no bare `T` (type-to-edit wins); the header link, ⌘K and
+  ⌘/Ctrl+Shift+. open it. ⌘/Ctrl+G "go to cue" inside tech mode is fine.
+- **Follow** (M2b): keeps the current cue in view. Following the SM's cue (or OSC from
+  the show control system) is a later feature.
+- **A scene's notes** (M2b): notes linked to the scene or to any of its cues (Notes tab,
+  tab count, tech mode's "Scene open notes").
+- **History paging** (M2b): by limit (50 more at a time, up to 1000) is fine.
+- **Row panel width** (M2b): per user (per browser).
+- **`@name`** (M2b): a full name without spaces or a unique first name; the picker that
+  typing `@` opens is the reliable way; unknown `@words` stay in the text.
 - **Also needed**: script view with cue placement and version re-anchoring (R20), shot
   lists (R14), calculations and unit conversion (R11, R12), images on surfaces (R13).

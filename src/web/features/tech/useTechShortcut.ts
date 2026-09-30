@@ -1,9 +1,8 @@
-// `T` in the cue list (when not editing a cell) opens tech mode at the active cue.
-// ux.md §Keyboard reference. Listens in the capture phase so the grid doesn't start
-// editing the cell with a "t"; Enter / F2 still start editing a value that begins with t.
+// ⌘/Ctrl+Shift+. (period) anywhere in the show workspace opens tech mode at the current cue
+// (`?cue=`). A chord browsers don't use, so type-to-edit in the grid keeps every letter.
+// Read from `KeyboardEvent.code` because Shift turns "." into ">" on many layouts.
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
-import { useWorkspace } from "../show/workspace";
 
 /** The tech-mode URL, carrying the current cue (`?cue=` is shared with the cue list). */
 export function techUrl(showId: string, cueId?: string | null): string {
@@ -11,27 +10,27 @@ export function techUrl(showId: string, cueId?: string | null): string {
   return cueId ? `${base}?cue=${encodeURIComponent(cueId)}` : base;
 }
 
-/** True for a plain `t`/`T` keydown on a cue-list cell that isn't being edited. */
-export function isTechKey(e: KeyboardEvent): boolean {
-  if (e.key !== "t" && e.key !== "T") return false;
-  if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return false;
-  const t = e.target as HTMLElement | null;
-  if (!t || t.matches("input, textarea, select, [contenteditable]")) return false;
-  const grid = t.closest('[role="grid"]');
-  return !!grid && grid.getAttribute("aria-label") === "Cue list";
+export const TECH_SHORTCUT_LABEL = "⌘/Ctrl+Shift+.";
+
+/** True for ⌘/Ctrl+Shift+Period (no Alt), outside IME composition. */
+export function isTechKey(
+  e: Pick<KeyboardEvent, "code" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey" | "isComposing">,
+): boolean {
+  return (
+    e.code === "Period" && (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && !e.isComposing
+  );
 }
 
-export function useTechShortcut(activeCueId: string | null) {
-  const { showId } = useWorkspace();
+export function useTechShortcut(showId: string, cueId: string | null) {
   const navigate = useNavigate();
-  const active = useRef(activeCueId);
-  active.current = activeCueId;
+  const cue = useRef(cueId);
+  cue.current = cueId;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!isTechKey(e)) return;
       e.preventDefault();
       e.stopPropagation();
-      navigate(techUrl(showId, active.current));
+      navigate(techUrl(showId, cue.current));
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
