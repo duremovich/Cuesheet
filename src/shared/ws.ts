@@ -1,4 +1,5 @@
 // Messages on the per-show WebSocket (/api/shows/:id/ws).
+import type { Role } from "./api";
 import type { ResolvedOp } from "./ops";
 
 /**
@@ -45,8 +46,18 @@ export interface RevokedMessage {
   type: "revoked";
 }
 
+/**
+ * Your role in this show changed (the owner changed it). Sent to that user's sockets only;
+ * the client updates what it lets you edit without a reload. Removal sends `revoked`.
+ */
+export interface RoleMessage {
+  type: "role";
+  role: Role;
+}
+
 export type ServerMessage =
   | RevokedMessage
+  | RoleMessage
   | HelloMessage
   | PresenceMessage
   | VersionMessage

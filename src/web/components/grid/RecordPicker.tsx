@@ -24,7 +24,10 @@ export interface RecordPickerProps {
   /** The element the popover sits under. */
   anchor: HTMLElement | null;
   search: (query: string) => Promise<PickerItem[]> | PickerItem[];
-  /** When set, a "Create '<query>'" row is offered if no label matches exactly. */
+  /**
+   * When set, a "Create '<query>'" row is offered if no label (or `aliases` entry) matches
+   * exactly.
+   */
   create?: ((name: string) => Promise<PickerItem>) | undefined;
   initialQuery?: string;
   /** Recently picked items; shown first when they match the query. */
@@ -68,7 +71,11 @@ export function buildEntries(
   if (
     canCreate &&
     q &&
-    !entries.some((e) => e.kind === "item" && e.item.label.trim().toLowerCase() === q)
+    !entries.some(
+      (e) =>
+        e.kind === "item" &&
+        [e.item.label, ...(e.item.aliases ?? [])].some((l) => l.trim().toLowerCase() === q),
+    )
   ) {
     entries.push({ kind: "create", name: query.trim() });
   }

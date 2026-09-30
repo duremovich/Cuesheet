@@ -22,6 +22,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import type { Role } from "../../shared/api";
 import { newId } from "../../shared/ids";
 import type {
   MutateRequest,
@@ -48,6 +49,11 @@ export interface ShowState extends ShowData {
   status: StoreStatus;
   /** Set when status is "error" (the snapshot couldn't load). */
   error: string | null;
+  /**
+   * Your role, when the server announced a change while the show is open (`{type:"role"}`);
+   * null until then (use the role the show was opened with).
+   */
+  role: Role | null;
 }
 
 export type Listener = () => void;
@@ -103,6 +109,7 @@ export class ShowStoreImpl implements ShowStore {
   private visible: ShowState;
   private loadStatus: StoreStatus = "loading";
   private error: string | null = null;
+  private role: Role | null = null;
   private pending: Pending[] = [];
   private inflight: Pending | null = null;
   private sendChain: Promise<unknown> = Promise.resolve();
@@ -121,7 +128,7 @@ export class ShowStoreImpl implements ShowStore {
     this.clientId = opts.clientId ?? newId();
     this.userId = opts.userId ?? "";
     this.now = opts.now ?? Date.now;
-    this.visible = { ...this.confirmed, status: "loading", error: null };
+    this.visible = { ...this.confirmed, status: "loading", error: null, role: null };
   }
 
   // ---- ShowStore ----
@@ -183,6 +190,11 @@ export class ShowStoreImpl implements ShowStore {
   /** Feed a WebSocket message in. */
   handleServerMessage = (msg: ServerMessage): void => {
     if (this.disposed) return;
+    if (msg.type === "role") {
+      this.role = msg.role;
+      this.recompute();
+      return;
+    }
     if (msg.type !== "ops" && msg.type !== "version") return;
     if (this.buffered) {
       this.buffered.push(msg);
@@ -249,7 +261,8 @@ export class ShowStoreImpl implements ShowStore {
         this.refetchAgain = false;
         const snap = await this.transport.snapshot();
         if (this.disposed) return;
-        this.confirmed = fromSnapshot(snap);
+        // Structural sharing: rows that didn't change keep their identity (no re-render).
+        this.confirmed = fromSnapshot(snap, this.confirmed);
         this.loadStatus = "ready";
         this.error = null;
       } while (this.refetchAgain);
@@ -280,7 +293,7 @@ export class ShowStoreImpl implements ShowStore {
   private recompute(): void {
     let data = this.confirmed;
     for (const p of this.pending) data = applyResolved(data, p.acked?.ops ?? p.local);
-    this.visible = { ...data, status: this.loadStatus, error: this.error };
+    this.visible = { ...data, status: this.loadStatus, error: this.error, role: this.role };
     for (const l of [...this.listeners]) l();
   }
 }

@@ -56,21 +56,74 @@ export function emptyData(): ShowData {
   };
 }
 
-export function fromSnapshot(snap: SnapshotResponse): ShowData {
+/**
+ * Build state from a snapshot. With `prev` (a refetch), unchanged parts keep their identity
+ * (structural sharing): a row deep-equal to its previous copy is the previous object, a
+ * table / order list / join map whose contents didn't change is the previous one, and so
+ * are equal join lists and field options. A refetch then re-renders only what changed.
+ */
+export function fromSnapshot(snap: SnapshotResponse, prev?: ShowData): ShowData {
   const data = emptyData();
   data.version = snap.version;
-  data.fieldOptions = snap.fieldOptions;
+  data.fieldOptions =
+    prev && jsonEqual(prev.fieldOptions, snap.fieldOptions) ? prev.fieldOptions : snap.fieldOptions;
   for (const t of TABLE_NAMES) {
     const map = data.tables[t] as RowMap;
-    for (const row of snap.tables[t] as AnyRow[]) map.set(row.id, row);
+    const old = prev?.tables[t] as RowMap | undefined;
+    let same = !!old && old.size === snap.tables[t].length;
+    for (const row of snap.tables[t] as AnyRow[]) {
+      const before = old?.get(row.id);
+      if (before && jsonEqual(before, row)) map.set(row.id, before);
+      else {
+        map.set(row.id, row);
+        same = false;
+      }
+    }
+    if (same && old) (data.tables as Record<TableName, RowMap>)[t] = old;
   }
   for (const t of ORDERED_TABLES) {
-    data.order[t] = sortIds(data.tables[t] as RowMap, [...data.tables[t].keys()]);
+    const ids = sortIds(data.tables[t] as RowMap, [...data.tables[t].keys()]);
+    const old = prev?.order[t];
+    data.order[t] = old && arraysEqual(old, ids) ? old : ids;
   }
   for (const key of Object.keys(data.joins) as JoinName[]) {
-    data.joins[key] = new Map(Object.entries(snap.joins[key] ?? {}));
+    const old = prev?.joins[key];
+    const map = new Map<string, string[]>();
+    let same = !!old;
+    const entries = Object.entries(snap.joins[key] ?? {});
+    if (old && old.size !== entries.length) same = false;
+    for (const [from, targets] of entries) {
+      const before = old?.get(from);
+      if (before && arraysEqual(before, targets)) map.set(from, before);
+      else {
+        map.set(from, targets);
+        same = false;
+      }
+    }
+    data.joins[key] = same && old ? old : map;
   }
   return data;
+}
+
+function arraysEqual(a: readonly unknown[], b: readonly unknown[]): boolean {
+  return a.length === b.length && a.every((x, i) => x === b[i]);
+}
+
+/** Deep equality for JSON-shaped values (rows, options). Key order doesn't matter. */
+export function jsonEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a)) {
+    const bb = b as unknown[];
+    return a.length === bb.length && a.every((x, i) => jsonEqual(x, bb[i]));
+  }
+  const ka = Object.keys(a);
+  const bo = b as Record<string, unknown>;
+  if (ka.length !== Object.keys(bo).length) return false;
+  return ka.every(
+    (k) => Object.hasOwn(bo, k) && jsonEqual((a as Record<string, unknown>)[k], bo[k]),
+  );
 }
 
 function sortIds(rows: RowMap, ids: string[]): string[] {

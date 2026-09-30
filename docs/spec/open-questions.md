@@ -56,6 +56,36 @@ example base: 17 inferred, 28 left Unassigned). See CLAUDE.md, "Airtable import"
 - **Pasting into link cells.** Paste fills text, number and select cells only. Should it
   also resolve names in link cells (find, or create when missing)?
 
+## Cue list (M1c decisions to confirm)
+
+Things the first build had to decide; each is easy to change.
+
+- **Act grouping.** The grid has one grouping level, so when any scene has an act the act
+  leads the scene group's subtitle ("Act 1 · song · 2 open notes") instead of being an
+  outer collapsible group. Is a real outer act group worth building?
+- **Cue number pattern.** Warn-only default: digits, optional `.digits` parts, optional
+  trailing letters (`14`, `14.25`, `8.5A`, `1.2.3`). Numbers compare as decimals, so
+  `14.2` and `14.20` count as duplicates. Should the pattern be a per-show setting now?
+- **Ghost numbers.** After the last cue: the next whole number with the same decimals
+  (`14.20` → `15.00`); before the first cue: the midpoint from 0 (`0.10` → `0.05`); no
+  numbered cues at all: `1`. Neighbours that aren't plain decimals (`8.5A`) give no ghost.
+- **Sort now.** Sorts the whole show by number; unnumbered cues go to the end (after a
+  confirmation); section rows stay above the numbered cue that followed them. Not undoable
+  yet. Should it sort within each scene instead, keeping scene order?
+- **Live sort scope.** Stored per show in the browser (like column widths and collapsed
+  groups) until saved views (M2). Viewers can use it too (it's only a view setting).
+- **Content created from a picker** is named `SSS-NNN-<typed>` (scene number padded to 3
+  digits, next free NNN in that scene) unless the typed name already has the prefix or
+  the cue has no numeric scene.
+- **Unassigned group** is always shown on the cue list (even when empty) so there's
+  always a place to add a cue and to drop cues without a scene.
+- **Notes** are grouped by status with Done collapsed by default, oldest first; "+ Add
+  note" adds an Open note. Notes have no manual order, so an inserted note settles at the
+  end of its group once you leave it.
+- **Deletes** from the grid are immediate for one row (multi-row asks first); deleting a
+  scene with cues moves its cues to Unassigned (server cascade). Should scene deletes
+  always confirm?
+
 ## Infrastructure
 
 - **Sign-in for SM/director.** Do they need accounts, or is a read-only link enough?

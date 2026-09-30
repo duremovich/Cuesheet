@@ -5,7 +5,7 @@ import { DurableObject } from "cloudflare:workers";
 import { eq } from "drizzle-orm";
 import { type DrizzleSqliteDODatabase, drizzle } from "drizzle-orm/durable-sqlite";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
-import type { ShowMetaDTO } from "../../shared/api";
+import type { Role, ShowMetaDTO } from "../../shared/api";
 import type { HistoryEntry, MutateResponse, SnapshotResponse } from "../../shared/ops";
 import { type FieldOptions, TABLE_NAMES } from "../../shared/tables";
 import { PING_FRAME, PONG_FRAME, type ServerMessage } from "../../shared/ws";
@@ -156,6 +156,13 @@ export class ShowDO extends DurableObject<Env> {
    * Close every socket belonging to a user (logout, removal from the show). Each gets a
    * `revoked` message first so the client stops reconnecting instead of retrying.
    */
+  /** Tell a user's open sockets their role changed (`{type:"role"}`). Returns how many. */
+  async notifyRole(userId: string, role: Role): Promise<number> {
+    const sockets = this.ctx.getWebSockets(userId);
+    for (const ws of sockets) this.send(ws, { type: "role", role });
+    return sockets.length;
+  }
+
   async disconnectUser(userId: string): Promise<number> {
     const sockets = this.ctx.getWebSockets(userId);
     for (const ws of sockets) {

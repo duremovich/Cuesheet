@@ -38,6 +38,11 @@ export interface PickerItem {
   label: string;
   secondary?: string;
   color?: string;
+  /**
+   * Other names this record goes by, for the picker's exact-match check only: typing one
+   * of them doesn't offer "Create" (e.g. content "105-003-LOOK" has the alias "LOOK").
+   */
+  aliases?: string[];
 }
 
 export interface Column<Row> {
@@ -124,6 +129,12 @@ export interface CellDecoration {
 export interface DataGridHandle {
   /** Make a row's cell (default: its first editable column) active and focus it. */
   focusRow(rowId: string, columnKey?: string): void;
+  /**
+   * Make the next (`delta` 1) or previous (-1) row active, in display order, keeping the
+   * column; scrolls to it without moving DOM focus (e.g. ↑/↓ in a detail panel). Returns
+   * its id, or null if there are no rows.
+   */
+  stepRow(delta: number): string | null;
   /** Scroll a row into view (expanding its group if collapsed) without moving focus. */
   scrollToRow(rowId: string): void;
 }
@@ -175,4 +186,11 @@ export interface DataGridProps<Row> {
    * `console.error`.
    */
   onError?: (error: unknown, action: GridAction) => void;
+  /**
+   * Escape with nothing left to cancel in the grid (not editing; no range, row selection or
+   * held row that would move). E.g. close a detail panel.
+   */
+  onEscape?: () => void;
+  /** Label of a group header's add button, e.g. "Add cue" (default "Add row"). */
+  addRowLabel?: string;
 }

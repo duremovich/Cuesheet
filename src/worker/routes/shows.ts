@@ -304,7 +304,8 @@ export const showRoutes = new Hono<ShowEnv>()
       )
       .returning({ userId: schema.memberships.userId });
     if (updated.length === 0) return c.json({ error: "Not a member of this show" }, 404);
-    // Open sockets carry no role (every mutate re-checks D1), so nothing to disconnect.
+    // Every mutate re-checks the role in D1; tell the user's open tabs so their UI follows.
+    await showStub(c.env, c.var.show.id).notifyRole(userId, role);
     return c.json({ ok: true });
   })
   .delete("/shows/:id/members/:userId", requireMembership, requireOwner, async (c) => {

@@ -330,3 +330,46 @@ describe("ShowStore", () => {
     await done;
   });
 });
+
+describe("snapshot refetch (structural sharing)", () => {
+  it("keeps unchanged rows, tables, order lists and joins identical after a refetch", async () => {
+    const server = new FakeServer();
+    const transport: ShowTransport = {
+      // Over the network every snapshot is a fresh copy.
+      snapshot: async () => structuredClone(server.snapshot()),
+      mutate: async (req) => server.apply(req),
+    };
+    const store = new ShowStoreImpl(transport, { clientId: "me", userId: "u1", now: () => 1 });
+    server.apply({
+      clientId: "x",
+      ops: [
+        cue("c1", "1"),
+        cue("c2", "2"),
+        { op: "create", table: "persons", id: "p1", fields: { name: "Casey" } },
+        { op: "link", table: "cues", id: "c1", field: "assignees", targetId: "p1" },
+      ],
+    });
+    await store.load();
+    const before = store.getState();
+
+    // Someone else changes c2 (we never saw the broadcast); refetch.
+    server.apply({
+      clientId: "x",
+      ops: [{ op: "update", table: "cues", id: "c2", fields: { number: "3" } }],
+    });
+    await store.refresh();
+    const after = store.getState();
+    expect(after.tables.cues.get("c1")).toBe(before.tables.cues.get("c1"));
+    expect(after.tables.cues.get("c2")).not.toBe(before.tables.cues.get("c2"));
+    expect(after.tables.cues.get("c2")?.number).toBe("3");
+    expect(after.tables.persons).toBe(before.tables.persons);
+    expect(after.order.cues).toBe(before.order.cues);
+    expect(after.joins.cueAssignees).toBe(before.joins.cueAssignees);
+
+    // Nothing changed at all: everything is shared.
+    await store.refresh();
+    const again = store.getState();
+    expect(again.tables.cues).toBe(after.tables.cues);
+    expect(again.fieldOptions).toBe(after.fieldOptions);
+  });
+});

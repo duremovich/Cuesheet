@@ -1,0 +1,192 @@
+/* The show workspace fills the viewport; the active tab's grid takes what's left. */
+.workspace {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-4);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  min-width: 0;
+}
+
+.tabs {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: var(--space-1);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tab {
+  flex-shrink: 0;
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-text-muted);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  font-weight: 500;
+}
+
+.tab:hover {
+  color: var(--color-text);
+}
+
+.activeTab,
+.activeTab:hover {
+  color: var(--color-text);
+  border-bottom-color: var(--color-accent);
+}
+
+.navActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.navButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.kbd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-1);
+}
+
+/* Phones: icon-only nav buttons so the tabs keep their room. */
+@media (max-width: 600px) {
+  .nav {
+    padding: 0 var(--space-2);
+  }
+
+  .navButtonText,
+  .kbd {
+    display: none;
+  }
+
+  .tab {
+    padding: var(--space-2) var(--space-2);
+  }
+
+  .tabs {
+    gap: 0;
+  }
+}
+
+.importRow {
+  padding: 0 var(--space-4);
+}
+
+.importRow:has(> div) {
+  padding-top: var(--space-2);
+}
+
+.main {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+
+@media (max-width: 600px) {
+  .main {
+    padding: var(--space-2);
+  }
+}
+
+/* --- Show settings popover --- */
+
+.settingsWrap {
+  position: relative;
+}
+
+.settings {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  width: min(420px, calc(100vw - 2 * var(--space-4)));
+  max-height: 70vh;
+  overflow: auto;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-raised);
+}
+
+.settingsBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+
+.settingsBody h3 {
+  font-size: 13px;
+  margin-bottom: var(--space-2);
+}
+
+.members {
+  list-style: none;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
+.members li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.memberName {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.members select,
+.addMember select {
+  background: var(--color-bg-sunken);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-1) var(--space-2);
+}
+
+.members button {
+  padding: var(--space-1) var(--space-2);
+  font-size: 12px;
+}
+
+.addMember {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.addMember input {
+  flex: 1;
+  min-width: 160px;
+}

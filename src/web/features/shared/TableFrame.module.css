@@ -1,0 +1,222 @@
+.frame {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.title {
+  font-size: 16px;
+  margin-right: auto;
+}
+
+.toolButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.toolButton[aria-pressed="true"] {
+  background: var(--color-accent-subtle);
+  border-color: var(--color-accent);
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  gap: var(--space-3);
+  position: relative;
+}
+
+.gridWrap {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.empty {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+/* --- Row panel --- */
+
+.panel {
+  width: 360px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+/* Phones and narrow windows: the panel covers the lower part of the grid. */
+@media (max-width: 760px) {
+  .panel {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-height: 60%;
+    box-shadow: var(--shadow-raised);
+    z-index: 5;
+  }
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.panelTitle {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panelClose {
+  border: none;
+  background: transparent;
+  font-size: 20px;
+  line-height: 24px;
+  padding: 0 var(--space-2);
+}
+
+.panelBody {
+  overflow: auto;
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.fields {
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(80px, auto) 1fr;
+  gap: var(--space-2) var(--space-3);
+  font-size: 13px;
+}
+
+.field {
+  display: contents;
+}
+
+.field dt {
+  color: var(--color-text-muted);
+}
+
+.field dd {
+  margin: 0;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.value {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.panelSection h3 {
+  font-size: 13px;
+  margin-bottom: var(--space-2);
+}
+
+.panelSection ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
+.panelSection li {
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-sunken);
+  border-radius: var(--radius-sm);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.panelSection p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.noteMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+/* --- Menus (sort menu, settings) --- */
+
+.menuWrap {
+  position: relative;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  min-width: 240px;
+  padding: var(--space-1);
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-raised);
+}
+
+.menu button {
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: var(--space-2) var(--space-3);
+  font-size: 13px;
+}
+
+.menu button:hover:not(:disabled),
+.menu button:focus-visible {
+  background: var(--color-surface-hover);
+  outline: none;
+}
+
+.menu button[aria-checked="true"]::before {
+  content: "✓ ";
+}
