@@ -216,7 +216,7 @@ describe("content versions in the optimistic store (mirrors the op engine)", () 
       },
     };
     const ops = resolveLocal(d, [{ op: "delete", table: "content", id: "c1" }], ctx);
-    expect(ops.map((o) => [o.op, o.table, o.id])).toEqual([
+    expect(ops.map((o) => (o.op === "meta" ? [o.op] : [o.op, o.table, o.id]))).toEqual([
       ["delete", "content_versions", "a"],
       ["delete", "attachments", "f1"],
       ["delete", "content", "c1"],

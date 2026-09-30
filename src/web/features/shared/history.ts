@@ -2,6 +2,7 @@
 // "who changed what: from → to, when" lines. Pure, so it's unit-tested.
 import type { HistoryEntry } from "../../../shared/ops";
 import { fieldSpec, linkSpec, type TableName } from "../../../shared/tables";
+import { formatLength, formatPixelSize, isPixelSize, type Unit } from "../../../shared/units";
 import { sceneTitle } from "../../lib/show-selectors";
 import type { ShowData } from "../../lib/show-state";
 
@@ -54,6 +55,8 @@ export function recordLabel(data: ShowData, table: TableName, id: string): strin
       return data.tables.persons.get(id)?.name || "(deleted person)";
     case "notes":
       return data.tables.notes.get(id)?.body?.slice(0, 40) || "(deleted note)";
+    case "surfaces":
+      return data.tables.surfaces.get(id)?.name || "(deleted surface)";
     case "views":
       return data.tables.views.get(id)?.name || "(deleted view)";
     case "content_versions":
@@ -74,12 +77,16 @@ function parse(v: string | null): unknown {
   }
 }
 
-/** A stored value as text: refs resolve to labels; empty values are "" (shown as "—"). */
+/**
+ * A stored value as text: refs resolve to labels; lengths show in `unit` (meters by
+ * default), pixel sizes as w×h; empty values are "" (shown as "—").
+ */
 export function formatStored(
   data: ShowData,
   table: TableName,
   field: string,
   value: unknown,
+  unit: Unit = "m",
 ): string {
   if (value === null || value === undefined || value === "") return "";
   const link = linkSpec(table, field);
@@ -88,6 +95,8 @@ export function formatStored(
   if (spec?.type === "ref" && spec.ref && typeof value === "string") {
     return recordLabel(data, spec.ref, value);
   }
+  if (spec?.type === "measurement" && typeof value === "number") return formatLength(value, unit);
+  if (spec?.type === "pixel_size" && isPixelSize(value)) return formatPixelSize(value);
   if (field === "completed_at" && typeof value === "number") {
     return dateFormat.format(new Date(value));
   }
@@ -106,6 +115,8 @@ export function formatHistory(
   data: ShowData,
   labels: FieldLabels,
   memberNames?: ReadonlyMap<string, string>,
+  /** The active measurement unit (lengths are stored in meters). */
+  unit: Unit = "m",
 ): HistoryLine {
   const who = e.userName ?? memberNames?.get(e.userId) ?? "Someone";
   const base = {
@@ -134,8 +145,8 @@ export function formatHistory(
     ...base,
     kind: "changed",
     field,
-    from: formatStored(data, e.table, e.field, oldV),
-    to: formatStored(data, e.table, e.field, newV),
+    from: formatStored(data, e.table, e.field, oldV, unit),
+    to: formatStored(data, e.table, e.field, newV, unit),
   };
 }
 

@@ -83,8 +83,18 @@ to try on the **Cues** tab:
   lightbox (←/→, Download, Delete with Undo: deleted files stay in R2 for a day). Paste or drop a photo into a note's compose
   box and it's attached when you save the note. Files go to R2 (local: `.wrangler/state`),
   25 MB each, 2 GB per show (usage in ⚙ Show settings).
-- **Gallery**: **Gallery** in the Content view bar shows cards with each item's first
-  image; *View ▾ → + Content gallery* makes it your own view.
+- **Gallery**: **Gallery** in the Content (or Surfaces) view bar shows cards with each
+  item's first image; *View ▾ → + Content gallery* makes it your own view.
+- **Surfaces** tab: the 15 projection surfaces with widths and heights in meters; regions
+  (CH02.1) sit under their parent (CH02). Flip the toolbar's **m / cm / ft-in** toggle
+  (your unit, everywhere; a view can pin its own in *Fields → Unit override*), or
+  type `14'9"` / `450cm` / `4.5` into a Width cell (a bare number is in the unit you're
+  looking at). Type `1920x1080` into **Pixels** and PPI, pitch and aspect fill in.
+  **Space** → **Calculator**: lock PPI, pixels or the physical size, then change another;
+  add a throw distance and lens ratio for the image width. Filter *Width > 4 m*, or color
+  rows with *PPI < 30*. Link surfaces to scenes from the Scenes tab's **Surfaces** column.
+  **Show settings** has the show's default unit and your own. Drop set photos onto a
+  surface's **Images** cell.
 
 Undo (⌘Z / ⌘⇧Z) covers cell edits made in that grid; inserts, moves, deletes and "Sort
 now" aren't undoable yet. Column widths, order, filters, sorts, grouping, row height and

@@ -23,6 +23,49 @@
   border-color: var(--color-accent);
 }
 
+/* m / cm / ft-in: a segmented control (features/views/units.tsx). */
+.unitToggle {
+  display: inline-flex;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.unitLegend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.unitOption {
+  padding: var(--space-1) var(--space-2);
+  font-size: 13px;
+  border-radius: 0;
+  white-space: nowrap;
+}
+
+.unitOption:first-of-type {
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+
+.unitOption:last-of-type {
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.unitOption + .unitOption {
+  margin-left: -1px;
+}
+
+.unitOption[aria-pressed="true"] {
+  position: relative;
+  background: var(--color-accent-subtle);
+  border-color: var(--color-accent);
+}
+
 .viewName {
   font-weight: 600;
   max-width: 18ch;
@@ -40,6 +83,15 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
+}
+
+.unitChip {
+  font-size: 12px;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-subtle);
+  color: var(--color-text);
+  white-space: nowrap;
 }
 
 .dirtyBadge {

@@ -1,6 +1,6 @@
 // Messages on the per-show WebSocket (/api/shows/:id/ws).
 import type { Role } from "./api";
-import type { ResolvedOp } from "./ops";
+import type { AnyResolvedOp } from "./ops";
 
 /**
  * Sent right after hello, and broadcast instead of `ops` when a batch is too large to send
@@ -18,7 +18,7 @@ export interface OpsMessage {
   version: number;
   /** The sender's store id (so it can recognise its own batch). */
   clientId: string;
-  ops: ResolvedOp[];
+  ops: AnyResolvedOp[];
 }
 
 /** Sent to a client right after it connects. */

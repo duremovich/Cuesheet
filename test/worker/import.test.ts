@@ -67,6 +67,7 @@ describe("Airtable import", () => {
       content_versions: 20,
       notes: 319,
       persons: 31,
+      surfaces: 0,
     });
     expect(body.warnings).toEqual(
       expect.arrayContaining([

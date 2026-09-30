@@ -90,6 +90,24 @@ Things the first build had to decide; each is easy to change.
   each top-level config key you changed (all filters, all color rules, …), not a merge
   within a key.
 
+## Units, formulas and surfaces (M3b decisions to confirm)
+
+- **Default unit.** Meters when nothing is set. The show default lives in the ShowDO
+  `meta` row (M3a owned D1 migrations this round); move it to D1 `shows` if it ever needs
+  to be listed across shows. Is ft-in the better default for US shows?
+- **Pixels are plain numbers** in formulas, so `pixel_width / width` is a `#UNIT` error
+  and pixels-per-length goes through `PPI()`; length × length (areas) is an error too.
+- **Surfaces import.** Surfaces-Gallery.csv has 16 rows, the last one blank: 15 surfaces
+  are imported. A region's parent comes from its channel (`CH02.1` → `CH02`). The
+  export's Breakdown.Surfaces column is empty; links resolve by surface name or channel
+  when it has values. `content.resolution` stays text (M3a owns content); the
+  `pixel_size` field type exists for it and for custom fields.
+- **Locale.** Lengths parse `.` as the decimal point and `,` only as a thousands separator
+  (`1,200 mm` = 1.2 m; `4,5 m` is refused rather than read as 4.5). A decimal-comma locale
+  would need its own rule; no change for now.
+- **Calculator.** The aspect lock starts off. The region diagram shows the region's
+  share, not its position (surfaces have no offsets yet).
+
 ## Infrastructure
 
 - **Sign-in for SM/director.** Do they need accounts, or is a read-only link enough?
@@ -163,3 +181,14 @@ Things the first build had to decide; each is easy to change.
 - **A table always has a shared view** (M2a review): the server refuses to delete the last
   one; drafts of shared views survive reloads and never overwrite a newer save (rebase or
   discard); viewers' copies are reused; M1c widths migrate to a per-user overlay.
+- **Units (M3b)** → CLAUDE.md "Units, formulas and surfaces": the toolbar's m / cm /
+  ft-in toggle sets *your* unit (per browser, everywhere), never the view; a view can pin
+  a unit only through Fields → Unit override (editors; a "View unit" chip shows it).
+  Order: view override → your unit → show default → meters. ft-in displays to the
+  nearest 1/8" (editing shows the exact value). Negative lengths are refused. A bare
+  number in ft-in is decimal feet (`14.75` = 14' 9"). The row panel's History shows
+  lengths in the active unit.
+- **Surface calculator (M3b)**: for a region of a parent with a pixel canvas, the pixel
+  size is the *default lock*, not read-only.
+- **Custom formula columns**: deferred to M5 with custom fields (the engine and the
+  built-in surface formulas are in M3b).

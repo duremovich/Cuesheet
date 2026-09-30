@@ -13,6 +13,7 @@ import { attachmentColumn } from "../attachments/Attachments";
 import { selectOptions } from "../cues/columns";
 import { textField } from "../shared/ops";
 import { createPerson, createScene, searchPersons, searchScenes } from "../shared/pickers";
+import { surfaceLinkColumn, surfaceLinkOps } from "../surfaces/columns";
 
 export interface ContentView {
   id: string;
@@ -25,6 +26,8 @@ export interface ContentView {
   version: ContentVersionRow | null;
   /** Attachments in order; the first image is the thumbnail (S4). */
   files: AttachmentRow[];
+  /** Linked surfaces (content.surfaces), in chip order (M3b). */
+  surfaces?: PickerItem[];
 }
 
 const TEXT = ["name", "description", "loop_in", "loop_out"] as const;
@@ -98,6 +101,7 @@ export function contentColumns(opts: {
       getValue: (v) => v.cues,
     },
     { key: "notes", title: "Notes", type: "readonly", width: 70, getValue: (v) => v.noteCount },
+    surfaceLinkColumn<ContentView>({ store, getValue: (v) => v.surfaces ?? [] }),
   ];
   return opts.editable ? cols : cols.map((c) => ({ ...c, editable: false }));
 }
@@ -122,6 +126,8 @@ export function contentEditOps(view: ContentView, key: string, value: unknown): 
       return [{ op: "update", table: "content", id, fields: { scene_id: ref } }];
     case "creator":
       return [{ op: "update", table: "content", id, fields: { creator_id: ref } }];
+    case "surfaces":
+      return surfaceLinkOps("content", id, view.surfaces ?? [], value as PickerItem[]);
     default:
       return [];
   }

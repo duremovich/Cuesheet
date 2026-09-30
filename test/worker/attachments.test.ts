@@ -513,7 +513,7 @@ describe("attachments", () => {
     // Deleting the content cascades to its attachments (explicit delete ops first).
     const res = await mutate(showId, admin, [{ op: "delete", table: "content", id: content }]);
     const body = (await res.json()) as MutateResponse;
-    expect(body.ops.map((o) => [o.op, o.table])).toEqual([
+    expect(body.ops.map((o) => (o.op === "meta" ? [o.op] : [o.op, o.table]))).toEqual([
       ["delete", "attachments"],
       ["delete", "attachments"],
       ["delete", "content"],

@@ -77,3 +77,16 @@ describe("history lines", () => {
     expect(fieldLabel("creator_id", { creator: "Creator" })).toBe("Creator");
   });
 });
+
+describe("lengths and pixel sizes in history", () => {
+  it("shows lengths in the active unit", () => {
+    const e = entry({ table: "surfaces", field: "width", old: "4.5", new: "1.3716" });
+    expect(formatHistory(e, data, {}, undefined, "ft-in")).toMatchObject({
+      from: `14' 9 1/8"`,
+      to: `4' 6"`,
+    });
+    expect(formatHistory(e, data, {})).toMatchObject({ from: "4.50 m", to: "1.37 m" });
+    const px = entry({ table: "surfaces", field: "pixel_width", old: null, new: "1920" });
+    expect(formatHistory(px, data, {}, undefined, "cm").to).toBe("1920");
+  });
+});

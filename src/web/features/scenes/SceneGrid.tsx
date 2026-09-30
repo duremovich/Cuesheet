@@ -1,8 +1,9 @@
 // The Scenes tab: scenes in show order; insert and drag to reorder.
 import { useMemo, useRef } from "react";
 import { sceneTitle, ViewCache } from "../../lib/show-selectors";
-import { useShowStore } from "../../lib/show-store";
+import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
 import { placementFor } from "../shared/ops";
+import { surfaceItem } from "../shared/pickers";
 import { TableGrid } from "../shared/TableGrid";
 import { useWorkspace } from "../show/workspace";
 import { type SceneView, sceneColumns, sceneEditOps } from "./columns";
@@ -14,6 +15,9 @@ export function SceneGrid() {
   const cues = useShowStore((s) => s.tables.cues);
   const content = useShowStore((s) => s.tables.content);
   const fieldOptions = useShowStore((s) => s.fieldOptions);
+  const surfaces = useShowStore((s) => s.tables.surfaces);
+  const sceneSurfaces = useShowStore((s) => s.joins.sceneSurfaces);
+  const store = useShowStoreInstance();
   const cache = useRef(new ViewCache<SceneView>()).current;
 
   const rows = useMemo(() => {
@@ -32,12 +36,24 @@ export function SceneGrid() {
         if (!scene) return [];
         const n = cueCount.get(id) ?? 0;
         const m = contentCount.get(id) ?? 0;
-        return [get(id, [scene, n, m], () => ({ id, scene, cueCount: n, contentCount: m }))];
+        const linked = (sceneSurfaces.get(id) ?? []).map((s) => surfaces.get(s));
+        return [
+          get(id, [scene, n, m, ...linked], () => ({
+            id,
+            scene,
+            cueCount: n,
+            contentCount: m,
+            surfaces: linked.flatMap((s) => (s ? [surfaceItem(s)] : [])),
+          })),
+        ];
       }),
     );
-  }, [scenes, order, cues, content, cache]);
+  }, [scenes, order, cues, content, cache, surfaces, sceneSurfaces]);
 
-  const columns = useMemo(() => sceneColumns(fieldOptions, canEdit), [fieldOptions, canEdit]);
+  const columns = useMemo(
+    () => sceneColumns(fieldOptions, canEdit, store),
+    [fieldOptions, canEdit, store],
+  );
 
   return (
     <TableGrid<SceneView>

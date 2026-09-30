@@ -4,8 +4,10 @@ The project has left the spec-only phase: M0 (the application scaffold), M1a (th
 data layer: core tables, ops, sync, history, members, Airtable import), M1b (the generic
 `DataGrid`), M1c (the show workspace: a grid tab per core table on the live store, ⌘K),
 M2a (saved views and conditional formatting), M2b (notes panel, editable row panel with
-history, tech mode, phone quick-add, the show's current session) and M3a (content versions,
-attachments in R2 with thumbnails, the gallery layout) are built. The stack
+history, tech mode, phone quick-add, the show's current session), M3a (content versions,
+attachments in R2 with thumbnails, the gallery layout) and M3b (surfaces, measurement /
+pixel-size / formula fields with unit conversion, the surface calculator) are built. The
+stack
 is decided in `docs/decisions/0005-cloudflare-platform.md`; don't relitigate it without a
 new decision record. Build milestone by milestone; don't pull later-milestone features
 (e.g. the cue grid) into an earlier one.
@@ -42,7 +44,8 @@ Before finishing any task: `pnpm check && pnpm e2e`.
 - `src/shared/`: code used by both Worker and web: `api.ts` DTOs, `ws.ts` socket messages,
   `tables.ts` (core table field specs + row types), `ops.ts` (op/resolved-op/snapshot
   types), `order.ts` (order keys), `ids.ts` (UUIDv7), `views.ts` (saved view config type,
-  validation, per-table defaults). No runtime dependencies except
+  validation, per-table defaults), `units.ts` (lengths and pixel sizes: parse/format),
+  `formula/` (the formula language). No runtime dependencies except
   `fractional-indexing` in `order.ts`, which must run identically on both sides.
 - `src/worker/do/ops-engine.ts`: applies op batches to the ShowDO's SQLite.
   `src/worker/import/airtable.ts`: CSVs → ops.
@@ -126,7 +129,10 @@ Before finishing any task: `pnpm check && pnpm e2e`.
 - **Show data: the op model** (decision 0006). Every write to show data is a batch of ops
   (`src/shared/ops.ts`): `create {table, id, fields, after?, before?}`, `update {table, id,
   fields}`, `delete`, `move {table, id, after?, before?}`, `link`/`unlink {table, id, field,
-  targetId, position?}`. Send them with `store.mutate(ops)` on the client (or
+  targetId, position?}`, and `meta {fields: {default_unit}}` for show-level settings kept in
+  the DO's `meta` row (editors; resolves to itself, logged in `changes` as table `meta`,
+  record `show`; in the snapshot as `meta`; typed `AnyOp`/`AnyResolvedOp`, while `Op`/
+  `ResolvedOp` stay row ops). Send them with `store.mutate(ops)` on the client (or
   `POST /api/shows/:id/mutate {clientId, ops}`, max 1000 ops); never write show tables any
   other way. The DO (`ops-engine.ts`) applies a batch in one transaction, validates field
   types / select options (`field_options`) / referenced ids / role, computes `order_key`
@@ -169,7 +175,8 @@ Before finishing any task: `pnpm check && pnpm e2e`.
 - **Adding a field to a core table.** (1) Column in `src/worker/db/do/schema.ts` +
   `pnpm db:generate` (nullable, or with a default, since existing shows have rows). (2) The
   field spec in `FIELDS` and the row interface in `src/shared/tables.ts` (type drives
-  validation: text/number/bool/select/multiselect/ref). (3) For a select: seed its options
+  validation: text/number/bool/select/multiselect/ref/json, `measurement` (REAL meters,
+  ≥ 0) and `pixel_size` (`{w, h}` JSON text); see "Units, formulas and surfaces"). (3) For a select: seed its options
   in a custom DO migration (`drizzle-kit generate --config drizzle.do.config.ts --custom`),
   like `0002_seed_field_options.sql`. (4) If Airtable has the column, map it in
   `src/worker/import/airtable.ts`. (5) Extend `test/worker/ops.test.ts` (and the import
@@ -191,7 +198,12 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   and owners; 4 MB max). A show that already has rows in any core table gets 409
   `{error:"Show already has data"}` unless the request has `?append=1` (the UI asks for
   confirmation first; appended rows are added, not merged). Files are recognised by Airtable's `<Table>-<View>.csv` name or by their
-  headers; the five core tables are imported, others skipped with a warning. The import is
+  headers; the five core tables and Surfaces are imported, others skipped with a warning.
+  Surfaces: Name, Channel Name, `Width (<unit>)`/`Height (<unit>)` (the header's unit;
+  meters when none), blank rows skipped (the example has 16 rows → 15 surfaces); a
+  region's parent comes from its channel (`CH02.1` → `CH02`), set in the create when the
+  parent comes first in the CSV, else by an update after; Breakdown.Surfaces links by
+  surface name or channel. Surfaces are created first so scenes can link them. The import is
   one op batch (so history and broadcast work; `allowCreatedAt` lets it keep note
   `Created Time`). CSV order becomes show order. Links resolve by primary text among the
   imported rows; multi-value cells are CSV-parsed (Airtable quotes values with commas).
@@ -232,8 +244,8 @@ the keyboard map and an integration example. The grid never fetches or persists;
 ## Table views (`src/web/features/`)
 
 The show page (`/shows/:id`) is a workspace (`features/show/ShowWorkspace.tsx`): header
-(title, presence, theme), tabs (`features/show/tabs.ts`: Cues, Scenes, Content, Notes,
-People → `/shows/:id/<tab>`; `/shows/:id` and unknown tabs redirect to `cues`), Show
+(title, presence, theme), tabs (`features/show/tabs.ts`: Cues, Scenes, Content, Surfaces,
+Notes, People → `/shows/:id/<tab>`; `/shows/:id` and unknown tabs redirect to `cues`), Show
 settings (import, members), the ⌘K palette (`features/search/`) and toasts. Tabs read
 `useWorkspace()` (role, `canEdit`/`canComment`, member names, `toast(message, kind,
 {action?, actions?, duration?})`/`reportError`, `sortCuesNow`, `openImport`). Everything about how a grid is
@@ -278,8 +290,8 @@ views" below).
 - **Live role changes**: `PATCH /members/:userId` calls `ShowDO.notifyRole`, which sends
   `{type:"role", role}` to that user's sockets; the store keeps it in `state.role` and the
   workspace uses it over the role the show was opened with, so editability flips live.
-- **URL state**: the active row is `?<param>=<id>` (`cue`, `scene`, `content`, `note`,
-  `person`; `tabs.ts`), written with `replace`. On load, or on a navigation carrying router
+- **URL state**: the active row is `?<param>=<id>` (`cue`, `scene`, `content`,
+  `surface`, `note`, `person`; `tabs.ts`), written with `replace`. On load, or on a navigation carrying router
   state `{ focus: id }` (⌘K), the tab calls `grid.focusRow(id)` once the row exists
   (`features/shared/useTableChrome.ts`); the open view is `?view=<id>`. Per-browser prefs
   (`features/shared/prefs.ts`, localStorage): collapsed groups per user+show+view and the
@@ -295,7 +307,8 @@ views" below).
   (cues: `CueContentCards`, link/unlink through the content picker; cards show the
   content's thumbnail and current version), **Versions** (content: see "Content
   versions"; attachment columns show full width in Fields with add / remove / reorder,
-  see "Attachments") and **History**
+  see "Attachments"), a table's own tabs after Fields (`extraTabs` / TableGrid's
+  `panelTabs`: the Surfaces **Calculator**) and **History**
   (`PanelHistory`: `GET /history?table=&id=&limit=`, newest first, formatted by
   `history.ts`; "Load more" raises the limit by 50 up to the server's 1000; "Refresh"
   refetches; otherwise it refetches 400 ms after a change touches this record, i.e. its
@@ -596,6 +609,113 @@ views" below).
   column from `attachmentColumn({table, field, showId, files, recordId, editable})`, and
   list the key in `VIEW_FIELDS` (kind `text`: filters match file names; sort by count).
   The row panel shows it full width automatically; deletes cascade automatically.
+## Units, formulas and surfaces (M3b: R11, R12, S2)
+
+- **Units model** (`src/shared/units.ts`). A measurement is stored as a plain number of
+  **meters** (field type `measurement`, SQLite REAL; the engine refuses negatives and
+  non-numbers). Units (`m cm mm ft-in ft in`) are only for display and typing. The
+  **active unit** is the view's `config.unit` override (only via Fields → **Unit
+  override**, editors or a personal view's owner; the toolbar then shows a "View unit: …"
+  chip; it's a view change like any other: a draft on a shared view) → the user's
+  preference (`cuesheet.unit.<userId>` in localStorage: the toolbar's m / cm / ft-in
+  toggle, which never touches the view, Show settings → My unit, or the calculator's
+  toggle; `useUserUnit`/`setUserUnit` in `features/views/units.tsx`, live across grids
+  and tabs) → the show's `default_unit` (the ShowDO `meta` row, via the `meta` op; Show settings →
+  Show default, editors) → meters. `useViewConfig` resolves it and hands it to the
+  columns (`withUnit`: `Column.unit` on measurement columns and length formulas), so
+  cells, the row panel (History included: `formatStored(…, unit)`; pixel sizes `w×h`),
+  filters and color rules all use it.
+- **Parsing** (`parseLength(text, activeUnit)` → `{m}` | `{error}` | null for empty):
+  `4.5` (in the active unit; ft-in: decimal feet), `4.5 m`, `450cm`, `1,200 mm`, `177in`,
+  `14.75ft`, `14'`, `9"`, `14'9"`, `14' 9"`, `14' 9`, `14 ft 9 in`, fractions (`14' 9 1/2"`,
+  `3/4"`), `1 m 20 cm`; smart quotes/primes are fine; negatives and lengths over 1 km
+  (`MAX_LENGTH_M`) are errors.
+  **Formatting**: m 2 dp, cm 1 dp, mm 0 dp, in 1 dp, ft 2 dp, ft-in to the nearest 1/8"
+  (`FT_IN_DENOMINATOR`; `14' 9 1/8"`). `formatLengthParts` splits the number from the
+  muted unit label the grid shows. `editLength` is the editor's starting text: precise
+  (`14' 9.165"`, `1.3716 m`), so committing it unchanged is a no-op; lengths within
+  `LENGTH_EPSILON` (0.02 mm) are equal (`valuesEqual(a, b, "measurement")`).
+  **Pixel sizes**: `parsePixelSize` takes `1920x1080`, `1920 × 1080`, `1920*1080`,
+  `1920, 1080`; stored as `{w, h}` (field type `pixel_size`, whole pixels 1–100,000).
+- **Grid column types**: `measurement` (value: meters or null; cell = number + muted
+  unit; typing accepts any format), `pixelsize` (`{w,h}` or null, shown `1920×1080`;
+  sorts by area), `formula` (read-only; value is a formula `Value`; errors render as a
+  red `#CODE` with the message as the tooltip; `resultType` number/text/measurement
+  decides filtering and sorting; errors sort and filter as empty). Filters: kind
+  `measurement` takes `> ≥ < ≤ is is-not empty`; the value is **saved with the unit it was
+  typed in** (`qualifyLength`: "4" typed while viewing cm is stored "4 cm"; `14' 6"` as
+  is), shown converted to the viewer's unit, and compared in meters
+  (`measurementFilterMeters`; a bare number or unit-less text from older filters is
+  meters), so one saved filter or color rule matches the same rows in every unit.
+- **Refused input** (a negative or out-of-range length, a bad pixel size, a lens ratio of
+  0): the grid keeps the editor open, marks it `aria-invalid` and says why in its status
+  line (`parseError`); the row panel shows the reason under the field; the calculator
+  under its input. Nothing is written. A `Column.parse(text) → {value} | {error}` overrides
+  a column's parsing (the lens ratio column accepts `1.5` or `1.5:1`). Copying measurement
+  cells copies the precise edit text (`copyText`), so pasting loses nothing.
+- **Limits** (server `FieldSpec` `min`/`minExclusive`/`max`/`integer`, checked by the op
+  engine, and the same on input): lengths 0–1000 m, pixel sizes whole 1–100,000, lens
+  ratio above 0 up to 100.
+- **Adding a measurement field**: column `real(...)` in the DO schema + migration; `FIELDS`
+  entry `measurement` in `tables.ts` (row type `number | null`, meters); a grid column
+  `{type: "measurement", getValue: (v) => v.row.field}` whose edit op writes the number
+  (null clears); a `VIEW_FIELDS` entry with kind `measurement`; importer: parse with
+  `parseLength(text, headerUnit(header))`. Nothing else: units, filters and the toggle
+  come from the view layer.
+- **Formula language** (`src/shared/formula/`: `lexer.ts`, Pratt `parser.ts`,
+  `evaluate.ts`, `index.ts` with the reference in its header comment; data-model.md
+  §Formulas). `compile(source)` once → `run(compiled, record)` per row; `dependencies()`
+  lists the fields and link paths read. A `FormulaRecord` is `{label?, get(name)}`
+  returning a value, a `{records}` set for links, or undefined (→ `#NAME`). Values:
+  numbers, text, booleans, lengths `{value, unit: "m"}`, pixel sizes, lists, errors
+  `{error, code}`. Dimension rules: length ± length, length × or ÷ number → length; length
+  ÷ length → number; anything else with a length → `#UNIT`. Blank operands make
+  arithmetic blank. Errors propagate; nothing throws. Nesting deeper than 200 levels
+  (brackets, calls, operator chains; measured without recursion) compiles to a `#DEPTH`
+  error. `ROUND` rounds half away from zero after correcting binary error
+  (`ROUND(1.005, 2)` = 1.01); more than ±20 digits is `#VALUE`. `ASPECT` snaps to 16:9,
+  16:10, 4:3, 21:9, 32:9, 1:1, 2.35:1 within 1% (the closest), else `1.86:1`.
+- **Computed columns**: built-ins are declared in code (`features/surfaces/formulas.ts`,
+  `SURFACE_FORMULAS`: `ppi`, `pixel_pitch`, `aspect_ratio`, `throw_width`), computed per
+  row when the tab builds its view objects (`computeSurface`, cached by the ViewCache on
+  the surface and its parent) and shown as `formula` columns (`VIEW_FIELDS` gives their
+  kind). They're sortable, filterable and usable in color rules like any column. There
+  are no user-defined formula columns yet (M5, with custom fields).
+- **Surfaces** (`features/surfaces/`): an ordered table (`order_key`, drag), `parent_id`
+  (the engine refuses a parent that is the surface or one of its regions; deleting a
+  surface nulls its regions' parent and drops its links), measurements `width`,
+  `height`, `throw_distance`, numbers `pixel_width`, `pixel_height`, `lens_ratio`. The
+  grid's **Pixels** column edits `pixel_width` + `pixel_height` together. Links
+  `scenes.surfaces` (`scene_surfaces`) and `content.surfaces` (`content_surfaces`) show as
+  **Surfaces** columns on Scenes and Content (`surfaceLinkColumn`/`surfaceLinkOps`) and as
+  editable reverse columns on Surfaces (link/unlink from the scene/content side). The
+  Parent picker leaves out the surface and its regions. `images` (attachments) and the
+  gallery come with M3a. At ≤ 480 px the Channel column hides unless the view lists it
+  (`narrowHidden` on `TableGrid`/`useViewConfig`); Name is 140 px wide. The importer warns
+  about header units it doesn't know (read as meters) and about regions whose parent
+  channel isn't in the file.
+- **⌘K ranking** (`searchShow`): groups with an exact or prefix *name* match (or a cue
+  number) come before groups with only partial text matches, so "C WALL" lists the surface
+  before cues whose description mentions a wall; note bodies never count as names.
+- **Calculator** (`Calculator.tsx`, math in `calc.ts`): physical size, pixel size and PPI
+  (= pixel_width ÷ width in inches; blank until both pixel sides are set, in the grid's
+  PPI/pitch columns too). One of the three is locked (lock buttons); editing
+  another recomputes the third so the locked one stays: lock PPI + change width → pixel
+  width follows; lock physical + change PPI → pixels follow; lock pixels + change PPI →
+  size follows; editing the locked one acts as if the other stored one were locked.
+  "Keep aspect ratio" scales the height with the width (pixels too). The locked PPI and
+  the aspect ratios are captured when the lock / checkbox is engaged (`CalcRefs`) and
+  every edit computes from them, so rounding to whole pixels never drifts (a 10-edit round
+  trip returns exactly 1920×1080 / 4.5 m). Default lock: pixels for a region whose parent
+  has a pixel size, else physical. Pixels round to whole numbers; a result outside the
+  limits is refused with a message. "Use parent's PPI" (regions) fills the region's pixels
+  from its size. The pixels-aren't-square warning allows 1%. Every change is one `update` op.
+  **Units in the calculator**: it shows the grid's active unit (view override → your unit
+  → show default), live, including toolbar toggles while it's open (`TableGrid` passes
+  `{unit, viewUnit}` to `panelTabs`); its own toggle sets your unit, and says so when the
+  view's override wins. Projector: throw distance + lens ratio →
+  image width, plus the distance / ratio that fills the surface's width. A region shows
+  its parent's canvas and its share of it.
 
 ## Theme and colors
 

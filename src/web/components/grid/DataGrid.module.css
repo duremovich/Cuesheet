@@ -386,6 +386,12 @@
   text-align: right;
 }
 
+/* A refused value (e.g. a negative length): the editor stays open, outlined in red. */
+.editor[aria-invalid="true"] {
+  outline: 2px solid var(--color-danger);
+  outline-offset: -2px;
+}
+
 .editorArea {
   min-width: max(100%, 280px);
   min-height: 100%;
@@ -587,4 +593,24 @@
   outline: 2px dashed var(--color-accent);
   outline-offset: -2px;
   background: var(--color-accent-subtle);
+}
+
+/* Measurement cells: the unit after the number, muted. */
+.unitLabel {
+  color: var(--color-text-muted);
+  font-size: 0.85em;
+}
+
+/* Formula errors (#UNIT, #DIV/0…): red, the message on hover. */
+.formulaError {
+  width: 100%;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--color-danger-subtle);
+  color: var(--color-danger);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  text-align: right;
+  cursor: help;
+  white-space: nowrap;
 }

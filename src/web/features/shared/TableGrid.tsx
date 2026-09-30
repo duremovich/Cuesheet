@@ -5,6 +5,7 @@ import { type ReactNode, useCallback, useMemo, useRef } from "react";
 import { newId } from "../../../shared/ids";
 import type { Op } from "../../../shared/ops";
 import type { AttachmentRow } from "../../../shared/tables";
+import type { Unit } from "../../../shared/units";
 import { DataGrid } from "../../components/grid";
 import type { Column, Group, InsertPosition } from "../../components/grid/types";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
@@ -15,7 +16,7 @@ import type { FieldDef } from "../views/evaluate";
 import { Gallery } from "../views/Gallery";
 import { DATE_FIELDS, NATIVE_GROUP_KEY } from "../views/tableDefaults";
 import { useViewConfig } from "../views/useViewConfig";
-import { type PanelSection, RowPanel } from "./RowPanel";
+import { type PanelSection, type PanelTab, RowPanel } from "./RowPanel";
 import { TableFrame, ToolbarButton } from "./TableFrame";
 import { GRID_ACTIONS, useTableChrome } from "./useTableChrome";
 
@@ -52,10 +53,14 @@ export interface TableConfig<V> {
   deleteOps?: (views: V[]) => Op[] | string;
   panelTitle: (v: V) => string;
   panelSections?: (v: V) => PanelSection[];
+  /** Extra row panel tabs after Fields (e.g. a surface's Calculator). */
+  panelTabs?: (v: V, ctx: { unit: Unit; viewUnit: Unit | undefined }) => PanelTab[];
   toolbar?: ReactNode;
   empty?: ReactNode;
   /** Native groups collapsed until the user expands them (a constant array). */
   defaultCollapsed?: string[];
+  /** Columns hidden at phone width unless the view lists them (a constant array). */
+  narrowHidden?: readonly string[];
   /** Where the toolbar's "+ Add" button inserts (default: the end of the last group). */
   addPosition?: InsertPosition;
   testId?: string;
@@ -111,6 +116,7 @@ export function TableGrid<V>(config: TableConfig<V>) {
     ...(config.groups ? { groups: config.groups } : {}),
     ...(nativeGroupKey ? { nativeGroupKey } : {}),
     ...(config.defaultCollapsed ? { defaultCollapsed: config.defaultCollapsed } : {}),
+    ...(config.narrowHidden ? { narrowHidden: config.narrowHidden } : {}),
     ...(config.extraFields ? { extraFields: config.extraFields } : {}),
     ...(dateFields ? { dateFields } : {}),
     ...(config.gallery ? { gallery: { presetName: config.gallery.presetName } } : {}),
@@ -217,11 +223,12 @@ export function TableGrid<V>(config: TableConfig<V>) {
           <RowPanel
             title={config.panelTitle(panelView)}
             row={panelView}
-            columns={chrome.columns}
+            columns={view.sortColumns}
             table={tabInfo(config.tab).table}
             recordId={config.rowId(panelView)}
             onEdit={(key, value) => onEdit(config.rowId(panelView), key, value)}
             sections={config.panelSections?.(panelView) ?? []}
+            extraTabs={config.panelTabs?.(panelView, { unit: view.unit, viewUnit: view.viewUnit })}
             onClose={chrome.closePanel}
             onStep={chrome.stepPanel}
           />

@@ -1,6 +1,8 @@
 // Cell display and the inline text editor.
 
 import { useLayoutEffect, useRef } from "react";
+import { isFormulaError, isQuantity, type Value } from "../../../shared/formula";
+import { formatLengthParts } from "../../../shared/units";
 import { Chip } from "./Chip";
 import styles from "./DataGrid.module.css";
 import type { Column, PickerItem } from "./types";
@@ -62,7 +64,33 @@ export function CellContent<Row>({
       );
     }
     case "number":
+    case "pixelsize":
       return <span className={styles.number}>{formatValue(col, value)}</span>;
+    case "measurement": {
+      if (typeof value !== "number") return null;
+      const { value: text, label } = formatLengthParts(value, col.unit ?? "m");
+      return (
+        <span className={styles.number}>
+          {text}
+          {label && <span className={styles.unitLabel}> {label}</span>}
+        </span>
+      );
+    }
+    case "formula": {
+      const v = value as Value;
+      if (isFormulaError(v)) {
+        return (
+          <span className={styles.formulaError} title={v.error} data-formula-error={v.code}>
+            {v.code}
+            <span className={styles.visuallyHidden}>: {v.error}</span>
+          </span>
+        );
+      }
+      const numeric = typeof v === "number" || isQuantity(v);
+      return (
+        <span className={numeric ? styles.number : styles.readonly}>{formatValue(col, value)}</span>
+      );
+    }
     case "longtext":
       return <span className={styles.longtext}>{formatValue(col, value)}</span>;
     case "readonly":
@@ -80,6 +108,7 @@ export function TextEditor({
   value,
   label,
   placeholder,
+  invalid,
   onChange,
 }: {
   multiline: boolean;
@@ -88,6 +117,8 @@ export function TextEditor({
   label: string;
   /** Ghost suggestion (Tab / → accepts it). */
   placeholder?: string | undefined;
+  /** Why the text was refused (aria-invalid + tooltip); the editor stays open. */
+  invalid?: string | undefined;
   onChange: (v: string) => void;
 }) {
   const ref = useRef<HTMLInputElement & HTMLTextAreaElement>(null);
@@ -137,6 +168,8 @@ export function TextEditor({
       inputMode={numeric ? "decimal" : undefined}
       className={styles.editor}
       aria-label={label}
+      aria-invalid={invalid ? true : undefined}
+      title={invalid}
       data-editor="true"
       placeholder={placeholder}
       value={value}

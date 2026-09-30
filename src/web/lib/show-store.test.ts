@@ -38,6 +38,7 @@ class FakeServer {
       tables: tables as SnapshotResponse["tables"],
       joins,
       fieldOptions: {},
+      meta: this.data.meta,
     };
   }
 

@@ -153,7 +153,7 @@ describe("content versions", () => {
     let snap = JSON.parse(await stub.snapshotJson()) as SnapshotResponse;
     expect(snap.tables.content_versions.map((v) => v.rendered_by)).toEqual([null, null]);
     const r = ok(await stub.mutate(ctx(), [{ op: "delete", table: "content", id: content }]));
-    expect(r.ops.map((o) => [o.op, o.table])).toEqual([
+    expect(r.ops.map((o) => (o.op === "meta" ? [o.op] : [o.op, o.table]))).toEqual([
       ["delete", "content_versions"],
       ["delete", "content_versions"],
       ["delete", "content"],

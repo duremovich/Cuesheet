@@ -13,7 +13,7 @@ import {
 import { type ShowState, useShowStore, useShowStoreInstance } from "../../lib/show-store";
 import { attachmentsOf, isImage } from "../attachments/selectors";
 import { groupOrder, placementFor } from "../shared/ops";
-import { cueItem, personItem, sceneItem } from "../shared/pickers";
+import { cueItem, personItem, sceneItem, surfaceItem } from "../shared/pickers";
 import { TableGrid } from "../shared/TableGrid";
 import { useWorkspace } from "../show/workspace";
 import { type ContentView, contentColumns, contentEditOps } from "./columns";
@@ -57,23 +57,29 @@ export function ContentGrid() {
         const cueIds = cuesByContent.get(id) ?? NONE;
         const cues = cueIds.map((c) => tables.cues.get(c));
         const noteCount = notesByContent.get(id)?.length ?? 0;
+        const surfaces = (joins.contentSurfaces.get(id) ?? NONE).map((s) => tables.surfaces.get(s));
         const version = versions.get(id) ?? null;
         const files = attachmentsOf(tables.attachments, "content", id);
         return [
-          get(id, [content, scene, creator, noteCount, version, files, ...cues], () => ({
+          get(
             id,
-            content,
-            scene: scene ? sceneItem(scene) : null,
-            creator: creator ? personItem(creator) : null,
-            cues: cues.flatMap((c) => (c ? [cueItem(c)] : [])),
-            noteCount,
-            version,
-            files,
-          })),
+            [content, scene, creator, noteCount, version, files, ...cues, "|", ...surfaces],
+            () => ({
+              id,
+              content,
+              scene: scene ? sceneItem(scene) : null,
+              creator: creator ? personItem(creator) : null,
+              cues: cues.flatMap((c) => (c ? [cueItem(c)] : [])),
+              noteCount,
+              surfaces: surfaces.flatMap((s) => (s ? [surfaceItem(s)] : [])),
+              version,
+              files,
+            }),
+          ),
         ];
       }),
     );
-  }, [cache, order.content, tables, cuesByContent, notesByContent]);
+  }, [cache, order.content, tables, cuesByContent, notesByContent, joins.contentSurfaces]);
 
   const scenes = useMemo(
     () => order.scenes.flatMap((id) => tables.scenes.get(id) ?? []),

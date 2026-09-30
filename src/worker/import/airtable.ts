@@ -5,8 +5,9 @@ import Papa from "papaparse";
 import { newId } from "../../shared/ids";
 import type { FieldValues, ImportResponse, Op } from "../../shared/ops";
 import type { FieldOptions, TableName } from "../../shared/tables";
+import { parseLength, type Unit } from "../../shared/units";
 
-export type ImportKind = "scenes" | "persons" | "content" | "cues" | "notes";
+export type ImportKind = "scenes" | "persons" | "content" | "cues" | "notes" | "surfaces";
 
 export interface CsvFile {
   name: string;
@@ -21,6 +22,7 @@ const FILENAME_PREFIXES: [string, ImportKind][] = [
   ["content", "content"],
   ["cue list", "cues"],
   ["notes", "notes"],
+  ["surfaces", "surfaces"],
 ];
 
 export function parseCsv(text: string): { headers: string[]; rows: CsvRow[] } {
@@ -46,6 +48,7 @@ export function detectKind(fileName: string, headers: string[]): ImportKind | nu
   if (h.has("Scene Name") && h.has("Location")) return "scenes";
   if (h.has("Name") && (h.has("Creator") || h.has("LOOP IN"))) return "content";
   if (h.has("Name") && h.has("Role")) return "persons";
+  if (h.has("Name") && h.has("Channel Name")) return "surfaces";
   return null;
 }
 
@@ -71,6 +74,28 @@ export function parseAirtableTime(v: string | undefined): number | null {
   let hour = Number(h) % 12;
   if (ap?.toLowerCase() === "pm") hour += 12;
   return Date.UTC(Number(y), Number(mo) - 1, Number(d), hour, Number(mi));
+}
+
+/** The unit a "Width (Meters)" style header names (meters when it names none). */
+export function headerUnit(header: string): Unit {
+  return headerUnitOrNull(header) ?? "m";
+}
+
+/** The header's unit; null when its parentheses name something that isn't a unit. */
+export function headerUnitOrNull(header: string): Unit | null {
+  const u = /\(([^)]*)\)/.exec(header)?.[1]?.trim().toLowerCase() ?? "";
+  if (u === "" || /^(met(er|re)s?|m)$/.test(u)) return "m";
+  if (/^(feet|foot|ft)$/.test(u)) return "ft";
+  if (/^(inches|inch|in)$/.test(u)) return "in";
+  if (/^(centimet(er|re)s?|cm)$/.test(u)) return "cm";
+  if (/^(millimet(er|re)s?|mm)$/.test(u)) return "mm";
+  return null;
+}
+
+/** "CH02.1" → "CH02" (a region's parent channel); null for a top-level channel. */
+export function parentChannel(channel: string): string | null {
+  const i = channel.lastIndexOf(".");
+  return i > 0 ? channel.slice(0, i) : null;
 }
 
 /** "101 Scene One: Hottest Speakeasy" → { number: "101", name: "Scene One: …" }. */
@@ -111,20 +136,106 @@ export interface ImportPlan extends ImportResponse {
 export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions): ImportPlan {
   const warnings = new Warnings();
   const option = optionMatcher(fieldOptions, warnings);
+  let surfaceHeaders: string[] = [];
   const byKind = new Map<ImportKind, CsvRow[]>();
   for (const f of files) {
     const { headers, rows } = parseCsv(f.text);
     const kind = detectKind(f.name, headers);
     if (!kind) {
-      warnings.add(`${f.name}: not one of Breakdown, Personnel, Content, Cue List, Notes; skipped`);
+      warnings.add(
+        `${f.name}: not one of Breakdown, Personnel, Content, Cue List, Notes, Surfaces; skipped`,
+      );
       continue;
     }
     if (byKind.has(kind)) warnings.add(`${f.name}: a second ${kind} file; skipped`);
-    else byKind.set(kind, rows);
+    else {
+      byKind.set(kind, rows);
+      if (kind === "surfaces") surfaceHeaders = headers;
+    }
   }
 
   const ops: Op[] = [];
-  const created = { scenes: 0, cues: 0, content: 0, content_versions: 0, notes: 0, persons: 0 };
+  const created = {
+    scenes: 0,
+    cues: 0,
+    content: 0,
+    content_versions: 0,
+    notes: 0,
+    persons: 0,
+    surfaces: 0,
+  };
+
+  // ---- surfaces (first: scenes link to them) ----
+  // Name, Channel Name, Width/Height (<unit>); a region's parent comes from its channel
+  // ("CH02.1" is a region of "CH02").
+  const surfaceByText = new Map<string, string>();
+  const surfaceByChannel = new Map<string, string>();
+  const surfaceChannel: { id: string; channel: string | null; index: number }[] = [];
+  const widthHeader = surfaceHeaders.find((h) => /^width\b/i.test(h.trim()));
+  const heightHeader = surfaceHeaders.find((h) => /^height\b/i.test(h.trim()));
+  for (const h of [widthHeader, heightHeader]) {
+    if (h && (byKind.get("surfaces")?.length ?? 0) > 0 && headerUnitOrNull(h) === null) {
+      warnings.add(`Surfaces: "${h}" names no unit Cuesheet knows; read as meters`);
+    }
+  }
+  const length = (row: CsvRow, header: string | undefined, name: string | null) => {
+    const raw = header ? clean(row[header]) : null;
+    if (!raw || !header) return null;
+    const r = parseLength(raw, headerUnit(header));
+    if (r && "m" in r) return r.m;
+    warnings.add(
+      `Surfaces: "${raw}" in ${header} of ${name ?? "a surface"} is not a length; left empty`,
+    );
+    return null;
+  };
+  let surfaceIndex = 0;
+  for (const r of byKind.get("surfaces") ?? []) {
+    if (!Object.values(r).some((v) => v.trim())) continue;
+    const name = clean(r.Name);
+    const channel = clean(r["Channel Name"]);
+    const id = newId();
+    if (name && !surfaceByText.has(name.toLowerCase())) surfaceByText.set(name.toLowerCase(), id);
+    if (channel && !surfaceByChannel.has(channel.toLowerCase())) {
+      surfaceByChannel.set(channel.toLowerCase(), id);
+    }
+    surfaceChannel.push({ id, channel, index: surfaceIndex++ });
+    ops.push({
+      op: "create",
+      table: "surfaces",
+      id,
+      fields: {
+        name,
+        channel,
+        width: length(r, widthHeader, name),
+        height: length(r, heightHeader, name),
+      },
+    });
+    created.surfaces++;
+  }
+  // Parents: set in the create when the parent comes first in the CSV, else afterwards.
+  const createIndex = new Map(
+    ops.flatMap((o, i) => (o.op === "create" && o.table === "surfaces" ? [[o.id, i]] : [])),
+  );
+  for (const s of surfaceChannel) {
+    const pc = s.channel ? parentChannel(s.channel) : null;
+    const parentId = pc ? surfaceByChannel.get(pc.toLowerCase()) : undefined;
+    if (pc && !parentId) {
+      warnings.add(
+        `Surfaces: ${s.channel} looks like a region of ${pc}, which isn't in the file; left top-level`,
+      );
+    }
+    if (!parentId || parentId === s.id) continue;
+    const at = createIndex.get(s.id) as number;
+    const op = ops[at];
+    if ((createIndex.get(parentId) as number) < at && op?.op === "create") {
+      op.fields.parent_id = parentId;
+    } else {
+      ops.push({ op: "update", table: "surfaces", id: s.id, fields: { parent_id: parentId } });
+    }
+  }
+  /** By name, else by channel ("L PRO TOP" or "CH02.1"). */
+  const surface = (text: string): string | null =>
+    surfaceByText.get(text.toLowerCase()) ?? surfaceByChannel.get(text.toLowerCase()) ?? null;
 
   // ---- persons ----
   const personByName = new Map<string, string>();
@@ -189,6 +300,11 @@ export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions
       },
     });
     created.scenes++;
+    for (const text of splitMulti(r.Surfaces)) {
+      const targetId = surface(text);
+      if (!targetId) warnings.add(`Breakdown: surface "${text}" not found; link skipped`);
+      else ops.push({ op: "link", table: "scenes", id, field: "surfaces", targetId });
+    }
   }
   /** By full "Scene Name" text, else by the first number in it ("S100 - OVERTURE" → 100). */
   const scene = (text: string): string | null =>

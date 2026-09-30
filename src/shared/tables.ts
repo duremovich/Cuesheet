@@ -3,12 +3,15 @@
 // Field names are the storage names (snake_case), as in docs/spec/data-model.md.
 // Adding a field: see "Adding a field to a core table" in CLAUDE.md.
 
+import { MAX_LENGTH_M, MAX_LENS_RATIO, MAX_PIXELS } from "./units";
+
 export const TABLE_NAMES = [
   "scenes",
   "cues",
   "content",
   "notes",
   "persons",
+  "surfaces",
   "views",
   "content_versions",
   "attachments",
@@ -19,19 +22,21 @@ export type TableName = (typeof TABLE_NAMES)[number];
  * The show's data tables: every table but `views` (which holds saved view definitions for
  * them). What import checks for emptiness and what a saved view can be for.
  */
-export const DATA_TABLES = ["scenes", "cues", "content", "notes", "persons"] as const;
+export const DATA_TABLES = ["scenes", "cues", "content", "notes", "persons", "surfaces"] as const;
 export type DataTableName = (typeof DATA_TABLES)[number];
 
 export function isDataTable(t: unknown): t is DataTableName {
   return typeof t === "string" && (DATA_TABLES as readonly string[]).includes(t);
 }
 
-export const ORDERED_TABLES = ["scenes", "cues", "content"] as const;
+export const ORDERED_TABLES = ["scenes", "cues", "content", "surfaces"] as const;
 export type OrderedTableName = (typeof ORDERED_TABLES)[number];
 
 /**
  * `json`: any JSON value stored as text, validated per field by the op engine.
  * `attachment`: files in R2, one `attachments` row each (not a column; see ATTACHMENT_FIELDS).
+ * `measurement`: a length in meters (REAL, ≥ 0; displayed in the active unit, see
+ * ./units.ts). `pixel_size`: `{w, h}` positive whole pixels, stored as JSON text.
  */
 export type FieldType =
   | "text"
@@ -41,7 +46,9 @@ export type FieldType =
   | "multiselect"
   | "ref"
   | "json"
-  | "attachment";
+  | "attachment"
+  | "measurement"
+  | "pixel_size";
 
 export interface FieldSpec {
   type: FieldType;
@@ -53,6 +60,13 @@ export interface FieldSpec {
   auto?: boolean;
   /** Settable on create only (a view's table and owner). */
   immutable?: boolean;
+  /** number / measurement: allowed range (the engine refuses values outside it). */
+  min?: number;
+  /** `min` itself is not allowed (e.g. a lens ratio must be > 0). */
+  minExclusive?: boolean;
+  max?: number;
+  /** number: whole numbers only. */
+  integer?: boolean;
 }
 
 const text: FieldSpec = { type: "text" };
@@ -61,6 +75,10 @@ const bool: FieldSpec = { type: "bool" };
 const select: FieldSpec = { type: "select" };
 const multiselect: FieldSpec = { type: "multiselect" };
 const ref = (table: TableName): FieldSpec => ({ type: "ref", ref: table });
+/** Meters, 0–1 km. */
+const measurement: FieldSpec = { type: "measurement", min: 0, max: MAX_LENGTH_M };
+/** Whole pixels, 1–MAX_PIXELS. */
+const pixels: FieldSpec = { type: "number", integer: true, min: 1, max: MAX_PIXELS };
 
 /** Writable (and auto) data fields per table. Excludes the common columns below. */
 export const FIELDS = {
@@ -123,6 +141,25 @@ export const FIELDS = {
     phone: text,
     organization: text,
     user_id: text,
+  },
+  /**
+   * data-model.md §Surface. PPI, pixel pitch, aspect and throw width are computed columns
+   * (formulas on the client). `images` (set photos / renders) is an attachment field
+   * (ATTACHMENT_FIELDS); the first image is the gallery card's picture.
+   */
+  surfaces: {
+    name: text,
+    channel: text,
+    /** A surface this one is a region of; the op engine refuses cycles. */
+    parent_id: ref("surfaces"),
+    width: measurement,
+    height: measurement,
+    pixel_width: pixels,
+    pixel_height: pixels,
+    throw_distance: measurement,
+    /** Throw ratio (distance ÷ image width): > 0, ≤ 100. */
+    lens_ratio: { type: "number", min: 0, minExclusive: true, max: MAX_LENS_RATIO },
+    description: text,
   },
   /** Saved views (R16): src/shared/views.ts, CLAUDE.md "Saved views". */
   views: {
@@ -279,6 +316,23 @@ export interface PersonRow extends CommonRow {
   user_id: string | null;
 }
 
+export interface SurfaceRow extends CommonRow, Ordered {
+  name: string | null;
+  channel: string | null;
+  parent_id: string | null;
+  /** Meters. */
+  width: number | null;
+  /** Meters. */
+  height: number | null;
+  pixel_width: number | null;
+  pixel_height: number | null;
+  /** Meters. */
+  throw_distance: number | null;
+  /** Throw ratio: distance ÷ image width. */
+  lens_ratio: number | null;
+  description: string | null;
+}
+
 export interface ViewRow extends CommonRow {
   table: DataTableName;
   name: string | null;
@@ -321,6 +375,7 @@ export interface RowTypes {
   content: ContentRow;
   notes: NoteRow;
   persons: PersonRow;
+  surfaces: SurfaceRow;
   views: ViewRow;
   content_versions: ContentVersionRow;
   attachments: AttachmentRow;
@@ -334,6 +389,7 @@ export interface RowTypes {
 export const ATTACHMENT_FIELDS: Partial<Record<TableName, Record<string, FieldSpec>>> = {
   content: { attachments: { type: "attachment" } },
   notes: { attachments: { type: "attachment" } },
+  surfaces: { images: { type: "attachment" } },
 };
 
 export function isAttachmentField(table: string, field: string): boolean {
@@ -379,6 +435,22 @@ export const LINKS = {
     to: "persons",
     toCol: "person_id",
     key: "noteAssignees",
+  },
+  "scenes.surfaces": {
+    join: "scene_surfaces",
+    from: "scenes",
+    fromCol: "scene_id",
+    to: "surfaces",
+    toCol: "surface_id",
+    key: "sceneSurfaces",
+  },
+  "content.surfaces": {
+    join: "content_surfaces",
+    from: "content",
+    fromCol: "content_id",
+    to: "surfaces",
+    toCol: "surface_id",
+    key: "contentSurfaces",
   },
 } as const satisfies Record<
   string,

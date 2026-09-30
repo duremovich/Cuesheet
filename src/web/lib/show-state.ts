@@ -1,7 +1,17 @@
 // Pure, immutable show state for the client store (./show-store.ts): building it from a
 // snapshot, resolving ops locally the way the server will (optimistic updates), and
 // applying resolved ops. Untouched rows keep their identity so React selectors stay cheap.
-import type { FieldValues, Joins, Op, ResolvedOp, SnapshotResponse } from "../../shared/ops";
+import {
+  type AnyOp,
+  type AnyResolvedOp,
+  type FieldValues,
+  isMetaOp,
+  type Joins,
+  type Op,
+  type ResolvedOp,
+  type ShowSettings,
+  type SnapshotResponse,
+} from "../../shared/ops";
 import { compareOrder, effectivePlacement, orderKeyFor } from "../../shared/order";
 import {
   type AnyRow,
@@ -32,7 +42,11 @@ export interface ShowData {
   /** From-id → target ids in chip order. */
   joins: { [K in JoinName]: Map<string, string[]> };
   fieldOptions: FieldOptions;
+  /** Show-level settings (the DO `meta` row): the default measurement unit. */
+  meta: ShowSettings;
 }
+
+const NO_META: ShowSettings = { default_unit: null };
 
 type Tables = ShowData["tables"];
 type RowMap = Map<string, AnyRow>;
@@ -46,18 +60,22 @@ export function emptyData(): ShowData {
       content: new Map(),
       notes: new Map(),
       persons: new Map(),
+      surfaces: new Map(),
       views: new Map(),
       content_versions: new Map(),
       attachments: new Map(),
     },
-    order: { scenes: [], cues: [], content: [] },
+    order: { scenes: [], cues: [], content: [], surfaces: [] },
     joins: {
       cueContent: new Map(),
       cueAssignees: new Map(),
       noteCues: new Map(),
       noteAssignees: new Map(),
+      sceneSurfaces: new Map(),
+      contentSurfaces: new Map(),
     },
     fieldOptions: {},
+    meta: NO_META,
   };
 }
 
@@ -72,6 +90,8 @@ export function fromSnapshot(snap: SnapshotResponse, prev?: ShowData): ShowData 
   data.version = snap.version;
   data.fieldOptions =
     prev && jsonEqual(prev.fieldOptions, snap.fieldOptions) ? prev.fieldOptions : snap.fieldOptions;
+  const meta = snap.meta ?? NO_META;
+  data.meta = prev && jsonEqual(prev.meta, meta) ? prev.meta : meta;
   for (const t of TABLE_NAMES) {
     const map = data.tables[t] as RowMap;
     const old = prev?.tables[t] as RowMap | undefined;
@@ -164,10 +184,16 @@ export class LocalOpError extends Error {}
  * and timestamps, merged custom, delete cascades. Validation is left to the server; this
  * only throws when an op can't be applied at all (unknown row or neighbour).
  */
-export function resolveLocal(data: ShowData, ops: Op[], ctx: LocalContext): ResolvedOp[] {
-  const out: ResolvedOp[] = [];
+export function resolveLocal(data: ShowData, ops: AnyOp[], ctx: LocalContext): AnyResolvedOp[] {
+  const out: AnyResolvedOp[] = [];
   let state = data;
   for (const op of ops) {
+    if (isMetaOp(op)) {
+      // Resolves to itself (the server validates the unit).
+      state = applyResolved(state, [op]);
+      out.push(op);
+      continue;
+    }
     const resolved = resolveOne(state, op, ctx);
     state = applyResolved(state, resolved);
     out.push(...resolved);
@@ -406,8 +432,9 @@ function cascade(
  * Apply resolved ops immutably. Tolerant: ops on rows that no longer exist are skipped
  * (a pending local op replayed over a newer server state).
  */
-export function applyResolved(data: ShowData, ops: readonly ResolvedOp[]): ShowData {
+export function applyResolved(data: ShowData, ops: readonly AnyResolvedOp[]): ShowData {
   if (ops.length === 0) return data;
+  let meta = data.meta;
   const tables: Tables = { ...data.tables };
   const order = { ...data.order };
   const joins = { ...data.joins };
@@ -455,6 +482,9 @@ export function applyResolved(data: ShowData, ops: readonly ResolvedOp[]): ShowD
 
   for (const op of ops) {
     switch (op.op) {
+      case "meta":
+        meta = { ...meta, ...op.fields };
+        break;
       case "create": {
         const map = tableMap(op.table);
         map.set(op.id, { ...op.fields, id: op.id } as unknown as AnyRow);
@@ -514,5 +544,5 @@ export function applyResolved(data: ShowData, ops: readonly ResolvedOp[]): ShowD
       }
     }
   }
-  return { ...data, tables, order, joins };
+  return { ...data, tables, order, joins, meta };
 }

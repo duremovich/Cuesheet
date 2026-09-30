@@ -27,7 +27,14 @@ export interface PanelSection {
   empty: string;
 }
 
-type TabId = "fields" | "notes" | "content" | "versions" | "history";
+/** A tab a table adds after Fields (e.g. a surface's Calculator). */
+export interface PanelTab {
+  id: string;
+  label: string;
+  render: () => ReactNode;
+}
+
+type TabId = "fields" | "notes" | "content" | "versions" | "history" | (string & {});
 
 const MIN_WIDTH = 300;
 const MAX_WIDTH = 900;
@@ -46,6 +53,7 @@ export function RowPanel<Row>({
   recordId,
   onEdit,
   sections = [],
+  extraTabs,
   onClose,
   onStep,
 }: {
@@ -59,6 +67,8 @@ export function RowPanel<Row>({
   onEdit?: ((key: string, value: unknown) => Promise<void> | void) | undefined;
   /** Extra read-only lists under the fields (e.g. the cues using a content item). */
   sections?: PanelSection[];
+  /** Tabs after Fields (keep the array stable; ids must not clash with the built-in ones). */
+  extraTabs?: PanelTab[] | undefined;
   onClose: () => void;
   /** ↑/↓ inside the panel: move the grid's active row (the panel follows it). */
   onStep?: (delta: number) => void;
@@ -69,12 +79,13 @@ export function RowPanel<Row>({
     table === "cues" || table === "content" || table === "scenes" ? { table, id: recordId } : null;
   const tabs = useMemo(() => {
     const t: { id: TabId; label: string }[] = [{ id: "fields", label: "Fields" }];
+    for (const x of extraTabs ?? []) t.push({ id: x.id, label: x.label });
     if (notesSubject) t.push({ id: "notes", label: "Notes" });
     if (table === "cues") t.push({ id: "content", label: "Content" });
     if (table === "content") t.push({ id: "versions", label: "Versions" });
     t.push({ id: "history", label: "History" });
     return t;
-  }, [notesSubject, table]);
+  }, [notesSubject, table, extraTabs]);
   const [tab, setTab] = useState<TabId>("fields");
   const active = tabs.some((t) => t.id === tab) ? tab : "fields";
 
@@ -340,7 +351,15 @@ export function RowPanel<Row>({
         {active === "notes" && notesSubject && <NotesPanel subject={notesSubject} />}
         {active === "content" && table === "cues" && <CueContentCards cueId={recordId} />}
         {active === "versions" && table === "content" && <ContentVersions contentId={recordId} />}
-        {active === "history" && <PanelHistory table={table} id={recordId} labels={labels} />}
+        {active === "history" && (
+          <PanelHistory
+            table={table}
+            id={recordId}
+            labels={labels}
+            unit={columns.find((c) => c.type === "measurement")?.unit}
+          />
+        )}
+        {extraTabs?.find((x) => x.id === active)?.render()}
       </div>
     </aside>
   );

@@ -1,6 +1,7 @@
 // Pure ordering logic for the DataGrid: live sort (empty values last), and "holds" that
 // keep a focused or just-inserted row in place until focus leaves it (ux.md §Ordering).
 
+import { formulaScalar, type Value } from "../../../shared/formula";
 import type { Column, Group, SortSpec } from "./types";
 
 export function isEmptyValue(v: unknown): boolean {
@@ -60,6 +61,14 @@ export function sortValue<Row>(col: Column<Row>, row: Row): unknown {
       return (v as { label?: string }).label ?? null;
     case "multilink":
       return (v as { label?: string }[])[0]?.label ?? null;
+    case "pixelsize": {
+      // By area, then width.
+      const p = v as { w: number; h: number };
+      return p.w * p.h + p.w / 1e6;
+    }
+    case "formula":
+      // Lengths in meters, lists joined; errors and blanks sort last like empty cells.
+      return formulaScalar(v as Value);
     default:
       return v;
   }

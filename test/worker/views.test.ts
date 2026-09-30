@@ -60,7 +60,7 @@ describe("views: lazy defaults", () => {
     expect(snap.version).toBe(0);
     const list = snap.tables.views;
     expect(list.map((v) => v.table).sort()).toEqual(
-      ["content", "cues", "notes", "persons", "scenes"].sort(),
+      ["content", "cues", "notes", "persons", "scenes", "surfaces"].sort(),
     );
     for (const v of list) {
       expect(v).toMatchObject({ owner_user_id: null, is_default: true, created_by: "system" });
@@ -82,7 +82,7 @@ describe("views: lazy defaults", () => {
     });
     expect(await views(stub)).toHaveLength(0);
     await evictDurableObject(stub);
-    expect(await views(stub)).toHaveLength(5);
+    expect(await views(stub)).toHaveLength(6);
     // A table that still has a shared view isn't seeded again.
     await runInDurableObject(stub, (_i, state) => {
       state.storage.sql.exec(`DELETE FROM views WHERE "table" = 'notes'`);
@@ -90,8 +90,8 @@ describe("views: lazy defaults", () => {
     const before = (await views(stub)).map((v) => v.id);
     await evictDurableObject(stub);
     const after = await views(stub);
-    expect(after).toHaveLength(5);
-    expect(after.filter((v) => before.includes(v.id))).toHaveLength(4);
+    expect(after).toHaveLength(6);
+    expect(after.filter((v) => before.includes(v.id))).toHaveLength(5);
   });
 });
 
@@ -465,7 +465,7 @@ describe("views: personal views are private", () => {
     const forB = JSON.parse(await stub.snapshotJson("u-b")) as SnapshotResponse;
     const forA = JSON.parse(await stub.snapshotJson("u-a")) as SnapshotResponse;
     expect(forB.tables.views.some((v) => v.id === id2)).toBe(false);
-    expect(forB.tables.views.filter((v) => v.owner_user_id === null)).toHaveLength(5);
+    expect(forB.tables.views.filter((v) => v.owner_user_id === null)).toHaveLength(6);
     expect(forA.tables.views.some((v) => v.id === id2)).toBe(true);
     expect((await stub.history({ table: "views" }, "u-b")).some((h) => h.recordId === id2)).toBe(
       false,
