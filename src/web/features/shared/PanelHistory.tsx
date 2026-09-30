@@ -1,5 +1,6 @@
 // The row panel's History tab (R15): GET /history for one record, newest first, "who changed
-// what: from → to, when", with Load more. Refetches shortly after the show changes while
+// what: from → to, when", with Load more and Refresh. Refetches shortly after a change that
+// touches this record (its row or its link lists change identity in the store) while
 // it's open, so your own edits show up.
 import { useEffect, useMemo, useState } from "react";
 import type { HistoryEntry } from "../../../shared/ops";
@@ -24,7 +25,24 @@ export function PanelHistory({
 }) {
   const { showId, memberNames } = useWorkspace();
   const store = useShowStoreInstance();
-  const version = useShowStore((s) => s.version);
+  // What changes when a batch touches this record: its row object and its link lists
+  // (untouched rows and lists keep their identity in the store).
+  const row = useShowStore((s) => s.tables[table].get(id));
+  const links1 = useShowStore((s) =>
+    table === "cues"
+      ? s.joins.cueContent.get(id)
+      : table === "notes"
+        ? s.joins.noteCues.get(id)
+        : undefined,
+  );
+  const links2 = useShowStore((s) =>
+    table === "cues"
+      ? s.joins.cueAssignees.get(id)
+      : table === "notes"
+        ? s.joins.noteAssignees.get(id)
+        : undefined,
+  );
+  const [refreshes, setRefreshes] = useState(0);
   const [limit, setLimit] = useState(PAGE);
   const [result, setResult] = useState<{ key: string; changes: HistoryEntry[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +52,7 @@ export function PanelHistory({
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset when the record changes
   useEffect(() => setLimit(PAGE), [key]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `version` triggers a refetch
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the record's row/links and Refresh trigger a refetch
   useEffect(() => {
     let live = true;
     const t = setTimeout(
@@ -56,7 +74,7 @@ export function PanelHistory({
       live = false;
       clearTimeout(t);
     };
-  }, [showId, table, id, limit, version, key]);
+  }, [showId, table, id, limit, row, links1, links2, refreshes, key]);
 
   const changes = result?.key === key ? result.changes : null;
   const lines = useMemo(() => {
@@ -93,6 +111,9 @@ export function PanelHistory({
           </li>
         ))}
       </ol>
+      <button type="button" className={styles.addButton} onClick={() => setRefreshes((n) => n + 1)}>
+        Refresh
+      </button>
       {changes.length >= limit && (
         <button
           type="button"

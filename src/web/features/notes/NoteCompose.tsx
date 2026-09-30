@@ -7,6 +7,7 @@ import {
   forwardRef,
   type ReactNode,
   useCallback,
+  useId,
   useImperativeHandle,
   useLayoutEffect,
   useMemo,
@@ -33,6 +34,10 @@ import styles from "./Notes.module.css";
 
 const NO_OPTIONS: FieldOption[] = [];
 export const typesPrefKey = (userId: string) => `cuesheet.noteTypes.${userId}`;
+/** Longest note body the box accepts (the server's row limit is far above this). */
+export const MAX_NOTE_LENGTH = 100_000;
+/** The character counter shows from here on. */
+const COUNTER_FROM = MAX_NOTE_LENGTH - 2_000;
 
 export interface NoteComposeHandle {
   focus(): void;
@@ -63,6 +68,13 @@ export interface NoteComposeProps {
   placeholder?: string;
   /** Extra controls at the end of the chip row (e.g. the quick-add camera button). */
   extra?: ReactNode;
+  /**
+   * With no subject, only save notes that say where they go (`* …` general, or an explicit
+   * cue prefix). Quick-add uses it so a note isn't saved unattached by accident.
+   */
+  requireTarget?: boolean;
+  /** Tech mode: "Skip to controls" moves focus out of the box (a way out of the Tab trap). */
+  onSkip?: () => void;
 }
 
 export const NoteCompose = forwardRef<NoteComposeHandle, NoteComposeProps>(function NoteCompose(
@@ -75,6 +87,8 @@ export const NoteCompose = forwardRef<NoteComposeHandle, NoteComposeProps>(funct
     label = "New note",
     placeholder = "Add a note… (Enter saves)",
     extra,
+    requireTarget = false,
+    onSkip,
   },
   ref,
 ) {
@@ -95,6 +109,13 @@ export const NoteCompose = forwardRef<NoteComposeHandle, NoteComposeProps>(funct
   const [assignees, setAssignees] = useState<PickerItem[]>([]);
   const [mention, setMention] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  /** Caret position where `@` opened the person picker (Escape puts the `@` back there). */
+  const mentionAt = useRef(0);
+  /** Tech mode: Escape "releases" Tab so it moves focus normally until the box is left. */
+  const tabReleased = useRef(false);
   const input = useRef<HTMLTextAreaElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
 
@@ -127,6 +148,8 @@ export const NoteCompose = forwardRef<NoteComposeHandle, NoteComposeProps>(funct
   );
   // Only offer types the show has (options are editable per show).
   const activeTypes = types.filter((t) => typeValues.includes(t));
+  const canSave =
+    !!parsed.body && !saving && !(requireTarget && !subject && parsed.target.kind === "current");
 
   const describe = useCallback(
     (target: NoteTarget): string => {
@@ -147,7 +170,13 @@ export const NoteCompose = forwardRef<NoteComposeHandle, NoteComposeProps>(funct
     [subject, store],
   );
 
-  const save = () => {
+  /**
+   * Save, then clear the box. Nothing is cleared (and no "Saved") until the server has
+   * accepted the note: on failure the text, types, priority and assignees stay put and the
+   * error shows under the box, so nothing typed during tech is lost.
+   */
+  const save = async () => {
+    if (!canSave || savingRef.current) return;
     const data = store.getState();
     const p = parseNoteText(text, {
       cues: data.order.cues.flatMap((id) => data.tables.cues.get(id) ?? []),
@@ -165,12 +194,25 @@ export const NoteCompose = forwardRef<NoteComposeHandle, NoteComposeProps>(funct
       assigneeIds: [...assignees.map((a) => a.id), ...p.assigneeIds],
     });
     const id = ops[0]?.id as string;
-    store.mutate(ops).catch((e: unknown) => ws.reportError(e, "save the note"));
+    const where = describe(p.target);
+    savingRef.current = true;
+    setSaving(true);
+    setError(null);
+    setFlash(null);
+    try {
+      await store.mutate(ops);
+    } catch (e) {
+      setError(`Couldn't save the note: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
     writePref(typesPrefKey(ws.userId), activeTypes);
-    setText("");
+    // Only clear what's still the saved text (typing may have continued meanwhile).
+    setText((t) => (t === text ? "" : t));
     setPriority(null);
     setAssignees([]);
-    const where = describe(p.target);
     setFlash(`Saved to ${where}`);
     onSaved?.({ id, target: p.target, where });
   };
@@ -188,8 +230,13 @@ export const NoteCompose = forwardRef<NoteComposeHandle, NoteComposeProps>(funct
       setPriority((cur) => (cur === p ? null : p));
     } else if (e.key === "Enter" && !e.shiftKey && !mod && !e.altKey) {
       e.preventDefault();
-      save();
-    } else if (e.key === "Tab" && tabCyclesTypes && !mod && !e.altKey) {
+      void save();
+    } else if (e.key === "Escape" && tabCyclesTypes) {
+      // Let Tab leave the box (WCAG 2.1.2: no keyboard trap).
+      e.preventDefault();
+      tabReleased.current = true;
+      setFlash("Tab now moves to the controls");
+    } else if (e.key === "Tab" && tabCyclesTypes && !tabReleased.current && !mod && !e.altKey) {
       e.preventDefault();
       setTypes(cycleType(typeValues, activeTypes, e.shiftKey ? -1 : 1));
     } else if (e.key === "@" && !mod) {
@@ -197,6 +244,7 @@ export const NoteCompose = forwardRef<NoteComposeHandle, NoteComposeProps>(funct
       const before = el.value.slice(0, el.selectionStart);
       if (before === "" || /\s$/.test(before)) {
         e.preventDefault();
+        mentionAt.current = el.selectionStart;
         setMention(true);
       }
     }
@@ -206,6 +254,7 @@ export const NoteCompose = forwardRef<NoteComposeHandle, NoteComposeProps>(funct
     setTypes(activeTypes.includes(t) ? activeTypes.filter((x) => x !== t) : [...activeTypes, t]);
 
   const refocus = () => requestAnimationFrame(() => input.current?.focus({ preventScroll: true }));
+  const errorId = useId();
 
   return (
     <div className={styles.compose} ref={wrap} data-testid="note-compose">
@@ -217,13 +266,42 @@ export const NoteCompose = forwardRef<NoteComposeHandle, NoteComposeProps>(funct
         placeholder={placeholder}
         rows={1}
         value={text}
+        maxLength={MAX_NOTE_LENGTH}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : undefined}
+        onFocus={() => {
+          tabReleased.current = false;
+        }}
         onChange={(e) => {
           setText(e.target.value);
           if (flash) setFlash(null);
         }}
         onKeyDown={onKeyDown}
       />
-      <fieldset className={styles.composeRow} aria-label="Type">
+      {error && (
+        <p className={styles.error} role="alert" id={errorId} data-testid="compose-error">
+          {error}
+        </p>
+      )}
+      {text.length >= COUNTER_FROM && (
+        <p className={styles.counter} data-testid="compose-counter">
+          {text.length.toLocaleString()} / {MAX_NOTE_LENGTH.toLocaleString()} characters
+        </p>
+      )}
+      {tabCyclesTypes && (
+        <p className={styles.tabHint}>
+          Tab cycles the type · Esc, then Tab: leave the box
+          {onSkip && (
+            <>
+              {" · "}
+              <button type="button" className={styles.skip} onClick={onSkip}>
+                Skip to controls
+              </button>
+            </>
+          )}
+        </p>
+      )}
+      <fieldset className={`${styles.composeRow} ${styles.typeRow}`} aria-label="Type">
         {typeOptions.map((o) => {
           const on = activeTypes.includes(o.value);
           const c = optionColor(o.color);
@@ -283,9 +361,9 @@ export const NoteCompose = forwardRef<NoteComposeHandle, NoteComposeProps>(funct
         <button
           type="button"
           className={styles.saveButton}
-          disabled={!parsed.body}
+          disabled={!canSave}
           onClick={() => {
-            save();
+            void save();
             refocus();
           }}
         >
@@ -307,8 +385,17 @@ export const NoteCompose = forwardRef<NoteComposeHandle, NoteComposeProps>(funct
           }}
           onClose={(reason) => {
             setMention(false);
-            // Escape: the "@" was meant as text after all.
-            if (reason === "escape") setText((t) => `${t}@`);
+            // Escape: the "@" was meant as text after all; put it back where it was typed.
+            if (reason === "escape") {
+              const at = mentionAt.current;
+              setText((t) => `${t.slice(0, at)}@${t.slice(at)}`);
+              requestAnimationFrame(() => {
+                const el = input.current;
+                el?.focus({ preventScroll: true });
+                el?.setSelectionRange(at + 1, at + 1);
+              });
+              return;
+            }
             refocus();
           }}
         />

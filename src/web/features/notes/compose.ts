@@ -40,7 +40,7 @@ interface PersonLike {
  * An explicit cue prefix: `q8.5 …`, `Q8.5 …`, `#8.5 …` (then whitespace), or `8.5: …` (a
  * colon). A bare leading number is just text ("3 people in the wings").
  */
-const CUE_PREFIX = /^(?:[qQ#](\d+(?:\.\d+)?[A-Za-z]?)\s+|(\d+(?:\.\d+)?[A-Za-z]?):\s*)([\s\S]*)$/;
+const CUE_PREFIX = /^(?:[qQ#](\d+(?:\.\d+)?[A-Za-z]?)\s+|(\d+(?:\.\d+)?[A-Za-z]?):\s+)([\s\S]*)$/;
 const MENTION = /(^|\s)@([^\s@]+)/g;
 
 const squash = (s: string) => s.toLowerCase().replace(/\s+/g, "");
@@ -262,6 +262,47 @@ export function noteCreateOps(note: NewNote, id: string = newId()): Op[] {
   [...new Set(note.assigneeIds)].forEach((targetId, position) => {
     ops.push({ op: "link", table: "notes", id, field: "assignees", targetId, position });
   });
+  return ops;
+}
+
+/**
+ * Undo of a note delete: recreate it with the same id, its writable fields and its cue and
+ * assignee links (in their old order), in one batch. Links to records deleted meanwhile
+ * are dropped. `created_at`/`created_by` become the restorer's (the server sets them).
+ */
+export function noteRestoreOps(
+  note: NoteRow,
+  cueIds: readonly string[],
+  assigneeIds: readonly string[],
+  exists: (table: "cues" | "persons" | "content" | "scenes", id: string) => boolean = () => true,
+): Op[] {
+  const ops: Op[] = [
+    {
+      op: "create",
+      table: "notes",
+      id: note.id,
+      fields: {
+        body: note.body,
+        type: [...note.type],
+        priority: note.priority,
+        status: note.status,
+        session: note.session,
+        content_id: note.content_id && exists("content", note.content_id) ? note.content_id : null,
+        scene_id: note.scene_id && exists("scenes", note.scene_id) ? note.scene_id : null,
+        ...(Object.keys(note.custom ?? {}).length ? { custom: note.custom } : {}),
+      },
+    },
+  ];
+  cueIds
+    .filter((c) => exists("cues", c))
+    .forEach((targetId, position) => {
+      ops.push({ op: "link", table: "notes", id: note.id, field: "cues", targetId, position });
+    });
+  assigneeIds
+    .filter((p) => exists("persons", p))
+    .forEach((targetId, position) => {
+      ops.push({ op: "link", table: "notes", id: note.id, field: "assignees", targetId, position });
+    });
   return ops;
 }
 

@@ -129,6 +129,7 @@ export function QuickAddPage() {
         <div className={styles.compose}>
           <NoteCompose
             subject={picked ? { table: "cues", id: picked.id } : null}
+            requireTarget
             label="Quick note"
             placeholder={
               picked

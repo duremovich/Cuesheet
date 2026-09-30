@@ -306,3 +306,43 @@
     display: none;
   }
 }
+
+.error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-danger);
+}
+
+.counter {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-warning);
+}
+
+.tabHint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.skip {
+  padding: 0 var(--space-1);
+  font-size: 11px;
+  border: none;
+  background: transparent;
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
+/* Phones: the type chips are one horizontally scrolling row. */
+@media (max-width: 600px) {
+  .typeRow {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .typeChip {
+    flex-shrink: 0;
+  }
+}

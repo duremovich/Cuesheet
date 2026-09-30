@@ -266,13 +266,98 @@ test("tech mode: step with ↓, prefixes, general notes, the session label", asy
   await expect(current).toHaveAttribute("data-cue-number", "14.25");
   await expect(compose).toHaveValue("");
 
+  // Five ↓ fired back to back (no render in between) from 14.20 all count: 14.25, 14.30,
+  // 14.40, 14.60, 15.00 (14.80 is in the Unassigned group at the top).
+  await page.keyboard.press("ControlOrMeta+g");
+  await tech.getByRole("textbox", { name: "Go to cue" }).fill("14.20");
+  await page.keyboard.press("Enter");
+  await expect(current).toHaveAttribute("data-cue-number", "14.20");
+  await compose.evaluate((el) => {
+    for (let i = 0; i < 5; i++) {
+      el.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }),
+      );
+    }
+  });
+  await expect(current).toHaveAttribute("data-cue-number", "15.00");
+  const id1500 = await cueId(page, showId, "15.00");
+  await expect(page).toHaveURL(new RegExp(`cue=${id1500}`));
+
+  // No keyboard trap: Tab cycles type chips, but after Escape it leaves the box.
+  await page.keyboard.press("Tab");
+  await expect(compose).toBeFocused();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Tab");
+  await expect(compose).not.toBeFocused();
+  // Clicking a non-control puts focus back in the box.
+  await tech.getByTestId("tech-current").click();
+  await expect(compose).toBeFocused();
+
   // The cue list link keeps the current cue (?cue= is shared).
   await tech.getByRole("link", { name: "Cue list" }).click();
-  await expect(page).toHaveURL(/\/cues\?cue=/);
-  await expect(rowByCue(page, "14.25").locator('[data-col="number"]')).toHaveAttribute(
+  await expect(page).toHaveURL(new RegExp(`/cues\\?cue=${id1500}`));
+  await expect(rowByCue(page, "15.00").locator('[data-col="number"]')).toHaveAttribute(
     "data-active",
     "true",
   );
+
+  // Back in tech mode without ?cue=: the last tech cue of this show.
+  await page.goto(`/shows/${showId}/tech`);
+  await expect(current).toHaveAttribute("data-cue-number", "15.00");
+});
+
+test("tech mode: a failed save keeps the note; a deleted current cue moves to its neighbour", async ({
+  browser,
+}) => {
+  const { page, showId } = await exampleShow(browser);
+  const id1420 = await cueId(page, showId, "14.20");
+  await page.goto(`/shows/${showId}/tech?cue=${id1420}`);
+  const tech = page.getByTestId("tech-mode");
+  const compose = tech.getByRole("textbox", { name: "Tech note" });
+  await expect(compose).toBeFocused();
+
+  // Offline: Enter doesn't lose anything.
+  const body = uniqueName("offline note");
+  await compose.fill(body);
+  await tech
+    .getByTestId("note-compose")
+    .getByRole("button", { name: "Content", exact: true })
+    .click();
+  await page.context().setOffline(true);
+  await compose.press("Enter");
+  await expect(tech.getByTestId("compose-error")).toContainText("Couldn't save the note");
+  await expect(compose).toHaveValue(body);
+  await expect(
+    tech.getByTestId("note-compose").getByRole("button", { name: "Content", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(tech.getByText(/^Saved to/)).toHaveCount(0);
+  // Back online: Enter saves it.
+  await page.context().setOffline(false);
+  await compose.press("Enter");
+  await expect(compose).toHaveValue("");
+  await expect(tech.getByText("Saved to Cue 14.20")).toBeVisible();
+  expect((await noteByBody(page, showId, body)).cueNumbers).toEqual(["14.20"]);
+  // Going offline logs network errors; they're the point of this test.
+  errors.splice(
+    0,
+    errors.length,
+    ...errors.filter(
+      (e) => !/ERR_INTERNET_DISCONNECTED|WebSocket|Failed to fetch|ERR_NETWORK/.test(e),
+    ),
+  );
+
+  // Someone deletes the current cue: tech mode moves to the cue that took its place
+  // and keeps the draft.
+  await compose.fill("draft in progress");
+  const res = await page.request.post(`/api/shows/${showId}/mutate`, {
+    data: { clientId: "other", ops: [{ op: "delete", table: "cues", id: id1420 }] },
+  });
+  expect(res.status()).toBe(200);
+  await expect(tech.locator('[data-testid="tech-cue"][aria-current="true"]')).toHaveAttribute(
+    "data-cue-number",
+    "14.25",
+  );
+  await expect(compose).toHaveValue("draft in progress");
 });
 
 test("row panel: edit a field, see it in the grid and in History", async ({ browser }) => {
@@ -325,6 +410,13 @@ test("quick-add at 390px: pick a cue, save, the cue stays picked", async ({ brow
   await expect(page).toHaveURL(/\/quick/);
 
   const quick = page.getByTestId("quick-add");
+  // No cue picked: only a "* …" general note can be saved.
+  const box = quick.getByRole("textbox", { name: "Quick note" });
+  await box.fill("unattached");
+  await expect(quick.getByRole("button", { name: "Add note" })).toBeDisabled();
+  await box.fill("* general from the phone");
+  await expect(quick.getByRole("button", { name: "Add note" })).toBeEnabled();
+  await box.fill("");
   await quick.getByRole("searchbox", { name: "Find a cue" }).fill("14.2");
   await quick.getByRole("button", { name: /^14\.20/ }).click();
   await expect(quick.getByTestId("quick-picked")).toContainText("Cue 14.20");
@@ -407,6 +499,17 @@ test("roles: commenters compose but can't edit others' notes; viewers read only"
   const adminPanel = await openPanel(admin, showId, "14.20");
   await adminPanel.getByRole("tab", { name: /Notes/ }).click();
   await expect(adminPanel.getByTestId("note").filter({ hasText: body })).toBeVisible();
+
+  // Deleting your note offers Undo, which brings it back (same id, same cue).
+  const before = await noteByBody(commenter, showId, `${body} (edited)`);
+  await mine.getByRole("button", { name: "Delete note" }).click();
+  await expect(mine).toHaveCount(0);
+  const toast = commenter.getByTestId("toast").filter({ hasText: "Note deleted." });
+  await toast.getByRole("button", { name: "Undo" }).click();
+  await expect(panel.getByTestId("note").filter({ hasText: body })).toBeVisible();
+  const after = await noteByBody(commenter, showId, `${body} (edited)`);
+  expect(after.id).toBe(before.id);
+  expect(after.cueNumbers).toEqual(["14.20"]);
 
   // Viewer: no compose box, nothing clickable.
   const vPanel = await openPanel(viewer, showId, "14.20");

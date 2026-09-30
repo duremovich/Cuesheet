@@ -34,6 +34,8 @@ export function SessionControl({ compact = false }: { compact?: boolean }) {
   const store = useShowStoreInstance();
   const current = useShowStore((s) => s.show?.currentSession ?? null);
   const notes = useShowStore((s) => s.tables.notes);
+  // null = clean: the box shows the live value (a remote change updates it even while
+  // focused). Typing makes it dirty; only a dirty box commits on blur.
   const [draft, setDraft] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const skipBlur = useRef(false);
@@ -85,7 +87,6 @@ export function SessionControl({ compact = false }: { compact?: boolean }) {
         maxLength={MAX_SESSION_LENGTH}
         value={draft ?? current ?? ""}
         disabled={busy}
-        onFocus={(e) => setDraft(e.currentTarget.value)}
         onChange={(e) => {
           const v = e.target.value;
           setDraft(v);

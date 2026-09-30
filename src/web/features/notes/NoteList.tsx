@@ -2,14 +2,22 @@
 // priority, assignees, status (click cycles Open → In progress → Done), session, author and
 // time. Commenters edit and delete only their own notes, viewers nothing (the server
 // enforces the same). Double-click the body to edit it in place.
-import { memo, useLayoutEffect, useRef, useState } from "react";
+import {
+  createContext,
+  memo,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import type { FieldOption, NoteRow } from "../../../shared/tables";
 import { Chip } from "../../components/grid";
 import { optionColor } from "../../components/grid/Chip";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
 import { useWorkspace } from "../show/workspace";
 import { canEditNote, formatTimestamp } from "./columns";
-import { initials, isOpen, nextStatus } from "./compose";
+import { initials, isOpen, nextStatus, noteRestoreOps } from "./compose";
 import styles from "./Notes.module.css";
 
 const NONE: string[] = [];
@@ -22,6 +30,15 @@ function colorFor(name: string): string {
   for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) | 0;
   return palette[Math.abs(h) % palette.length] as string;
 }
+
+/**
+ * Where focus goes when a card loses it for good (the note you were editing was deleted by
+ * someone else). Tech mode points it at its compose box.
+ */
+export const NoteFocusContext = createContext<(() => void) | null>(null);
+
+/** How long "Undo" stays available after deleting a note. */
+export const UNDO_MS = 8000;
 
 export function NoteList({
   notes,
@@ -93,6 +110,24 @@ export const NoteCard = memo(function NoteCard({
   const statusOptions = useShowStore((s) => s.fieldOptions["notes.status"] ?? NO_OPTIONS);
   const canEdit = canEditNote(ws.role, ws.userId, note);
   const [draft, setDraft] = useState<string | null>(null);
+  const refocus = useContext(NoteFocusContext);
+
+  // Deleted by someone else while you edit it: say so, and put focus somewhere useful.
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const onLost = useRef({ toast: ws.toast, refocus });
+  onLost.current = { toast: ws.toast, refocus };
+  useEffect(
+    () => () => {
+      if (draftRef.current === null || store.getState().tables.notes.has(note.id)) return;
+      onLost.current.toast(
+        "The note you were editing was deleted by someone else; your edit was discarded.",
+        "error",
+      );
+      onLost.current.refocus?.();
+    },
+    [store, note.id],
+  );
 
   const custom = note.custom as { created_by_name?: unknown };
   const author =
@@ -171,9 +206,29 @@ export const NoteCard = memo(function NoteCard({
               aria-label="Delete note"
               title="Delete"
               onClick={() => {
-                if (!window.confirm("Delete this note?")) return;
+                // No confirm: an Undo toast recreates it (same id and links) for a while.
+                const state = store.getState();
+                const linkedCues = state.joins.noteCues.get(note.id) ?? [];
+                const linkedPeople = state.joins.noteAssignees.get(note.id) ?? [];
+                // Built when Undo runs, so links to records deleted meanwhile are dropped.
+                const restore = () =>
+                  noteRestoreOps(note, linkedCues, linkedPeople, (table, id) =>
+                    store.getState().tables[table].has(id),
+                  );
                 store
                   .mutate([{ op: "delete", table: "notes", id: note.id }])
+                  .then(() =>
+                    ws.toast("Note deleted.", "info", {
+                      duration: UNDO_MS,
+                      action: {
+                        label: "Undo",
+                        run: () =>
+                          void store
+                            .mutate(restore())
+                            .catch((e: unknown) => ws.reportError(e, "restore the note")),
+                      },
+                    }),
+                  )
                   .catch((e: unknown) => ws.reportError(e, "delete the note"));
               }}
             >

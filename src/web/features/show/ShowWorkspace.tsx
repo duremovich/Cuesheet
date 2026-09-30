@@ -251,7 +251,8 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
             {showName}
           </h1>
           <PresenceIndicator {...socket} />
-          <SessionControl compact />
+          {/* Tech mode and quick-add have their own session control. */}
+          {!/\/(tech|quick)$/.test(pathname) && <SessionControl compact />}
         </AppHeader>
         <nav className={styles.nav} aria-label="Show">
           <div className={styles.tabs} ref={tabStrip}>

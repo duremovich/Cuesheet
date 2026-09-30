@@ -8,6 +8,7 @@ import {
   initials,
   nextStatus,
   noteCreateOps,
+  noteRestoreOps,
   notesFor,
   parseNoteText,
   resolveLinks,
@@ -46,7 +47,6 @@ describe("parseNoteText", () => {
     const at1 = { ...ctx, currentCueId: "c1" };
     for (const text of [
       "8.5: needs to be a fade",
-      "8.5:needs to be a fade",
       "q8.5 needs to be a fade",
       "Q8.5 needs to be a fade",
       "#8.5 needs to be a fade",
@@ -68,6 +68,15 @@ describe("parseNoteText", () => {
     // q/# need a space after the number; a prefix with nothing after it isn't a note.
     expect(parseNoteText("q8.5x", ctx).target).toEqual({ kind: "current" });
     expect(parseNoteText("8.5:", ctx).target).toEqual({ kind: "current" });
+    // The colon form needs whitespace after it: times and ratios stay text.
+    const cues = [...CUES, cue("t10", "10"), cue("t2", "2")];
+    for (const text of ["10:30 fix projector", "2:1 ratio", "8.5:needs a fade"]) {
+      expect(parseNoteText(text, { ...ctx, cues }), text).toEqual({
+        body: text,
+        target: { kind: "current" },
+        assigneeIds: [],
+      });
+    }
   });
 
   it("ambiguous numbers pick the cue nearest the current one in show order", () => {
@@ -231,6 +240,44 @@ describe("notes for a record and links for a new one", () => {
       { op: "link", table: "notes", id: "n9", field: "cues", targetId: "c1", position: 0 },
       { op: "link", table: "notes", id: "n9", field: "assignees", targetId: "p1", position: 0 },
       { op: "link", table: "notes", id: "n9", field: "assignees", targetId: "p2", position: 1 },
+    ]);
+  });
+
+  it("undo of a delete recreates the note with the same id and links", () => {
+    const note = {
+      id: "n7",
+      body: "b",
+      type: ["Admin"],
+      priority: "2",
+      status: "Done",
+      session: "Tech 1",
+      content_id: "k1",
+      scene_id: "gone",
+      custom: {},
+    } as unknown as NoteRow;
+    const ops = noteRestoreOps(
+      note,
+      ["c1", "c2"],
+      ["p1"],
+      (_t, id) => id !== "gone" && id !== "c1",
+    );
+    expect(ops).toEqual([
+      {
+        op: "create",
+        table: "notes",
+        id: "n7",
+        fields: {
+          body: "b",
+          type: ["Admin"],
+          priority: "2",
+          status: "Done",
+          session: "Tech 1",
+          content_id: "k1",
+          scene_id: null,
+        },
+      },
+      { op: "link", table: "notes", id: "n7", field: "cues", targetId: "c2", position: 0 },
+      { op: "link", table: "notes", id: "n7", field: "assignees", targetId: "p1", position: 0 },
     ]);
   });
 });

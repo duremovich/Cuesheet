@@ -30,7 +30,11 @@ export function useTechShortcut(showId: string, cueId: string | null) {
       if (!isTechKey(e)) return;
       e.preventDefault();
       e.stopPropagation();
-      navigate(techUrl(showId, cue.current));
+      // A cell being edited commits the same way as when focus leaves it: blur it, and
+      // navigate after the grid's blur handler (a 0 ms timeout, queued first) has run.
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && active !== document.body) active.blur();
+      setTimeout(() => navigate(techUrl(showId, cue.current)), 0);
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
