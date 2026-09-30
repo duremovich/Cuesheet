@@ -60,7 +60,14 @@ describe("Airtable import", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as ImportResponse;
     // 122 cue rows minus the 2 blank spacer rows.
-    expect(body.created).toEqual({ scenes: 28, cues: 120, content: 42, notes: 319, persons: 31 });
+    expect(body.created).toEqual({
+      scenes: 28,
+      cues: 120,
+      content: 42,
+      content_versions: 20,
+      notes: 319,
+      persons: 31,
+    });
     expect(body.warnings).toEqual(
       expect.arrayContaining([
         expect.stringMatching(/cue number 49.00 is used 2 times/),
@@ -92,6 +99,17 @@ describe("Airtable import", () => {
       "51.50",
       "1.00",
     ]);
+    // Airtable's Version column: one current version record per content item that had one.
+    const versions = snap.tables.content_versions;
+    expect(versions).toHaveLength(20);
+    expect(versions.every((v) => v.is_current)).toBe(true);
+    expect(new Set(versions.map((v) => v.content_id)).size).toBe(20);
+    const vampRow = items.find((c) => c.name === "105-001-VAMP");
+    expect(versions.find((v) => v.content_id === vampRow?.id)).toMatchObject({
+      version: "V02",
+      is_current: true,
+    });
+    expect(body.warnings.some((w) => /Version values not imported/.test(w))).toBe(false);
     expect(scenes[0]).toMatchObject({ number: "99", name: "Preshow" });
     expect(scenes[2]).toMatchObject({
       number: "101",

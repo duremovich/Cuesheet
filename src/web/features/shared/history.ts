@@ -56,6 +56,10 @@ export function recordLabel(data: ShowData, table: TableName, id: string): strin
       return data.tables.notes.get(id)?.body?.slice(0, 40) || "(deleted note)";
     case "views":
       return data.tables.views.get(id)?.name || "(deleted view)";
+    case "content_versions":
+      return data.tables.content_versions.get(id)?.version || "(deleted version)";
+    case "attachments":
+      return data.tables.attachments.get(id)?.filename || "(deleted file)";
   }
 }
 

@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@cf-wasm/photon':
+        specifier: ^0.4.0
+        version: 0.4.0
       '@tanstack/react-virtual':
         specifier: ^3.14.13
         version: 3.14.13(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -149,6 +152,12 @@ packages:
   '@bramus/specificity@2.4.2':
     resolution: {integrity: sha512-ctxtJ/eA+t+6q2++vj5j7FYX3nRu311q1wfYH3xjlLOsczhlhxAg2FWNUXhpGvAw3BWo1xBcvOV6/YLc2r5FJw==}
     hasBin: true
+
+  '@cf-wasm/internals@0.2.0':
+    resolution: {integrity: sha512-QwMNETkTCtrx0uCzjJPRCTyok0OZNvOry9alfG8a8TpHo7oPJ17htPMDG4ptudpwe9F0VtJHy9+nOzJmupteiQ==}
+
+  '@cf-wasm/photon@0.4.0':
+    resolution: {integrity: sha512-PQcN6sThZAR/V6SH2MQmeFndDDhGfOxvra6UStyaBbkDHrgTPKvB+WapAhh0/TA9LsRAUaX/rEEw6hvY9uphbQ==}
 
   '@cloudflare/kv-asset-handler@0.5.0':
     resolution: {integrity: sha512-jxQYkj8dSIzc0cD6cMMNdOc1UVjqSqu8BZdor5s8cGjW2I8BjODt/kWPVdY+u9zj3ms75Q5qaZgnxUad83+eAg==}
@@ -2177,6 +2186,12 @@ snapshots:
   '@bramus/specificity@2.4.2':
     dependencies:
       css-tree: 3.2.1
+
+  '@cf-wasm/internals@0.2.0': {}
+
+  '@cf-wasm/photon@0.4.0':
+    dependencies:
+      '@cf-wasm/internals': 0.2.0
 
   '@cloudflare/kv-asset-handler@0.5.0': {}
 

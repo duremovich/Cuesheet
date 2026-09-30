@@ -7,13 +7,20 @@ import { type DrizzleSqliteDODatabase, drizzle } from "drizzle-orm/durable-sqlit
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import type { Role, ShowMetaDTO } from "../../shared/api";
 import type { HistoryEntry, MutateResponse, ResolvedOp, SnapshotResponse } from "../../shared/ops";
-import { DATA_TABLES, type FieldOptions } from "../../shared/tables";
+import {
+  type AttachmentRow,
+  DATA_TABLES,
+  type FieldOptions,
+  isTableName,
+} from "../../shared/tables";
 import { PING_FRAME, PONG_FRAME, type ServerMessage } from "../../shared/ws";
 import migrations from "../db/do/migrations/migrations.js";
 import * as schema from "../db/do/schema";
 import {
   Batch,
   currentVersion,
+  decodeRow,
+  type FreedFile,
   type HistoryQuery,
   loadFieldOptions,
   type MutationContext,
@@ -37,8 +44,38 @@ export const ACCESS_REVOKED_CODE = 4003;
 const MAX_BROADCAST_BYTES = 256 * 1024;
 
 export type MutateResult =
-  | ({ ok: true } & MutateResponse)
+  | ({ ok: true; freed: FreedFile[] } & MutateResponse)
   | { ok: false; status: 400 | 403; error: string; opIndex?: number };
+
+/** An upload reserved by POST /attachments/upload-url, waiting for its PUT. */
+export interface PendingUpload {
+  userId: string;
+  table: string;
+  recordId: string;
+  field: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  expiresAt: number;
+}
+
+/** What the Worker needs to serve an attachment's file. */
+export type AttachmentInfo = Pick<
+  AttachmentRow,
+  | "id"
+  | "table"
+  | "record_id"
+  | "filename"
+  | "content_type"
+  | "size"
+  | "r2_key"
+  | "width"
+  | "height"
+>;
+
+/** How long an upload URL stays valid. */
+const UPLOAD_TTL_MS = 60 * 60 * 1000;
+const UPLOAD_PREFIX = "upload:";
 
 interface SocketAttachment {
   userId: string;
@@ -111,7 +148,67 @@ export class ShowDO extends DurableObject<Env> {
       throw e;
     }
     if (result.version !== result.prevVersion) this.broadcastBatch(result, ctx, batch.viewOwners);
-    return { ok: true, ...result };
+    return { ok: true, ...result, freed: batch.freed };
+  }
+
+  // ---- attachments (the Worker streams the bytes; see routes/attachments.ts) ----
+
+  /** `created_by` of a record, or null if it doesn't exist (upload permission checks). */
+  async recordCreator(table: string, id: string): Promise<string | null | undefined> {
+    if (!isTableName(table)) return undefined;
+    const row = this.ctx.storage.sql
+      .exec<{ created_by: string }>(`SELECT created_by FROM "${table}" WHERE id = ?`, id)
+      .toArray()[0];
+    return row ? row.created_by : undefined;
+  }
+
+  /** An attachment row (for serving its file), or null. */
+  async attachment(id: string): Promise<AttachmentInfo | null> {
+    const row = this.ctx.storage.sql
+      .exec<Record<string, SqlStorageValue>>("SELECT * FROM attachments WHERE id = ?", id)
+      .toArray()[0];
+    if (!row) return null;
+    const r = decodeRow("attachments", row) as unknown as AttachmentRow;
+    return {
+      id: r.id,
+      table: r.table,
+      record_id: r.record_id,
+      filename: r.filename,
+      content_type: r.content_type,
+      size: r.size,
+      r2_key: r.r2_key,
+      width: r.width,
+      height: r.height,
+    };
+  }
+
+  /**
+   * Remember a reserved upload until its PUT (an hour at most). Expired reservations are
+   * dropped here.
+   */
+  async reserveUpload(id: string, upload: Omit<PendingUpload, "expiresAt">): Promise<void> {
+    const now = Date.now();
+    const all = await this.ctx.storage.list<PendingUpload>({ prefix: UPLOAD_PREFIX });
+    const stale = [...all].filter(([, u]) => u.expiresAt < now).map(([k]) => k);
+    if (stale.length) await this.ctx.storage.delete(stale);
+    await this.ctx.storage.put(UPLOAD_PREFIX + id, { ...upload, expiresAt: now + UPLOAD_TTL_MS });
+  }
+
+  /** Claim a reserved upload (once): only by the user who reserved it, before it expires. */
+  async takeUpload(id: string, userId: string): Promise<PendingUpload | null> {
+    const key = UPLOAD_PREFIX + id;
+    const upload = await this.ctx.storage.get<PendingUpload>(key);
+    if (!upload || upload.userId !== userId) return null;
+    await this.ctx.storage.delete(key);
+    return upload.expiresAt >= Date.now() ? upload : null;
+  }
+
+  /**
+   * Record a generated thumbnail's R2 key. Server bookkeeping, not an edit: not logged and
+   * no version bump (clients derive the thumbnail URL from the id).
+   */
+  async setThumbKey(id: string, key: string): Promise<void> {
+    this.ctx.storage.sql.exec("UPDATE attachments SET thumb_key = ? WHERE id = ?", key, id);
   }
 
   /**

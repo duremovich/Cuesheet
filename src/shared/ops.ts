@@ -173,7 +173,14 @@ export interface HistoryResponse {
 }
 
 export interface ImportResponse {
-  created: { scenes: number; cues: number; content: number; notes: number; persons: number };
+  created: {
+    scenes: number;
+    cues: number;
+    content: number;
+    content_versions: number;
+    notes: number;
+    persons: number;
+  };
   warnings: string[];
 }
 
