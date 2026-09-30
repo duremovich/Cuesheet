@@ -2,11 +2,11 @@
 // worth sending. The value then goes through the same `<table>EditOps` as a grid edit, so
 // the panel and the grid write identical ops.
 import type { Column } from "../../components/grid/types";
-import { NOT_PARSED, parseText, valuesEqual } from "../../components/grid/values";
+import { editTextOf, NOT_PARSED, parseText, valuesEqual } from "../../components/grid/values";
 
 /** Can `row`'s `col` be edited (readonly columns never; `editable` may be per row)? */
 export function isFieldEditable<Row>(col: Column<Row>, row: Row): boolean {
-  if (col.type === "readonly") return false;
+  if (col.type === "readonly" || col.type === "formula") return false;
   const e = col.editable;
   return typeof e === "function" ? e(row) : e !== false;
 }
@@ -23,7 +23,7 @@ export function valueFromText<Row>(col: Column<Row>, text: string): unknown {
 export function panelCommit<Row>(col: Column<Row>, row: Row, next: unknown): unknown {
   if (!isFieldEditable(col, row)) return undefined;
   if (next === NOT_PARSED) return undefined;
-  if (valuesEqual(col.getValue(row), next)) return undefined;
+  if (valuesEqual(col.getValue(row), next, col.type)) return undefined;
   return next;
 }
 
@@ -31,4 +31,9 @@ export function panelCommit<Row>(col: Column<Row>, row: Row, next: unknown): unk
 export function textOf(v: unknown): string {
   if (v === null || v === undefined) return "";
   return String(v);
+}
+
+/** The editor text for a column's value (lengths precise, in the column's unit). */
+export function editorText<Row>(col: Column<Row>, v: unknown): string {
+  return col.type === "measurement" || col.type === "pixelsize" ? editTextOf(col, v) : textOf(v);
 }

@@ -14,6 +14,7 @@ import { NotesGrid } from "./features/notes/NotesGrid";
 import { PeopleGrid } from "./features/people/PeopleGrid";
 import { QuickAddPage } from "./features/quick/QuickAddPage";
 import { SceneGrid } from "./features/scenes/SceneGrid";
+import { SurfaceGrid } from "./features/surfaces/SurfaceGrid";
 import { TechPage } from "./features/tech/TechPage";
 import { AuthProvider, RequireAuth } from "./lib/auth";
 import { devRoutes } from "./pages/dev/routes";
@@ -35,6 +36,7 @@ const router = createBrowserRouter([
       { path: "cues", element: <CueGrid /> },
       { path: "scenes", element: <SceneGrid /> },
       { path: "content", element: <ContentGrid /> },
+      { path: "surfaces", element: <SurfaceGrid /> },
       { path: "notes", element: <NotesGrid /> },
       { path: "people", element: <PeopleGrid /> },
       { path: "tech", element: <TechPage /> },

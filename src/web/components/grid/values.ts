@@ -1,6 +1,16 @@
 // Value helpers for the DataGrid: empty values per type, display text, parsing typed or
 // pasted text, TSV (clipboard) encoding, and the grid's undo stack.
 
+import { formatFormulaValue } from "../../../shared/formula";
+import {
+  editLength,
+  formatLength,
+  formatPixelSize,
+  isPixelSize,
+  lengthsEqual,
+  parseLength,
+  parsePixelSize,
+} from "../../../shared/units";
 import type { Column, ColumnType, PickerItem } from "./types";
 
 export function emptyValue(type: ColumnType): unknown {
@@ -38,9 +48,26 @@ export function formatValue<Row>(col: Column<Row>, v: unknown): string {
       return (v as PickerItem).label;
     case "multilink":
       return (v as PickerItem[]).map((x) => x.label).join(", ");
+    case "measurement":
+      return typeof v === "number" ? formatLength(v, col.unit ?? "m") : "";
+    case "pixelsize":
+      return isPixelSize(v) ? formatPixelSize(v) : "";
+    case "formula":
+      return formatFormulaValue(v as never, col.unit ?? "m");
     default:
       return Array.isArray(v) ? v.join(", ") : String(v);
   }
+}
+
+/**
+ * The text an editor starts with for a value: numbers as typed, lengths precise (so an
+ * unchanged commit is a no-op) in the column's unit, the rest as displayed.
+ */
+export function editTextOf<Row>(col: Column<Row>, v: unknown): string {
+  if (v === null || v === undefined) return "";
+  if (col.type === "number") return String(v);
+  if (col.type === "measurement" && typeof v === "number") return editLength(v, col.unit ?? "m");
+  return formatValue(col, v);
 }
 
 export const NOT_PARSED: unique symbol = Symbol("not parsed");
@@ -50,6 +77,10 @@ export const NOT_PARSED: unique symbol = Symbol("not parsed");
  * a value of this column (e.g. an unknown select option or a non-number).
  */
 export function parseText<Row>(col: Column<Row>, text: string): unknown {
+  if (col.parse) {
+    const r = col.parse(text);
+    return "error" in r ? NOT_PARSED : r.value;
+  }
   switch (col.type) {
     case "text":
       return text;
@@ -60,6 +91,16 @@ export function parseText<Row>(col: Column<Row>, text: string): unknown {
       if (t === "") return null;
       const n = Number(t);
       return Number.isFinite(n) ? n : NOT_PARSED;
+    }
+    case "measurement": {
+      const r = parseLength(text, col.unit ?? "m");
+      if (r === null) return null;
+      return "m" in r ? r.m : NOT_PARSED;
+    }
+    case "pixelsize": {
+      const r = parsePixelSize(text);
+      if (r === null) return null;
+      return "error" in r ? NOT_PARSED : r;
     }
     case "select": {
       const t = text.trim().toLowerCase();
@@ -74,8 +115,44 @@ export function parseText<Row>(col: Column<Row>, text: string): unknown {
   }
 }
 
-export function valuesEqual(a: unknown, b: unknown): boolean {
+/**
+ * Cell values equal for undo and "did this edit change anything". With `type`
+ * "measurement", lengths within LENGTH_EPSILON are equal.
+ */
+/** Why `text` isn't a value of `col` (for the inline message), or null when it parses. */
+export function parseError<Row>(col: Column<Row>, text: string): string | null {
+  if (parseText(col, text) !== NOT_PARSED) return null;
+  if (col.parse) {
+    const r = col.parse(text);
+    return "error" in r ? r.error : null;
+  }
+  switch (col.type) {
+    case "measurement": {
+      const r = parseLength(text, col.unit ?? "m");
+      return r && "error" in r ? r.error : null;
+    }
+    case "pixelsize": {
+      const r = parsePixelSize(text);
+      return r && "error" in r ? r.error : null;
+    }
+    case "number":
+      return `Not a number: "${text.trim()}"`;
+    default:
+      return `Not a valid ${col.title}: "${text.trim()}"`;
+  }
+}
+
+/** Clipboard text for a cell: lengths at full precision (with their unit), else as shown. */
+export function copyText<Row>(col: Column<Row>, v: unknown): string {
+  return col.type === "measurement" ? editTextOf(col, v) : formatValue(col, v);
+}
+
+export function valuesEqual(a: unknown, b: unknown, type?: ColumnType): boolean {
   if (a === b) return true;
+  if (type === "measurement" && typeof a === "number" && typeof b === "number") {
+    return lengthsEqual(a, b);
+  }
+  if (isPixelSize(a) && isPixelSize(b)) return a.w === b.w && a.h === b.h;
   if ((a === null || a === undefined || a === "") && (b === null || b === undefined || b === ""))
     return true;
   if (Array.isArray(a) && Array.isArray(b)) {

@@ -3,6 +3,7 @@
 // Filters, sorts, grouping and color rules are evaluated on the client, over the grid's
 // columns (src/web/features/views/). See CLAUDE.md "Saved views".
 import { type DataTableName, OPTION_COLORS } from "./tables";
+import { isUnit, UNITS, type Unit } from "./units";
 
 export type OptionColor = (typeof OPTION_COLORS)[number];
 
@@ -94,6 +95,11 @@ export interface ViewConfig {
    * changes reuse the copy instead of making another.
    */
   forkedFrom?: string;
+  /**
+   * The view's unit override for measurement columns (set only in Fields → Unit override;
+   * the toolbar toggle sets the user's own unit). Unset: the user's unit, else the show's default (R11).
+   */
+  unit?: Unit;
 }
 
 export const MAX_FILTERS = 50;
@@ -226,6 +232,9 @@ export function viewConfigError(raw: unknown): string | null {
   if (c.forkedFrom !== undefined && !isKey(c.forkedFrom)) {
     return "config.forkedFrom must be a view id";
   }
+  if (c.unit !== undefined && !isUnit(c.unit)) {
+    return `config.unit must be one of ${UNITS.join(", ")}`;
+  }
   return null;
 }
 
@@ -285,6 +294,7 @@ export function normalizeViewConfig(raw: unknown, table?: DataTableName): ViewCo
         ),
     ),
     ...(isKey(raw.forkedFrom) ? { forkedFrom: raw.forkedFrom } : {}),
+    ...(isUnit(raw.unit) ? { unit: raw.unit } : {}),
   };
 }
 
@@ -302,6 +312,7 @@ export function defaultViewConfig(table: DataTableName): ViewConfig {
       break;
     case "scenes":
     case "persons":
+    case "surfaces":
       break;
   }
   return c;
@@ -314,12 +325,25 @@ export const DEFAULT_VIEW_NAMES: Record<DataTableName, string> = {
   content: "All content",
   notes: "All notes",
   persons: "Everyone",
+  surfaces: "All surfaces",
 };
 
 // ---- Per-table fields (what a view may name), shared by server validation and client ----
 
-/** How a field filters and groups (a grid column's type, coarsened). */
-export type FieldKind = "text" | "number" | "checkbox" | "select" | "multi" | "link" | "date";
+/**
+ * How a field filters and groups (a grid column's type, coarsened). `measurement`: a length
+ * in meters; filter values are parsed with units ("4 m", "14'", or a bare number in the
+ * view's active unit) and compared in meters.
+ */
+export type FieldKind =
+  | "text"
+  | "number"
+  | "measurement"
+  | "checkbox"
+  | "select"
+  | "multi"
+  | "link"
+  | "date";
 
 export const OPS_BY_KIND: Record<FieldKind, readonly FilterOp[]> = {
   text: [
@@ -335,6 +359,7 @@ export const OPS_BY_KIND: Record<FieldKind, readonly FilterOp[]> = {
     "lte",
   ],
   number: ["is", "isNot", "gt", "gte", "lt", "lte", "isEmpty", "isNotEmpty"],
+  measurement: ["gt", "gte", "lt", "lte", "is", "isNot", "isEmpty", "isNotEmpty"],
   checkbox: ["isTrue", "isFalse"],
   select: ["is", "isNot", "anyOf", "noneOf", "isEmpty", "isNotEmpty"],
   multi: ["is", "isNot", "anyOf", "noneOf", "isEmpty", "isNotEmpty"],
@@ -394,6 +419,7 @@ export const VIEW_FIELDS: Record<
     loop_out: { kind: "text" },
     cues: { kind: "link" },
     notes: { kind: "text" },
+    surfaces: { kind: "link" },
   },
   scenes: {
     number: { kind: "text" },
@@ -406,6 +432,7 @@ export const VIEW_FIELDS: Record<
     video_overview: { kind: "text" },
     cues: { kind: "text" },
     content_count: { kind: "text" },
+    surfaces: { kind: "link" },
   },
   persons: {
     name: { kind: "text" },
@@ -414,6 +441,23 @@ export const VIEW_FIELDS: Record<
     email: { kind: "text" },
     phone: { kind: "text" },
     organization: { kind: "text" },
+  },
+  surfaces: {
+    name: { kind: "text" },
+    channel: { kind: "text" },
+    parent: { kind: "link" },
+    width: { kind: "measurement" },
+    height: { kind: "measurement" },
+    pixels: { kind: "text" },
+    ppi: { kind: "number" },
+    pixel_pitch: { kind: "number" },
+    aspect_ratio: { kind: "text" },
+    throw_distance: { kind: "measurement" },
+    lens_ratio: { kind: "number" },
+    throw_width: { kind: "measurement" },
+    description: { kind: "text" },
+    scenes: { kind: "link" },
+    content: { kind: "link" },
   },
 };
 
@@ -528,6 +572,7 @@ export function sanitizeViewConfig(
       frozenCount: c.frozenCount,
       colorRules,
       ...(c.forkedFrom !== undefined ? { forkedFrom: c.forkedFrom } : {}),
+      ...(c.unit !== undefined ? { unit: c.unit } : {}),
     },
   };
 }

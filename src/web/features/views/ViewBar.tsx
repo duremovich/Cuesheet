@@ -2,8 +2,10 @@
 // discard for a changed shared view; duplicate, rename, delete, set as default) and the
 // Filter, Sort, Group, Fields, Row height and Color panels. Every change goes through
 // `actions.update`, which decides between a draft, a save, or a personal copy.
+
 import { type RefObject, useLayoutEffect, useRef, useState } from "react";
 import type { DataTableName, ViewRow } from "../../../shared/tables";
+import { isUnit, UNIT_LABELS, UNITS } from "../../../shared/units";
 import type { ColorRule, OptionColor, RowHeightName, ViewConfig } from "../../../shared/views";
 import { type Column, OPTION_COLORS } from "../../components/grid/types";
 import { type FieldDef, fieldList, isComplete, withFieldOrder } from "./evaluate";
@@ -31,6 +33,11 @@ export interface ViewBarProps<V> {
   actions: ViewActions;
   sortPresets?: SortPreset[] | undefined;
   sortNow?: { label: string; run: () => Promise<boolean> } | undefined;
+  /**
+   * Tables with measurements: the Fields popover's "Unit override" (the view's unit, which
+   * wins over everyone's own unit). `editable`: editors (and a personal view's owner).
+   */
+  unitOverride?: { editable: boolean } | undefined;
 }
 
 function move<T>(list: readonly T[], from: number, to: number): T[] {
@@ -535,7 +542,7 @@ function GroupPanel<V>({ config, fields, actions }: ViewBarProps<V>) {
 
 // ---- Fields ----
 
-function FieldsPanel<V>({ config, columns, actions }: ViewBarProps<V>) {
+function FieldsPanel<V>({ config, columns, actions, unitOverride }: ViewBarProps<V>) {
   const list = fieldList(columns, config);
   const hiddenCount = list.filter((f) => f.hidden).length;
   const [dragging, setDragging] = useState<number | null>(null);
@@ -637,6 +644,32 @@ function FieldsPanel<V>({ config, columns, actions }: ViewBarProps<V>) {
             </button>
           )}
         </div>
+        {unitOverride && (
+          <div className={styles.row}>
+            <label className={styles.inline}>
+              <span>Unit override</span>
+              <select
+                className={styles.input}
+                disabled={!unitOverride.editable}
+                value={config.unit ?? ""}
+                onChange={(e) => {
+                  const u = e.target.value;
+                  actions.update((c) => {
+                    const { unit: _u, ...rest } = c;
+                    return isUnit(u) ? { ...rest, unit: u } : rest;
+                  });
+                }}
+              >
+                <option value="">None (everyone's own unit)</option>
+                {UNITS.map((u) => (
+                  <option key={u} value={u}>
+                    {UNIT_LABELS[u]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
       </div>
     </Popover>
   );

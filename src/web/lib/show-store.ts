@@ -25,10 +25,10 @@ import {
 import type { Role } from "../../shared/api";
 import { newId } from "../../shared/ids";
 import type {
+  AnyOp,
+  AnyResolvedOp,
   MutateRequest,
   MutateResponse,
-  Op,
-  ResolvedOp,
   SnapshotResponse,
 } from "../../shared/ops";
 import type { DataTableName, OrderedTableName, Row, TableName, ViewRow } from "../../shared/tables";
@@ -38,7 +38,7 @@ import { api } from "./api";
 import { applyResolved, emptyData, fromSnapshot, resolveLocal, type ShowData } from "./show-state";
 import { type ShowSocketState, useShowSocket } from "./useShowSocket";
 
-export type { Op, ResolvedOp } from "../../shared/ops";
+export type { AnyOp, Op, ResolvedOp } from "../../shared/ops";
 export type { AnyRow, FieldOption, FieldOptions, Row, TableName } from "../../shared/tables";
 export type { ShowData } from "./show-state";
 
@@ -77,7 +77,7 @@ export interface ShowStore {
   readonly joins: ShowState["joins"];
   readonly fieldOptions: ShowState["fieldOptions"];
   /** Optimistic: applies locally at once, sends, reconciles; on error rolls back and rethrows. */
-  mutate(ops: Op[]): Promise<void>;
+  mutate(ops: AnyOp[]): Promise<void>;
   subscribe(listener: Listener): () => void;
   getState(): ShowState;
   /** This store's id, sent with each batch and echoed in broadcasts. */
@@ -102,9 +102,9 @@ export function httpTransport(showId: string): ShowTransport {
 }
 
 interface Pending {
-  ops: Op[];
+  ops: AnyOp[];
   /** Locally resolved ops (provisional keys, timestamps). */
-  local: ResolvedOp[];
+  local: AnyResolvedOp[];
   /** Server's answer, kept while our confirmed state hasn't caught up to it yet. */
   acked?: MutateResponse;
 }
@@ -182,7 +182,7 @@ export class ShowStoreImpl implements ShowStore {
     return () => this.listeners.delete(listener);
   };
 
-  mutate = async (ops: Op[]): Promise<void> => {
+  mutate = async (ops: AnyOp[]): Promise<void> => {
     if (ops.length === 0) return;
     const local = resolveLocal(this.visible, ops, { userId: this.userId, now: this.now() });
     const p: Pending = { ops, local };

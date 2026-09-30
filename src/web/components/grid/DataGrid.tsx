@@ -40,10 +40,13 @@ import type {
   RowHeight,
 } from "./types";
 import {
+  copyText,
   type EditRecord,
+  editTextOf,
   emptyValue,
   formatValue,
   NOT_PARSED,
+  parseError,
   parseText,
   parseTsv,
   toTsv,
@@ -59,7 +62,7 @@ const DEFAULT_WIDTH = 160;
 const MIN_WIDTH = 60;
 const MOVED_MS = 2400;
 const SLIDE_MS = 320;
-const PASTE_TYPES = new Set(["text", "longtext", "number", "select"]);
+const PASTE_TYPES = new Set(["text", "longtext", "number", "select", "measurement", "pixelsize"]);
 const PICKER_TYPES = new Set(["select", "multiselect", "link", "multilink"]);
 const GHOST_TYPES = new Set(["text", "longtext", "number"]);
 const MRU_SIZE = 5;
@@ -73,7 +76,7 @@ interface CellRef {
 }
 
 type Editing =
-  | { kind: "text"; rowId: string; key: string; draft: string }
+  | { kind: "text"; rowId: string; key: string; draft: string; invalid?: string }
   | { kind: "picker"; rowId: string; key: string; query: string; value: unknown };
 
 interface ColLayout<Row> {
@@ -92,16 +95,13 @@ type Edit = { rowId: string; key: string; value: unknown };
 const isMod = (e: { metaKey: boolean; ctrlKey: boolean }) => e.metaKey || e.ctrlKey;
 
 function isEditable<Row>(col: Column<Row>, row: Row): boolean {
-  if (col.type === "readonly") return false;
+  if (col.type === "readonly" || col.type === "formula") return false;
   if (col.editable === undefined) return true;
   return typeof col.editable === "function" ? col.editable(row) : col.editable;
 }
 
 /** Value → editable text for text/number editors. */
-function editText<Row>(col: Column<Row>, v: unknown): string {
-  if (v === null || v === undefined) return "";
-  return col.type === "number" ? String(v) : formatValue(col, v);
-}
+const editText = editTextOf;
 
 const prefersReducedMotion = () =>
   typeof window !== "undefined" &&
@@ -717,14 +717,22 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     if (e?.kind !== "text") return;
     const col = colOf(e.key);
     const entry = ref.current.allRows.get(e.rowId);
+    const text = draftOverride ?? e.draft;
+    const value = col ? parseText(col, text) : NOT_PARSED;
+    if (col && entry && value === NOT_PARSED) {
+      // Refused (a non-number, a negative or out-of-range length…): say why, keep editing.
+      const why = parseError(col, text) ?? `Not a valid ${col.title}`;
+      const next: Editing = { ...e, draft: text, invalid: why };
+      setEditing(next);
+      ref.current = { ...ref.current, editing: next };
+      showHint(why);
+      return;
+    }
     setEditing(null);
     ref.current = { ...ref.current, editing: null };
     focusPending.current = true;
-    if (col && entry) {
-      const value = parseText(col, draftOverride ?? e.draft);
-      if (value !== NOT_PARSED && !valuesEqual(value, col.getValue(entry.row))) {
-        applyEdits([{ rowId: e.rowId, key: e.key, value }]);
-      }
+    if (col && entry && !valuesEqual(value, col.getValue(entry.row), col.type)) {
+      applyEdits([{ rowId: e.rowId, key: e.key, value }]);
     }
     if (then === "down") move("down");
     else if (then === "right") move("right", { wrap: true });
@@ -786,7 +794,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     const value = col.type === "select" ? item.id : link(item);
     if (col.type === "link") pushMru(col.key, link(item));
     const entry = ref.current.allRows.get(e.rowId);
-    if (!entry || !valuesEqual(value, col.getValue(entry.row)))
+    if (!entry || !valuesEqual(value, col.getValue(entry.row), col.type))
       applyEdits([{ rowId: e.rowId, key: e.key, value }]);
     cancelEdit();
     if (via === "tab") move("right", { wrap: true });
@@ -1290,12 +1298,12 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       grid = cur.navRows
         .map((i) => cur.items[i] as RowItem<Row>)
         .filter((it) => cur.selected.includes(it.id))
-        .map((it) => cur.cols.map((c) => formatValue(c.col, c.col.getValue(it.row))));
+        .map((it) => cur.cols.map((c) => copyText(c.col, c.col.getValue(it.row))));
     } else {
       const byRow = new Map<string, string[]>();
       for (const { item, col } of rangeCells()) {
         const list = byRow.get(item.id) ?? [];
-        list.push(formatValue(col, col.getValue(item.row)));
+        list.push(copyText(col, col.getValue(item.row)));
         byRow.set(item.id, list);
       }
       grid = [...byRow.values()];
@@ -1331,7 +1339,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
         if (!col || raw === undefined || !PASTE_TYPES.has(col.type) || !isEditable(col, item.row))
           continue;
         const value = parseText(col, raw);
-        if (value === NOT_PARSED || valuesEqual(value, col.getValue(item.row))) continue;
+        if (value === NOT_PARSED || valuesEqual(value, col.getValue(item.row), col.type)) continue;
         edits.push({ rowId: item.id, key: col.key, value });
       }
     };
@@ -1390,7 +1398,9 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
         ref.current = { ...ref.current, editing: null };
         if (col && entry) {
           const value = parseText(col, e.draft);
-          if (value !== NOT_PARSED && !valuesEqual(value, col.getValue(entry.row))) {
+          if (value === NOT_PARSED) {
+            showHint(`Not saved: ${parseError(col, e.draft) ?? `not a valid ${col.title}`}`);
+          } else if (!valuesEqual(value, col.getValue(entry.row), col.type)) {
             applyEdits([{ rowId: e.rowId, key: e.key, value }]);
           }
         }
@@ -1631,7 +1641,8 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     setDraft(v) {
       const e = ref.current.editing;
       if (e?.kind === "text") {
-        const upd = { ...e, draft: v };
+        const { invalid: _was, ...rest } = e;
+        const upd = { ...rest, draft: v };
         setEditing(upd);
         ref.current = { ...ref.current, editing: upd };
       }
@@ -2342,6 +2353,7 @@ function GridRowImpl<Row>(p: GridRowProps<Row>) {
               value={editing.draft}
               label={c.col.title}
               placeholder={ghost}
+              invalid={editing.invalid}
               onChange={api.setDraft}
             />
           ) : (

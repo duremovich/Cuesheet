@@ -2,9 +2,11 @@
 // what: from → to, when", with Load more and Refresh. Refetches shortly after a change that
 // touches this record (its row or its link lists change identity in the store) while
 // it's open, so your own edits show up.
+
 import { useEffect, useMemo, useState } from "react";
 import type { HistoryEntry } from "../../../shared/ops";
 import type { TableName } from "../../../shared/tables";
+import type { Unit } from "../../../shared/units";
 import { api } from "../../lib/api";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
 import { formatTimestamp } from "../notes/columns";
@@ -18,10 +20,13 @@ export function PanelHistory({
   table,
   id,
   labels,
+  unit = "m",
 }: {
   table: TableName;
   id: string;
   labels: FieldLabels;
+  /** The active measurement unit, for lengths in the log. */
+  unit?: Unit | undefined;
 }) {
   const { showId, memberNames } = useWorkspace();
   const store = useShowStoreInstance();
@@ -81,8 +86,8 @@ export function PanelHistory({
     const data = store.getState();
     return (changes ?? [])
       .filter((c) => !HIDDEN_HISTORY_FIELDS.has(c.field))
-      .map((c) => formatHistory(c, data, labels, memberNames));
-  }, [changes, store, labels, memberNames]);
+      .map((c) => formatHistory(c, data, labels, memberNames, unit));
+  }, [changes, store, labels, memberNames, unit]);
 
   if (error && !changes) return <p className="error">Couldn't load the history: {error}</p>;
   if (!changes) return <p className="muted">Loading history…</p>;

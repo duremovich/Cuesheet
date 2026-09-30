@@ -64,7 +64,7 @@ underlined; an unnumbered cue suggests the midpoint number). Source: `src/web/pa
 | Field | Notes |
 | --- | --- |
 | `key`, `title` | `key` is what `onEdit` receives |
-| `type` | `text`, `longtext`, `number`, `checkbox`, `select`, `multiselect`, `link`, `multilink`, `readonly` |
+| `type` | `text`, `longtext`, `number`, `checkbox`, `select`, `multiselect`, `link`, `multilink`, `readonly`, `measurement`, `pixelsize`, `formula` |
 | `getValue(row)` | See value shapes below |
 | `format(v)` | Display text for text-like and readonly cells (also used for copy) |
 | `width`, `minWidth` | Default 160 / 60 |
@@ -74,6 +74,8 @@ underlined; an unnumbered cue suggests the midpoint number). Source: `src/web/pa
 | `search(q, row)` | link/multilink: return `PickerItem[]` (sync or async). Called debounced 100 ms with the row being edited: rank same-scene records first here; the grid adds recently picked ones on top |
 | `create(name, row)` | link/multilink: create a record from the typed name in the row's context (e.g. its scene), return its `PickerItem`. Enables the "Create '…'" row |
 | `compare(a, b)` | Custom sort for non-empty values |
+| `unit` | measurement (and length formulas): display/input unit (`m cm mm ft-in ft in`, default m). The view layer sets it from the active unit |
+| `resultType` | formula: `number`, `text` or `measurement`, for filtering and sorting |
 
 **Value shapes** (what `getValue` returns and `onEdit` receives):
 
@@ -86,6 +88,9 @@ underlined; an unnumbered cue suggests the midpoint number). Source: `src/web/pa
 | multiselect | option `value[]` | `[]` |
 | link | `PickerItem \| null` (`{id, label, secondary?, color?}`) | `null` |
 | multilink | `PickerItem[]` | `[]` |
+| measurement | meters `number \| null`; shown and typed in `unit` (`14'9"`, `450cm`, a bare number = `unit`) | `null` |
+| pixelsize | `{w, h} \| null` (`1920x1080`) | `null` |
+| formula | a formula `Value` (`src/shared/formula`); read-only; errors show red | — |
 
 Link values carry labels so the grid can render and undo without lookups. The consumer maps
 `PickerItem.id` to its foreign keys in `onEdit`.
@@ -151,7 +156,8 @@ calls `create` once (repeated Enter/clicks while it's running are ignored) and l
 result. Enter before the debounce fires searches first, so fast typing picks the right
 record.
 
-**Paste** fills text, long text, number and select cells (select by value or label);
+**Paste** fills text, long text, number, measurement, pixel size and select cells (select by
+value or label);
 other types, read-only and non-editable cells are skipped, and section rows are skipped
 without using up a pasted row. One value pasted onto a range fills the range. A paste is
 one undo step.

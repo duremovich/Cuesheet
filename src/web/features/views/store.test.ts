@@ -57,7 +57,13 @@ describe("optimistic is_default", () => {
       [{ op: "update", table: "views", id: "v2", fields: { is_default: true } }],
       { userId: "u", now: 2 },
     );
-    expect(ops.map((o) => [o.op, o.id, "fields" in o ? o.fields.is_default : null])).toEqual([
+    expect(
+      ops.map((o) => [
+        o.op,
+        "id" in o ? o.id : null,
+        "table" in o && "fields" in o ? o.fields.is_default : null,
+      ]),
+    ).toEqual([
       ["update", "v2", true],
       ["update", "v1", false],
     ]);

@@ -2,7 +2,9 @@
 // field layout, all over the grid's columns (`Column.getValue` gives typed values, see the
 // grid README "Value shapes"). Pure; unit-tested in evaluate.test.ts.
 
+import { formulaScalar, type Value } from "../../../shared/formula";
 import { isValidId } from "../../../shared/ids";
+import { lengthsEqual, parseLength } from "../../../shared/units";
 import type {
   Filter,
   FilterOp,
@@ -26,11 +28,19 @@ export type FieldDef<V> = Column<V> & { valueType?: "date" };
 
 export type { FieldKind };
 
-export function fieldKind(f: { type: ColumnType; valueType?: "date" }): FieldKind {
+export function fieldKind(f: {
+  type: ColumnType;
+  valueType?: "date";
+  resultType?: Column<unknown>["resultType"];
+}): FieldKind {
   if (f.valueType === "date") return "date";
   switch (f.type) {
     case "number":
       return "number";
+    case "measurement":
+      return "measurement";
+    case "formula":
+      return f.resultType ?? "text";
     case "checkbox":
       return "checkbox";
     case "select":
@@ -45,7 +55,7 @@ export function fieldKind(f: { type: ColumnType; valueType?: "date" }): FieldKin
   }
 }
 
-export function opsFor(f: { type: ColumnType; valueType?: "date" }): readonly FilterOp[] {
+export function opsFor(f: Parameters<typeof fieldKind>[0]): readonly FilterOp[] {
   return OPS_BY_KIND[fieldKind(f)];
 }
 
@@ -186,9 +196,22 @@ function toTime(v: unknown): number {
 
 const DAY = 24 * 60 * 60 * 1000;
 
+/**
+ * A measurement filter value in meters. Values are saved with the unit they were typed in
+ * ("4 cm", `14'`); a bare number or unit-less text (older filters) is meters. null when it
+ * isn't a length.
+ */
+export function measurementFilterMeters(value: unknown): number | null {
+  const text = typeof value === "number" ? String(value) : typeof value === "string" ? value : "";
+  const r = parseLength(text, "m");
+  return r && "m" in r ? r.m : null;
+}
+
 /** Does one row match one (complete) filter? */
 export function matchesFilter<V>(f: FieldDef<V>, row: V, filter: Filter): boolean {
-  const raw = f.getValue(row);
+  const value0 = f.getValue(row);
+  // Formula results filter as plain values: lengths in meters, errors as empty.
+  const raw = f.type === "formula" ? formulaScalar(value0 as Value) : value0;
   const empty = isEmptyValue(raw) || (f.type === "checkbox" && raw === false);
   const { op, value } = filter;
   if (op === "isEmpty") return empty;
@@ -197,6 +220,29 @@ export function matchesFilter<V>(f: FieldDef<V>, row: V, filter: Filter): boolea
   if (op === "isFalse") return empty;
 
   const kind = fieldKind(f);
+  if (kind === "measurement") {
+    // Meters, compared with the filter value as a length (saved with its unit; bare = m),
+    // so the same filter matches the same rows whatever unit the viewer uses.
+    if (typeof raw !== "number") return op === "isNot";
+    const t = measurementFilterMeters(value);
+    if (t === null) return false;
+    switch (op) {
+      case "is":
+        return lengthsEqual(raw, t);
+      case "isNot":
+        return !lengthsEqual(raw, t);
+      case "gt":
+        return raw > t && !lengthsEqual(raw, t);
+      case "gte":
+        return raw >= t || lengthsEqual(raw, t);
+      case "lt":
+        return raw < t && !lengthsEqual(raw, t);
+      case "lte":
+        return raw <= t || lengthsEqual(raw, t);
+      default:
+        return false;
+    }
+  }
   if (kind === "date") {
     const t = toTime(raw);
     const day = dayStart(value);

@@ -1,8 +1,16 @@
 // One filter condition: field, operator and a value editor typed by the field (used by the
 // Filter panel and by color rules).
-import { useId, useMemo } from "react";
+import { useId, useMemo, useState } from "react";
+import { formatLength, qualifyLength, type Unit } from "../../../shared/units";
 import { type Filter, type FilterOp, LIST_OPS, VALUELESS_OPS } from "../../../shared/views";
-import { type FieldDef, fieldKind, linkItems, opLabel, opsFor } from "./evaluate";
+import {
+  type FieldDef,
+  fieldKind,
+  linkItems,
+  measurementFilterMeters,
+  opLabel,
+  opsFor,
+} from "./evaluate";
 import styles from "./ViewBar.module.css";
 
 /** A fresh condition on `field`. */
@@ -177,6 +185,15 @@ export function FilterEditor<V>({
           onChange={(e) => setValue(e.target.value || undefined)}
         />
       );
+    } else if (kind === "measurement") {
+      editor = (
+        <MeasurementValue
+          label={`${label} value`}
+          value={filter.value}
+          unit={field.unit ?? "m"}
+          onChange={(v) => setValue(v)}
+        />
+      );
     } else if (kind === "number") {
       editor = (
         <input
@@ -197,7 +214,13 @@ export function FilterEditor<V>({
             className={styles.input}
             aria-label={`${label} value`}
             list={choices.length ? listId : undefined}
-            value={typeof filter.value === "string" ? filter.value : ""}
+            value={
+              typeof filter.value === "string"
+                ? filter.value
+                : typeof filter.value === "number"
+                  ? String(filter.value)
+                  : ""
+            }
             onChange={(e) => setValue(e.target.value)}
           />
           {choices.length > 0 && (
@@ -250,5 +273,42 @@ export function FilterEditor<V>({
         ×
       </button>
     </div>
+  );
+}
+
+/**
+ * A length filter value. What you type is saved with its unit ("4" typed in cm → "4 cm"),
+ * so the filter means the same length in every viewer's unit; shown converted to yours.
+ * Values without a unit (older filters, or numbers) are meters (`measurementFilterMeters`).
+ */
+function MeasurementValue({
+  label,
+  value,
+  unit,
+  onChange,
+}: {
+  label: string;
+  value: unknown;
+  unit: Unit;
+  onChange: (v: string | undefined) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const m = measurementFilterMeters(value);
+  const shown =
+    draft ?? (m !== null ? formatLength(m, unit) : typeof value === "string" ? value : "");
+  return (
+    <input
+      className={styles.input}
+      aria-label={label}
+      placeholder={`e.g. 4 m, 14' 6"`}
+      value={shown}
+      onFocus={() => setDraft(shown)}
+      onBlur={() => setDraft(null)}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        const t = e.target.value.trim();
+        onChange(t ? qualifyLength(t, unit) : undefined);
+      }}
+    />
   );
 }

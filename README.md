@@ -73,6 +73,15 @@ to try on the **Cues** tab:
 - **Tech mode** (**Tech** in the header, **⌘/Ctrl+Shift+.**, or ⌘K → Tech mode): set the **Session**
   (e.g. "Tech 2") once, then ↓/↑ (or Space) to move through cues, type, Enter; ⌘/Ctrl+G
   jumps to a cue number. On a phone, **＋** opens quick add: pick a cue, type, Add note.
+- **Surfaces** tab: the 15 projection surfaces with widths and heights in meters; regions
+  (CH02.1) sit under their parent (CH02). Flip the toolbar's **m / cm / ft-in** toggle
+  (your unit, everywhere; a view can pin its own in *Fields → Unit override*), or
+  type `14'9"` / `450cm` / `4.5` into a Width cell (a bare number is in the unit you're
+  looking at). Type `1920x1080` into **Pixels** and PPI, pitch and aspect fill in.
+  **Space** → **Calculator**: lock PPI, pixels or the physical size, then change another;
+  add a throw distance and lens ratio for the image width. Filter *Width > 4 m*, or color
+  rows with *PPI < 30*. Link surfaces to scenes from the Scenes tab's **Surfaces** column.
+  **Show settings** has the show's default unit and your own.
 
 Undo (⌘Z / ⌘⇧Z) covers cell edits made in that grid; inserts, moves, deletes and "Sort
 now" aren't undoable yet. Column widths, order, filters, sorts, grouping, row height and

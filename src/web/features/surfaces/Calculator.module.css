@@ -1,0 +1,205 @@
+/* The surface calculator (row panel tab). Theme tokens only. */
+
+.calc {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  font-size: 13px;
+}
+
+.units {
+  display: inline-flex;
+  align-self: flex-start;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.unit {
+  padding: var(--space-1) var(--space-2);
+  font-size: 13px;
+  border-radius: 0;
+}
+
+.unit:first-of-type {
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+
+.unit:last-of-type {
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.unit + .unit {
+  margin-left: -1px;
+}
+
+.unit[aria-pressed="true"] {
+  position: relative;
+  background: var(--color-accent-subtle);
+  border-color: var(--color-accent);
+}
+
+.unitRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.inputWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.error {
+  margin: 0;
+  color: var(--color-danger);
+  font-size: 12px;
+}
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.block:last-child {
+  border-bottom: 0;
+}
+
+.heading {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(80px, 7rem) minmax(0, 1fr) 1ch minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.row:has(> :nth-child(2):last-child) > :nth-child(2) {
+  grid-column: 2 / -1;
+}
+
+.label {
+  color: var(--color-text-muted);
+}
+
+.input {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  padding: 4px var(--space-2);
+  background: var(--color-bg-sunken);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--color-focus-ring);
+}
+
+.input[aria-invalid="true"] {
+  border-color: var(--color-danger);
+}
+
+.input:disabled {
+  background: transparent;
+  border-color: transparent;
+}
+
+.times {
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+.lock {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-1);
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-text-muted);
+  border-radius: var(--radius-sm);
+}
+
+.lock[aria-pressed="true"] {
+  background: var(--color-accent-subtle);
+  border-color: var(--color-accent);
+  color: var(--color-text);
+}
+
+.check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: normal;
+}
+
+.facts {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+}
+
+.facts > div {
+  display: grid;
+  grid-template-columns: minmax(80px, 7rem) minmax(0, 1fr);
+  gap: var(--space-1);
+}
+
+.facts dt {
+  color: var(--color-text-muted);
+}
+
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.muted {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+.warn {
+  color: var(--color-warning);
+}
+
+.canvas {
+  position: relative;
+  width: 100%;
+  max-width: 240px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-sunken);
+}
+
+.region {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border: 1px solid var(--color-accent);
+  background: var(--color-accent-subtle);
+}

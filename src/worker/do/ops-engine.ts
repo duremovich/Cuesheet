@@ -4,13 +4,15 @@
 import type { Role } from "../../shared/api";
 import { isValidId, newId } from "../../shared/ids";
 import type {
+  AnyOp,
+  AnyResolvedOp,
   DeleteOp,
   FieldValues,
   HistoryEntry,
   Joins,
-  Op,
+  MetaFields,
   Placement,
-  ResolvedOp,
+  ShowSettings,
   SnapshotResponse,
   UnlinkOp,
 } from "../../shared/ops";
@@ -31,6 +33,7 @@ import {
   TABLE_NAMES,
   type TableName,
 } from "../../shared/tables";
+import { isPixelSize, isUnit, UNITS } from "../../shared/units";
 import {
   DEFAULT_VIEW_NAMES,
   defaultViewConfig,
@@ -61,7 +64,7 @@ export class OpError extends Error {
 export interface BatchResult {
   prevVersion: number;
   version: number;
-  ops: ResolvedOp[];
+  ops: AnyResolvedOp[];
 }
 
 const MAX_TEXT = 100_000;
@@ -107,7 +110,9 @@ export function decodeRow(table: TableName, row: DbRow): WireRow {
   for (const [name, spec] of Object.entries(FIELDS[table]) as [string, FieldSpec][]) {
     if (spec.type === "bool") out[name] = row[name] === 1;
     else if (spec.type === "multiselect") out[name] = parseJson(row[name], []);
-    else if (spec.type === "json") out[name] = parseJson(row[name], null);
+    else if (spec.type === "json" || spec.type === "pixel_size") {
+      out[name] = parseJson(row[name], null);
+    }
   }
   return out;
 }
@@ -157,7 +162,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
  * between batches.
  */
 export class Batch {
-  private readonly resolved: ResolvedOp[] = [];
+  private readonly resolved: AnyResolvedOp[] = [];
   /**
    * Personal views this batch touched → their owner. Ops on them are private: the ShowDO
    * sends them only to that owner's sockets.
@@ -192,8 +197,12 @@ export class Batch {
 
   // ---- shape ----
 
-  private parse(raw: unknown): Op {
+  private parse(raw: unknown): AnyOp {
     if (!isPlainObject(raw)) this.fail("op must be an object");
+    if (raw.op === "meta") {
+      if (!isPlainObject(raw.fields)) this.fail("fields must be an object");
+      return { op: "meta", fields: raw.fields as MetaFields };
+    }
     const { op, table, id } = raw;
     if (!isTableName(table)) this.fail(`unknown table ${String(table)}`);
     if (!isValidId(id)) this.fail("id must be an id string");
@@ -242,8 +251,11 @@ export class Batch {
     }
   }
 
-  private apply(op: Op): void {
+  private apply(op: AnyOp): void {
     switch (op.op) {
+      case "meta":
+        this.setMeta(op.fields as Record<string, unknown>);
+        break;
       case "create":
         this.create(op.table, op.id, op.fields, op);
         break;
@@ -290,6 +302,35 @@ export class Batch {
       role === "commenter" ? "Commenters can only change notes" : "Viewers can't make changes",
       403,
     );
+  }
+
+  // ---- show settings (the meta row) ----
+
+  /** The `meta` op: show-level settings (editors and owners). */
+  private setMeta(fields: Record<string, unknown>): void {
+    const { role } = this.ctx;
+    if (role !== "owner" && role !== "editor") {
+      this.fail("Only editors can change show settings", 403);
+    }
+    const row = this.sql.exec<DbRow>("SELECT * FROM meta WHERE id = 1").toArray()[0];
+    if (!row) this.fail("Show not initialised");
+    const changed: Record<string, unknown> = {};
+    for (const [name, value] of Object.entries(fields)) {
+      if (name !== "default_unit") this.fail(`unknown show setting ${name}`);
+      if (value !== null && !isUnit(value)) {
+        this.fail(`default_unit must be one of ${UNITS.join(", ")} or null`);
+      }
+      if (!sameValue(row[name], value)) changed[name] = value;
+    }
+    const keys = Object.keys(changed);
+    if (keys.length === 0) return;
+    this.sql.exec(
+      `UPDATE meta SET ${keys.map((k) => `${q(k)} = ?`).join(", ")} WHERE id = 1`,
+      ...keys.map((k) => changed[k] as SqlStorageValue),
+    );
+    // History: table "meta", record "show" (not a TableName; readers pass it through).
+    for (const k of keys) this.log("meta" as TableName, "show", k, row[k] ?? null, changed[k]);
+    this.resolved.push({ op: "meta", fields: changed as MetaFields });
   }
 
   // ---- reads ----
@@ -339,7 +380,18 @@ export class Batch {
         if (typeof value !== "number" || !Number.isFinite(value)) {
           this.fail(`${label} must be a number`);
         }
+        this.checkRange(label, spec, value);
         return value;
+      case "measurement":
+        // Meters. Lengths are never negative.
+        if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+          this.fail(`${label} must be a length in meters (a number ≥ 0)`);
+        }
+        this.checkRange(label, spec, value);
+        return value;
+      case "pixel_size":
+        if (!isPixelSize(value)) this.fail(`${label} must be {w, h} in whole pixels`);
+        return { w: value.w, h: value.h };
       case "bool":
         if (typeof value !== "boolean") this.fail(`${label} must be true or false`);
         return value;
@@ -372,6 +424,17 @@ export class Batch {
     }
   }
 
+  /** A FieldSpec's `integer` / `min` / `max`. */
+  private checkRange(label: string, spec: FieldSpec, value: number): void {
+    if (spec.integer && !Number.isInteger(value)) this.fail(`${label} must be a whole number`);
+    if (spec.min !== undefined && (spec.minExclusive ? value <= spec.min : value < spec.min)) {
+      this.fail(`${label} must be ${spec.minExclusive ? "more than" : "at least"} ${spec.min}`);
+    }
+    if (spec.max !== undefined && value > spec.max) {
+      this.fail(`${label} must be at most ${spec.max}`);
+    }
+  }
+
   /** Extra checks for `views` fields (beyond their FieldSpec type). */
   private validateViewField(field: string, value: unknown): void {
     switch (field) {
@@ -401,6 +464,22 @@ export class Batch {
     const r = sanitizeViewConfig(table, value);
     if ("error" in r) this.fail(`views.${r.error}`);
     return r.config;
+  }
+
+  /** A surface's parent may not be itself or one of its own regions (no cycles). */
+  private checkParent(id: string, parentId: unknown): void {
+    if (typeof parentId !== "string") return;
+    const seen = new Set<string>();
+    let cur: string | null = parentId;
+    while (cur !== null) {
+      if (cur === id) this.fail("surfaces.parent_id: a surface can't be inside itself");
+      if (seen.has(cur)) break; // an existing cycle (shouldn't happen): stop walking
+      seen.add(cur);
+      const next: { p: string | null } | undefined = this.sql
+        .exec<{ p: string | null }>("SELECT parent_id AS p FROM surfaces WHERE id = ?", cur)
+        .toArray()[0];
+      cur = next?.p ?? null;
+    }
   }
 
   /** At most MAX_PERSONAL_VIEWS personal views per user and table. */
@@ -517,6 +596,7 @@ export class Batch {
         row[name] = this.validate(table, name, spec, value);
       }
     }
+    if (table === "surfaces") this.checkParent(id, row.parent_id);
     if (table === "views") {
       if (!isDataTable(row.table)) this.fail("views.table is required");
       row.config =
@@ -659,6 +739,7 @@ export class Batch {
     if (table === "views" && "config" in changes) {
       changes.config = this.sanitizeConfig(before.table as DataTableName, changes.config);
     }
+    if (table === "surfaces" && "parent_id" in changes) this.checkParent(id, changes.parent_id);
     this.write(table, id, before, changes);
     if (table === "views") this.afterViewWrite(id);
   }
@@ -868,7 +949,17 @@ export function readSnapshot(sql: SqlStorage, userId?: string): SnapshotResponse
     tables: tables as unknown as SnapshotResponse["tables"],
     joins,
     fieldOptions: loadFieldOptions(sql),
+    meta: readShowSettings(sql),
   };
+}
+
+/** Show-level settings from the meta row (defaults when the show isn't initialised). */
+export function readShowSettings(sql: SqlStorage): ShowSettings {
+  const row = sql
+    .exec<{ default_unit: string | null }>("SELECT default_unit FROM meta WHERE id = 1")
+    .toArray()[0];
+  const unit = row?.default_unit ?? null;
+  return { default_unit: isUnit(unit) ? unit : null };
 }
 
 export interface HistoryQuery {
