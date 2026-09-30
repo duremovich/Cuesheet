@@ -503,3 +503,24 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* Phones: previews of the wide layouts wrap instead of scrolling sideways. */
+@media screen and (max-width: 600px) {
+  .print {
+    padding: var(--space-2);
+  }
+
+  .table {
+    font-size: 12px;
+  }
+
+  .table th,
+  .table [data-nowrap] {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .thumbCell img {
+    max-width: 40px;
+  }
+}

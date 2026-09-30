@@ -77,7 +77,8 @@ function show(): ShowData {
     d.tables.cues.set(c.id, c);
     d.order.cues.push(c.id);
   }
-  for (const p of [person("pz", "Zoe", "zoe@x.test"), person("pa", "Abe")]) d.tables.persons.set(p.id, p);
+  for (const p of [person("pz", "Zoe", "zoe@x.test"), person("pa", "Abe")])
+    d.tables.persons.set(p.id, p);
   const notes = [
     note("n1", "late cue 3", 1),
     note("n2", "fix cue 1", 2),
