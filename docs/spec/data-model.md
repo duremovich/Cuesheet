@@ -115,7 +115,7 @@ From the *Cue List* table. The heart of the tool.
 | `trigger_value` | text | the line, LX/SQ number, timecode, or description of the visual |
 | `sm_call` | long text | what the SM says or sees ("CLICK A - JOE: 'Sweet Sue needs a sax…'"). Often the same as a Line trigger; kept separate because it can be longer and include context |
 | `lx_cue` | text | linked LX cue number, when the video cue is taken with lights |
-| `sq_cue` | text | linked REDACTED cue |
+| `sq_cue` | text | linked sound cue |
 | `timecode` | timecode | show timecode the cue fires on, if timecoded |
 | `ae_time` | timecode | position in the After Effects comp (per cue, since content plays across cues) |
 | `measure` | text | bar number in the score ("MSR") |
