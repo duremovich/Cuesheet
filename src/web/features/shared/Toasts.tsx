@@ -1,24 +1,33 @@
 // Small transient messages at the bottom of the show workspace ("Couldn't save: …"), with
-// an optional action button ("Undo filter").
+// optional action buttons ("Undo", "Keep shown" / "Clear filters").
 import { useCallback, useEffect, useRef, useState } from "react";
 import styles from "./Toasts.module.css";
 
 export type ToastKind = "info" | "error";
 
+/** A button in the toast ("Undo"); running it dismisses the toast. */
 export interface ToastAction {
   label: string;
   run: () => void;
+}
+
+export interface ToastOptions {
+  action?: ToastAction;
+  /** More than one button (shown in order, after `action`). */
+  actions?: ToastAction[];
+  /** Milliseconds before it goes away (default: 3.5 s info, 7 s error, 8 s with actions). */
+  duration?: number;
 }
 
 export interface ToastItem {
   id: number;
   message: string;
   kind: ToastKind;
-  action?: ToastAction;
+  actions: ToastAction[];
 }
 
 const LIFETIME = { info: 3500, error: 7000 } as const;
-/** Toasts with an action stay long enough to reach the button. */
+/** Toasts with a button stay long enough to reach it. */
 const ACTION_LIFETIME = 8000;
 
 export function useToasts() {
@@ -29,21 +38,19 @@ export function useToasts() {
     setItems((list) => list.filter((t) => t.id !== id));
   }, []);
   const toast = useCallback(
-    (message: string, kind: ToastKind = "info", action?: ToastAction) => {
+    (message: string, kind: ToastKind = "info", opts: ToastOptions = {}) => {
       const id = next.current++;
+      const actions = [...(opts.action ? [opts.action] : []), ...(opts.actions ?? [])];
+      const item: ToastItem = { id, message, kind, actions };
       // The same message twice in a row replaces the first (e.g. repeated failures).
-      setItems((list) =>
-        [
-          ...list.filter((t) => t.message !== message),
-          { id, message, kind, ...(action ? { action } : {}) },
-        ].slice(-4),
-      );
+      setItems((list) => [...list.filter((t) => t.message !== message), item].slice(-4));
       const timer = window.setTimeout(
         () => {
           timers.current.delete(timer);
           dismiss(id);
         },
-        action ? ACTION_LIFETIME : LIFETIME[kind],
+        opts.duration ??
+          (actions.length > 0 ? Math.max(ACTION_LIFETIME, LIFETIME[kind]) : LIFETIME[kind]),
       );
       timers.current.add(timer);
     },
@@ -70,18 +77,19 @@ export function Toasts({ items, dismiss }: { items: ToastItem[]; dismiss: (id: n
           data-testid="toast"
         >
           <span className={styles.message}>{t.message}</span>
-          {t.action && (
+          {t.actions.map((a) => (
             <button
+              key={a.label}
               type="button"
               className={styles.action}
               onClick={() => {
                 dismiss(t.id);
-                t.action?.run();
+                a.run();
               }}
             >
-              {t.action.label}
+              {a.label}
             </button>
-          )}
+          ))}
           <button
             type="button"
             className={styles.close}

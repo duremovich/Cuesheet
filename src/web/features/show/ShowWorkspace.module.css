@@ -190,3 +190,32 @@
   flex: 1;
   min-width: 160px;
 }
+
+/* Links styled as nav buttons (Tech, quick add). */
+a.navButton {
+  text-decoration: none;
+  color: var(--color-text);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+}
+
+a.navButton:hover {
+  background: var(--color-surface-hover);
+}
+
+a.navButton[aria-current="page"] {
+  border-color: var(--color-accent);
+  background: var(--color-accent-subtle);
+}
+
+/* Quick add is linked from the header on phones only (⌘K has it everywhere). */
+.navButton[data-small-only] {
+  display: none;
+}
+
+@media (max-width: 600px) {
+  .navButton[data-small-only] {
+    display: inline-flex;
+  }
+}

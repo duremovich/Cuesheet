@@ -564,8 +564,7 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
     released.current = [];
     if (hidden.length > 0) {
       toast("Hidden by the current filter", "info", {
-        label: "Undo filter",
-        run: () => update((c) => ({ ...c, filters: [] })),
+        action: { label: "Undo filter", run: () => update((c) => ({ ...c, filters: [] })) },
       });
     }
   }, [shownIds, rowIds, toast, update]);

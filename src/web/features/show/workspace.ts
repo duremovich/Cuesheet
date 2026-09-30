@@ -2,7 +2,7 @@
 // may do, and the workspace-level actions (toasts, import, ⌘K commands).
 import { createContext, useContext } from "react";
 import type { Role } from "../../../shared/api";
-import type { ToastAction, ToastKind } from "../shared/Toasts";
+import type { ToastKind, ToastOptions } from "../shared/Toasts";
 
 export interface Workspace {
   showId: string;
@@ -15,7 +15,7 @@ export interface Workspace {
   canComment: boolean;
   /** Member user id → display name (for created_by on notes). */
   memberNames: ReadonlyMap<string, string>;
-  toast(message: string, kind?: ToastKind, action?: ToastAction): void;
+  toast(message: string, kind?: ToastKind, opts?: ToastOptions): void;
   /** Toast a failed action ("Couldn't move the cue: …"). */
   reportError(error: unknown, what: string): void;
   /**

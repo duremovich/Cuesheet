@@ -131,6 +131,15 @@ export function noteColumns(opts: {
       ...(opts.canCreateRecords ? { create: (name: string) => createScene(store, name) } : {}),
     },
     {
+      // Defaults to the show's current session; editable per note.
+      key: "session",
+      title: "Session",
+      type: "text",
+      width: 110,
+      editable,
+      getValue: (v) => v.note.session ?? "",
+    },
+    {
       key: "created_by",
       title: "Created by",
       type: "readonly",
@@ -154,6 +163,8 @@ export function noteEditOps(view: NoteView, key: string, value: unknown): Op[] {
   switch (key) {
     case "body":
       return [{ op: "update", table: "notes", id, fields: { body: textField(value) } }];
+    case "session":
+      return [{ op: "update", table: "notes", id, fields: { session: textField(value) } }];
     case "type":
       return [
         { op: "update", table: "notes", id, fields: { type: (value as string[] | null) ?? [] } },

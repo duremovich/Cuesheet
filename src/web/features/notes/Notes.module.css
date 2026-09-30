@@ -1,0 +1,348 @@
+/* Notes panel (R6): a note list above a compose box. Used in the row panel, tech mode and
+   the phone quick-add page. */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  list-style: none;
+  margin: 0;
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.listEmpty {
+  margin: 0;
+  padding: var(--space-3);
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.divider {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  padding-top: var(--space-2);
+}
+
+.note {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-sunken);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+}
+
+.top {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.body {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+
+.note[data-status="Done"] .body {
+  color: var(--color-text-muted);
+}
+
+.body[data-editable] {
+  cursor: text;
+}
+
+.bodyEditor {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 2px var(--space-1);
+  resize: none;
+  overflow: hidden;
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+.bodyEditor:focus {
+  outline: none;
+}
+
+.status {
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 999px;
+}
+
+.status:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.status:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+.iconButton {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  padding: 0 var(--space-1);
+  font-size: 15px;
+  line-height: 18px;
+}
+
+.iconButton:hover {
+  color: var(--color-text);
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.avatars {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.session {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-1);
+}
+
+.links {
+  color: var(--color-text);
+}
+
+/* --- Compose --- */
+
+.compose {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.composeInput {
+  width: 100%;
+  min-height: 40px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.4;
+  resize: none;
+  padding: var(--space-2);
+  background: var(--color-bg-sunken);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+}
+
+.composeInput:focus {
+  outline: none;
+  border-color: var(--color-focus-ring);
+  box-shadow: 0 0 0 1px var(--color-focus-ring);
+}
+
+.composeRow {
+  margin: 0;
+  padding: 0;
+  border: none;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.typeChip {
+  padding: 1px var(--space-2);
+  font-size: 12px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-muted);
+}
+
+.typeChip[aria-pressed="true"] {
+  border-color: transparent;
+}
+
+.select {
+  font: inherit;
+  font-size: 12px;
+  padding: 1px var(--space-1);
+  background: var(--color-bg-sunken);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.target {
+  color: var(--color-text);
+}
+
+.target[data-kind="general"],
+.target[data-kind="cue"] {
+  color: var(--color-accent);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.saveButton {
+  font-size: 13px;
+  padding: var(--space-1) var(--space-3);
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+  border-color: transparent;
+}
+
+.saveButton:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+}
+
+.flash {
+  color: var(--color-success);
+}
+
+.readOnly {
+  flex-shrink: 0;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+/* --- Session control --- */
+
+.sessionControl {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 12px;
+  color: var(--color-text-muted);
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.sessionInput {
+  width: 110px;
+  min-width: 70px;
+  font: inherit;
+  font-size: 12px;
+  padding: 2px var(--space-2);
+  background: var(--color-bg-sunken);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.sessionValue {
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The header copy of the session control hides on phones. */
+@media (max-width: 600px) {
+  .headerOnly {
+    display: none;
+  }
+}
+
+.error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-danger);
+}
+
+.counter {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-warning);
+}
+
+.tabHint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.skip {
+  padding: 0 var(--space-1);
+  font-size: 11px;
+  border: none;
+  background: transparent;
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
+/* Phones: the type chips are one horizontally scrolling row. */
+@media (max-width: 600px) {
+  .typeRow {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .typeChip {
+    flex-shrink: 0;
+  }
+}

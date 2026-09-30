@@ -5,12 +5,14 @@ import {
   type CreateShowRequest,
   GRANTABLE_ROLES,
   MAX_NAME_LENGTH,
+  MAX_SESSION_LENGTH,
   type MemberDTO,
   type MembersResponse,
   type Role,
   type ShowResponse,
   type ShowSummaryDTO,
   type ShowsResponse,
+  type UpdateShowResponse,
 } from "../../shared/api";
 import type {
   HistoryResponse,
@@ -42,21 +44,29 @@ export function showStub(env: Env, showId: string) {
 }
 
 type ShowEnv = AppEnv & {
-  Variables: AppEnv["Variables"] & { show: { id: string; name: string }; role: Role };
+  Variables: AppEnv["Variables"] & {
+    show: { id: string; name: string; currentSession: string | null };
+    role: Role;
+  };
 };
 
 /** 404 unless the show exists and the signed-in user is a member of it. */
 const requireMembership = createMiddleware<ShowEnv>(async (c, next) => {
   const showId = c.req.param("id") ?? "";
   const row = await c.var.db
-    .select({ id: schema.shows.id, name: schema.shows.name, role: schema.memberships.role })
+    .select({
+      id: schema.shows.id,
+      name: schema.shows.name,
+      currentSession: schema.shows.currentSession,
+      role: schema.memberships.role,
+    })
     .from(schema.shows)
     .innerJoin(schema.memberships, eq(schema.memberships.showId, schema.shows.id))
     .where(and(eq(schema.shows.id, showId), eq(schema.memberships.userId, c.var.user.id)))
     .get();
   // Same response for "no such show" and "not a member": don't leak show IDs.
   if (!row) return c.json({ error: "Show not found" }, 404);
-  c.set("show", { id: row.id, name: row.name });
+  c.set("show", { id: row.id, name: row.name, currentSession: row.currentSession });
   c.set("role", row.role);
   await next();
 });
@@ -137,7 +147,59 @@ export const showRoutes = new Hono<ShowEnv>()
     // D1 `shows.name` is the source of truth; opening a show refreshes the DO's cached copy
     // (and creates it if the DO init failed after the D1 insert).
     const meta = await showStub(c.env, c.var.show.id).sync(c.var.show.id, c.var.show.name);
-    return c.json({ show: meta, role: c.var.role } satisfies ShowResponse);
+    return c.json({
+      show: { ...meta, currentSession: c.var.show.currentSession },
+      role: c.var.role,
+    } satisfies ShowResponse);
+  })
+  // Rename (owner) and the current session label (editors and the owner). D1 is the source
+  // of truth; the DO only relays the change to open sockets.
+  .patch("/shows/:id", requireMembership, async (c) => {
+    const body = await readJsonObject(c);
+    if (!body) return c.json({ error: "Expected a JSON object" }, 400);
+    const canEdit = c.var.role === "owner" || c.var.role === "editor";
+    const set: { name?: string; currentSession?: string | null } = {};
+    if ("name" in body) {
+      if (c.var.role !== "owner") {
+        return c.json({ error: "Only the show's owner can rename it" }, 403);
+      }
+      const name = str(body.name).trim();
+      if (!name || name.length > MAX_NAME_LENGTH) {
+        return c.json({ error: `Show name must be 1–${MAX_NAME_LENGTH} characters` }, 400);
+      }
+      set.name = name;
+    }
+    if ("current_session" in body) {
+      if (!canEdit) return c.json({ error: "Only editors can set the session" }, 403);
+      const raw = body.current_session;
+      if (raw !== null && typeof raw !== "string") {
+        return c.json({ error: "current_session must be a string or null" }, 400);
+      }
+      const session = (raw ?? "").trim();
+      if (session.length > MAX_SESSION_LENGTH) {
+        return c.json({ error: `Session must be at most ${MAX_SESSION_LENGTH} characters` }, 400);
+      }
+      set.currentSession = session || null;
+    }
+    if (Object.keys(set).length === 0) {
+      return c.json({ error: "Nothing to change (name, current_session)" }, 400);
+    }
+    const updated = await c.var.db
+      .update(schema.shows)
+      .set(set)
+      .where(eq(schema.shows.id, c.var.show.id))
+      .returning({
+        id: schema.shows.id,
+        name: schema.shows.name,
+        currentSession: schema.shows.currentSession,
+      })
+      .get();
+    if (!updated) return c.json({ error: "Show not found" }, 404);
+    await showStub(c.env, c.var.show.id).notifyShow({
+      name: updated.name,
+      currentSession: updated.currentSession,
+    });
+    return c.json({ show: updated } satisfies UpdateShowResponse);
   })
   .get("/shows/:id/ws", requireSameOriginUpgrade, requireMembership, async (c) => {
     const headers = new Headers(c.req.raw.headers);

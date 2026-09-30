@@ -199,6 +199,9 @@ export function TableGrid<V>(config: TableConfig<V>) {
             title={config.panelTitle(panelView)}
             row={panelView}
             columns={chrome.columns}
+            table={tabInfo(config.tab).table}
+            recordId={config.rowId(panelView)}
+            onEdit={(key, value) => onEdit(config.rowId(panelView), key, value)}
             sections={config.panelSections?.(panelView) ?? []}
             onClose={chrome.closePanel}
             onStep={chrome.stepPanel}
