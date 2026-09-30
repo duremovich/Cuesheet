@@ -1,7 +1,35 @@
 // JSON shapes exchanged between the Worker API and the web client.
 // Both sides import from here; keep it free of runtime dependencies.
 
-export type Role = "editor" | "commenter" | "viewer";
+/**
+ * Per-show role. owner = the creator (manages members); editor = everything else;
+ * commenter = read all, create/edit/delete own notes; viewer = read only.
+ */
+export type Role = "owner" | "editor" | "commenter" | "viewer";
+
+export const ROLES: readonly Role[] = ["owner", "editor", "commenter", "viewer"];
+/** Roles that can be granted through the members API (there is one owner per show). */
+export const GRANTABLE_ROLES: readonly Role[] = ["editor", "commenter", "viewer"];
+
+export interface MemberDTO {
+  userId: string;
+  email: string;
+  name: string;
+  role: Role;
+}
+
+export interface MembersResponse {
+  members: MemberDTO[];
+}
+
+export interface AddMemberRequest {
+  email: string;
+  role: Role;
+}
+
+export interface UpdateMemberRequest {
+  role: Role;
+}
 
 export interface UserDTO {
   id: string;

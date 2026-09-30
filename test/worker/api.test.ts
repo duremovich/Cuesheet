@@ -96,7 +96,7 @@ describe("API", () => {
     const created = await post("/api/shows", { name: "Some Like It Hot" }, cookie);
     expect(created.status).toBe(201);
     const { show } = (await created.json()) as { show: ShowSummaryDTO };
-    expect(show).toMatchObject({ name: "Some Like It Hot", role: "editor" });
+    expect(show).toMatchObject({ name: "Some Like It Hot", role: "owner" });
 
     const list = (await (await api("/api/shows", { cookie })).json()) as ShowsResponse;
     expect(list.shows.map((s) => s.id)).toContain(show.id);
@@ -104,7 +104,7 @@ describe("API", () => {
     const one = (await (await api(`/api/shows/${show.id}`, { cookie })).json()) as ShowResponse;
     expect(one).toMatchObject({
       show: { showId: show.id, name: "Some Like It Hot" },
-      role: "editor",
+      role: "owner",
     });
   });
 

@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router";
 import type { ShowResponse } from "../../shared/api";
+import { AddCueForm } from "../components/AddCueForm";
 import { AppHeader } from "../components/AppHeader";
+import { CueListPlain } from "../components/CueListPlain";
+import { ImportAirtableButton } from "../components/ImportAirtableButton";
 import { PresenceIndicator } from "../components/PresenceIndicator";
 import { ApiError, api } from "../lib/api";
-import { useApiErrorHandler } from "../lib/auth";
-import { useShowSocket } from "../lib/useShowSocket";
+import { useApiErrorHandler, useAuth } from "../lib/auth";
+import { ShowStoreProvider, useShowSocketState } from "../lib/show-store";
 import styles from "./pages.module.css";
 
 export function ShowPage() {
@@ -49,7 +52,17 @@ export function ShowPage() {
 }
 
 function LoadedShow({ data }: { data: ShowResponse }) {
-  const socket = useShowSocket(data.show.showId);
+  const { user } = useAuth();
+  return (
+    <ShowStoreProvider showId={data.show.showId} {...(user ? { userId: user.id } : {})}>
+      <ShowContent data={data} />
+    </ShowStoreProvider>
+  );
+}
+
+function ShowContent({ data }: { data: ShowResponse }) {
+  const socket = useShowSocketState();
+  const canEdit = data.role === "owner" || data.role === "editor";
   return (
     <>
       <AppHeader>
@@ -59,12 +72,12 @@ function LoadedShow({ data }: { data: ShowResponse }) {
         <PresenceIndicator {...socket} />
       </AppHeader>
       <main className={styles.showPage}>
-        <div className={styles.gridPlaceholder} data-testid="cue-grid-placeholder">
-          <div>
-            <h2 style={{ marginBottom: 8 }}>Cue list</h2>
-            <p style={{ margin: 0 }}>No cues yet. The cue grid arrives in M1.</p>
-          </div>
+        <div className={styles.showToolbar}>
+          <h2>Cue list</h2>
+          {canEdit && <ImportAirtableButton showId={data.show.showId} />}
         </div>
+        <CueListPlain />
+        {canEdit && <AddCueForm />}
       </main>
     </>
   );

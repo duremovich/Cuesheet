@@ -17,6 +17,17 @@ summarized at the bottom.
 - The Personnel table has a *Scenes* link: is that "which scenes this cast member is in"?
   Does it need to be core, or is a custom field fine?
 
+### Raised by the M1 importer
+
+- Airtable's `Created Time` has no time zone; the importer reads it as UTC. Should it use
+  the show's (venue's) zone?
+- Content `Version` values ("2.0", "4.0") aren't imported yet; they become ContentVersion
+  records in M3.
+
+Answered (M1): names missing from Personnel (the video team) become new people on import;
+cues without content take the scene of the cues around them when both sides agree (on the
+example base: 17 inferred, 28 left Unassigned). See CLAUDE.md, "Airtable import".
+
 ## Product
 
 - **Script formats.** What do scripts usually arrive as: text PDF, scanned PDF, Word,

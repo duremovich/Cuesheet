@@ -9,8 +9,8 @@ test("sign in, create a show, and see live presence from two browsers", async ({
   const name = uniqueName("Some Like It Hot");
   const showId = await createShow(page, name);
 
-  // The empty cue list page: header, presence, grid placeholder.
-  await expect(page.getByTestId("cue-grid-placeholder")).toBeVisible();
+  // The empty cue list page: header, presence, empty cue list.
+  await expect(page.getByTestId("cue-list")).toContainText("No cues yet.");
   const presence = page.getByTestId("presence");
   await expect(presence).toHaveAttribute("data-status", "connected");
   await expect(page.getByTestId("presence-count")).toHaveText("1 client");

@@ -10,9 +10,22 @@ import {
   normalizeEmail,
   toUserDTO,
 } from "../auth/session";
-import { schema } from "../db/d1/client";
+import { type D1Db, schema } from "../db/d1/client";
 import type { AppEnv } from "../types";
+import { showStub } from "./shows";
 import { isHttps, readJsonObject, str } from "./util";
+
+/**
+ * Close the user's open show sockets (all their devices: sockets aren't tied to a session).
+ * Other devices whose session is still valid reconnect on their own.
+ */
+async function disconnectEverywhere(env: Env, db: D1Db, userId: string): Promise<void> {
+  const shows = await db
+    .select({ showId: schema.memberships.showId })
+    .from(schema.memberships)
+    .where(eq(schema.memberships.userId, userId));
+  await Promise.all(shows.map((s) => showStub(env, s.showId).disconnectUser(userId)));
+}
 
 // Verifying against a throwaway hash when the email is unknown keeps response timing
 // from revealing which emails have accounts.
@@ -54,7 +67,11 @@ export const authRoutes = new Hono<AppEnv>()
   .post("/auth/logout", async (c) => {
     // Logout works (and clears the cookie) even if the session is already gone.
     const token = readSessionToken(c.req.header("Cookie"));
-    if (token) await deleteSession(c.var.db, token);
+    if (token) {
+      const user = await getSessionUser(c.var.db, token);
+      await deleteSession(c.var.db, token);
+      if (user) await disconnectEverywhere(c.env, c.var.db, user.id);
+    }
     c.header("Set-Cookie", clearSessionCookie({ secure: isHttps(c) }));
     return c.json({ ok: true });
   })

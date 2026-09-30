@@ -8,6 +8,20 @@
       "when": 1790743263540,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1790746054344,
+      "tag": "0001_core_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1790746055232,
+      "tag": "0002_seed_field_options",
+      "breakpoints": true
     }
   ]
 }

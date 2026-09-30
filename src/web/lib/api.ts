@@ -1,22 +1,35 @@
 // Thin fetch wrapper for /api. Every call is same-origin and sends the session cookie.
 import type {
   AcceptInviteRequest,
+  AddMemberRequest,
   CreateInviteRequest,
   CreateInviteResponse,
   CreateShowRequest,
   InviteInfoResponse,
   LoginRequest,
+  MemberDTO,
+  MembersResponse,
   MeResponse,
   SessionResponse,
   ShowResponse,
   ShowSummaryDTO,
   ShowsResponse,
+  UpdateMemberRequest,
 } from "../../shared/api";
+import type {
+  HistoryResponse,
+  ImportResponse,
+  MutateRequest,
+  MutateResponse,
+  SnapshotResponse,
+} from "../../shared/ops";
 
 export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** For a rejected mutate batch: which op failed. */
+    readonly opIndex?: number,
   ) {
     super(message);
   }
@@ -34,18 +47,25 @@ export class UnauthorizedError extends ApiError {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const isForm = body instanceof FormData;
   const res = await fetch(`/api${path}`, {
     method,
     credentials: "same-origin",
-    headers: body === undefined ? {} : { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    // FormData sets its own multipart Content-Type (with boundary).
+    headers: body === undefined || isForm ? {} : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : isForm ? body : JSON.stringify(body),
   });
-  const data = (await res.json().catch(() => null)) as { error?: string } | null;
+  const data = (await res.json().catch(() => null)) as {
+    error?: string;
+    opIndex?: number;
+  } | null;
   const message = data?.error ?? `Request failed (${res.status})`;
   if (res.status === 401) throw new UnauthorizedError(message);
-  if (!res.ok) throw new ApiError(res.status, message);
+  if (!res.ok) throw new ApiError(res.status, message, data?.opIndex);
   return data as T;
 }
+
+const showPath = (id: string, rest = "") => `/shows/${encodeURIComponent(id)}${rest}`;
 
 export const api = {
   me: () => request<SessionResponse>("GET", "/me"),
@@ -61,6 +81,35 @@ export const api = {
     request<InviteInfoResponse>("GET", `/invites/${encodeURIComponent(token)}`),
   acceptInvite: (token: string, body: AcceptInviteRequest) =>
     request<MeResponse>("POST", `/invites/${encodeURIComponent(token)}/accept`, body),
+
+  // Show data (M1). Most callers go through the show store (lib/show-store.ts).
+  snapshot: (id: string) => request<SnapshotResponse>("GET", showPath(id, "/snapshot")),
+  mutate: (id: string, body: MutateRequest) =>
+    request<MutateResponse>("POST", showPath(id, "/mutate"), body),
+  history: (id: string, q: { table?: string; id?: string; limit?: number } = {}) => {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(q)) if (v !== undefined) params.set(k, String(v));
+    return request<HistoryResponse>("GET", showPath(id, `/history?${params}`));
+  },
+  /** `append`: import into a show that already has data (else the server answers 409). */
+  importAirtable: (
+    id: string,
+    files: File[],
+    opts: { clientId?: string; append?: boolean } = {},
+  ) => {
+    const form = new FormData();
+    for (const f of files) form.append("files", f);
+    if (opts.clientId) form.append("clientId", opts.clientId);
+    const q = opts.append ? "?append=1" : "";
+    return request<ImportResponse>("POST", showPath(id, `/import/airtable${q}`), form);
+  },
+  members: (id: string) => request<MembersResponse>("GET", showPath(id, "/members")),
+  addMember: (id: string, body: AddMemberRequest) =>
+    request<{ member: MemberDTO }>("POST", showPath(id, "/members"), body),
+  updateMember: (id: string, userId: string, body: UpdateMemberRequest) =>
+    request<{ ok: true }>("PATCH", showPath(id, `/members/${encodeURIComponent(userId)}`), body),
+  removeMember: (id: string, userId: string) =>
+    request<{ ok: true }>("DELETE", showPath(id, `/members/${encodeURIComponent(userId)}`)),
 };
 
 export function showSocketUrl(showId: string, loc: Location = window.location): string {

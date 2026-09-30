@@ -1,5 +1,24 @@
 // Messages on the per-show WebSocket (/api/shows/:id/ws).
-// M0 only carries presence; M1 adds record changes.
+import type { ResolvedOp } from "./ops";
+
+/**
+ * Sent right after hello, and broadcast instead of `ops` when a batch is too large to send
+ * (e.g. an import). A client whose version is lower refetches the snapshot.
+ */
+export interface VersionMessage {
+  type: "version";
+  version: number;
+}
+
+/** A committed batch of resolved ops. Apply only if `prevVersion` equals your version. */
+export interface OpsMessage {
+  type: "ops";
+  prevVersion: number;
+  version: number;
+  /** The sender's store id (so it can recognise its own batch). */
+  clientId: string;
+  ops: ResolvedOp[];
+}
 
 /** Sent to a client right after it connects. */
 export interface HelloMessage {
@@ -18,7 +37,21 @@ export interface PongMessage {
   type: "pong";
 }
 
-export type ServerMessage = HelloMessage | PresenceMessage | PongMessage;
+/**
+ * Sent just before the server closes the socket because the user lost access (logout,
+ * removed from the show). Terminal: the client must not reconnect.
+ */
+export interface RevokedMessage {
+  type: "revoked";
+}
+
+export type ServerMessage =
+  | RevokedMessage
+  | HelloMessage
+  | PresenceMessage
+  | VersionMessage
+  | OpsMessage
+  | PongMessage;
 
 export interface PingMessage {
   type: "ping";

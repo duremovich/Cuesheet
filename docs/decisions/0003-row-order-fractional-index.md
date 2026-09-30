@@ -25,6 +25,7 @@ sort key for show order.
 - Inserts and drags are single-row writes, which works well with real-time sync.
 - Keys grow slowly over many inserts at the same spot; a periodic rebalance (rewrite all
   keys in a table) keeps them short and is safe when no one is dragging.
-- Two users inserting at the same spot at the same time can interleave; ordering the
-  tie by insert time is acceptable.
+- Two users inserting at the same spot at the same time both keep their rows. The server
+  computes keys (see 0006), so there is no tie: the insert applied second lands directly
+  after the anchor, before the first. That is acceptable.
 - Import assigns keys in CSV row order.

@@ -1,21 +1,43 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import {
   type CreateShowRequest,
+  GRANTABLE_ROLES,
   MAX_NAME_LENGTH,
+  type MemberDTO,
+  type MembersResponse,
   type Role,
   type ShowResponse,
   type ShowSummaryDTO,
   type ShowsResponse,
 } from "../../shared/api";
+import type {
+  HistoryResponse,
+  ImportResponse,
+  MutateError,
+  MutateResponse,
+} from "../../shared/ops";
 import { requireAuth } from "../auth/middleware";
+import { normalizeEmail } from "../auth/session";
 import { schema } from "../db/d1/client";
+import { RESERVED_KEYS } from "../do/ops-engine";
 import { USER_ID_HEADER } from "../do/ShowDO";
+import { buildAirtableImport, type CsvFile } from "../import/airtable";
 import type { AppEnv } from "../types";
-import { readJsonObject, str } from "./util";
+import {
+  declaredTooLarge,
+  jsonBody,
+  MAX_BODY_BYTES,
+  readJsonObject,
+  readJsonObjectLimited,
+  str,
+} from "./util";
 
-function showStub(env: Env, showId: string) {
+/** Largest batch accepted by POST /mutate (import goes straight to the DO). */
+export const MAX_OPS_PER_REQUEST = 1000;
+
+export function showStub(env: Env, showId: string) {
   return env.SHOW.get(env.SHOW.idFromName(showId));
 }
 
@@ -39,6 +61,11 @@ const requireMembership = createMiddleware<ShowEnv>(async (c, next) => {
   await next();
 });
 
+const requireOwner = createMiddleware<ShowEnv>(async (c, next) => {
+  if (c.var.role !== "owner") return c.json({ error: "Only the show's owner can do that" }, 403);
+  await next();
+});
+
 /**
  * WebSocket upgrades are exempt from CORS, and SameSite=Lax cookies are sent on them, so a
  * foreign page could otherwise open a socket as the user (cross-site WebSocket hijacking).
@@ -53,6 +80,23 @@ const requireSameOriginUpgrade = createMiddleware<ShowEnv>(async (c, next) => {
   }
   await next();
 });
+
+/**
+ * True if a create/update op's `fields.custom` has a key that could pollute prototypes when
+ * merged. Checked here, before the DO RPC (the op engine checks again).
+ */
+function hasReservedCustomKey(op: unknown): boolean {
+  if (!op || typeof op !== "object") return false;
+  const fields = (op as { fields?: unknown }).fields;
+  if (!fields || typeof fields !== "object") return false;
+  const custom = (fields as { custom?: unknown }).custom;
+  if (!custom || typeof custom !== "object") return false;
+  return Object.keys(custom).some((k) => RESERVED_KEYS.has(k));
+}
+
+function isGrantable(role: unknown): role is Role {
+  return typeof role === "string" && (GRANTABLE_ROLES as readonly string[]).includes(role);
+}
 
 export const showRoutes = new Hono<ShowEnv>()
   .use("/shows", requireAuth)
@@ -83,10 +127,10 @@ export const showRoutes = new Hono<ShowEnv>()
       c.var.db.insert(schema.shows).values({ id, name, createdBy: c.var.user.id, createdAt }),
       c.var.db
         .insert(schema.memberships)
-        .values({ showId: id, userId: c.var.user.id, role: "editor", createdAt }),
+        .values({ showId: id, userId: c.var.user.id, role: "owner", createdAt }),
     ]);
     await showStub(c.env, id).sync(id, name);
-    const show: ShowSummaryDTO = { id, name, role: "editor", createdAt };
+    const show: ShowSummaryDTO = { id, name, role: "owner", createdAt };
     return c.json({ show }, 201);
   })
   .get("/shows/:id", requireMembership, async (c) => {
@@ -99,4 +143,180 @@ export const showRoutes = new Hono<ShowEnv>()
     const headers = new Headers(c.req.raw.headers);
     headers.set(USER_ID_HEADER, c.var.user.id);
     return showStub(c.env, c.var.show.id).fetch(new Request(c.req.raw, { headers }));
+  })
+
+  // ---- show data ----
+  .get("/shows/:id/snapshot", requireMembership, async (c) => {
+    const snap = await showStub(c.env, c.var.show.id).snapshotJson();
+    return c.body(snap, 200, { "Content-Type": "application/json" });
+  })
+  .post("/shows/:id/mutate", requireMembership, async (c) => {
+    const body = await readJsonObjectLimited(c);
+    if (body === "too-large") {
+      return c.json({ error: `Request body over ${MAX_BODY_BYTES / 1024 / 1024} MB` }, 413);
+    }
+    const ops = body?.ops;
+    const clientId = str(body?.clientId);
+    if (!Array.isArray(ops))
+      return c.json({ error: "ops must be an array" } satisfies MutateError, 400);
+    if (clientId.length > 64) return c.json({ error: "clientId is too long" }, 400);
+    if (ops.length > MAX_OPS_PER_REQUEST) {
+      return c.json({ error: `At most ${MAX_OPS_PER_REQUEST} ops per request` }, 400);
+    }
+    const reserved = ops.findIndex(hasReservedCustomKey);
+    if (reserved >= 0) {
+      return c.json(
+        {
+          error: "custom field keys __proto__, constructor and prototype are not allowed",
+          opIndex: reserved,
+        } satisfies MutateError,
+        400,
+      );
+    }
+    if (c.var.role === "viewer") {
+      return c.json({ error: "Viewers can't make changes" } satisfies MutateError, 403);
+    }
+    const res = await showStub(c.env, c.var.show.id).mutate(
+      { userId: c.var.user.id, role: c.var.role, clientId: clientId || null },
+      ops,
+    );
+    if (!res.ok) {
+      const err: MutateError = { error: res.error };
+      if (res.opIndex !== undefined) err.opIndex = res.opIndex;
+      return c.json(err, res.status);
+    }
+    const { ok: _ok, ...out } = res;
+    return jsonBody<MutateResponse>(c, out);
+  })
+  .get("/shows/:id/history", requireMembership, async (c) => {
+    const limit = Number.parseInt(c.req.query("limit") ?? "", 10);
+    const changes = await showStub(c.env, c.var.show.id).history({
+      table: c.req.query("table") || undefined,
+      id: c.req.query("id") || undefined,
+      limit: Number.isFinite(limit) ? limit : undefined,
+    });
+    const ids = [...new Set(changes.map((ch) => ch.userId))];
+    const users = ids.length
+      ? await c.var.db
+          .select({ id: schema.users.id, name: schema.users.name })
+          .from(schema.users)
+          .where(inArray(schema.users.id, ids))
+      : [];
+    const names = new Map(users.map((u) => [u.id, u.name]));
+    return c.json({
+      changes: changes.map((ch) => ({ ...ch, userName: names.get(ch.userId) ?? null })),
+    } satisfies HistoryResponse);
+  })
+  .post("/shows/:id/import/airtable", requireMembership, async (c) => {
+    if (c.var.role !== "owner" && c.var.role !== "editor") {
+      return c.json({ error: "Only editors can import" }, 403);
+    }
+    const tooLarge = () =>
+      c.json({ error: `Request body over ${MAX_BODY_BYTES / 1024 / 1024} MB` }, 413);
+    if (declaredTooLarge(c)) return tooLarge();
+    const stub = showStub(c.env, c.var.show.id);
+    // Importing twice would duplicate everything: only into an empty show, unless the
+    // caller explicitly asks to append.
+    if (c.req.query("append") !== "1" && (await stub.hasData())) {
+      return c.json({ error: "Show already has data" }, 409);
+    }
+    let form: Record<string, string | File | (string | File)[]>;
+    try {
+      form = await c.req.parseBody({ all: true });
+    } catch {
+      return c.json({ error: "Expected multipart/form-data with CSV files" }, 400);
+    }
+    const files: CsvFile[] = [];
+    let bytes = 0;
+    for (const value of Object.values(form).flat()) {
+      if (typeof value === "string") continue;
+      bytes += value.size;
+      if (bytes > MAX_BODY_BYTES) return tooLarge();
+      files.push({ name: value.name, text: await value.text() });
+    }
+    if (files.length === 0) return c.json({ error: "Attach one or more CSV files" }, 400);
+    const clientId = typeof form.clientId === "string" ? form.clientId.slice(0, 64) : "";
+
+    const fieldOptions = await stub.fieldOptions();
+    const plan = buildAirtableImport(files, fieldOptions);
+    const res = await stub.mutate(
+      { userId: c.var.user.id, role: c.var.role, clientId: clientId || null, allowCreatedAt: true },
+      plan.ops,
+    );
+    if (!res.ok) {
+      // A bug in the importer, not the user's fault; report which op failed.
+      return c.json({ error: `Import failed: ${res.error}`, opIndex: res.opIndex }, 400);
+    }
+    return c.json({ created: plan.created, warnings: plan.warnings } satisfies ImportResponse);
+  })
+
+  // ---- members ----
+  .get("/shows/:id/members", requireMembership, async (c) => {
+    const rows = await c.var.db
+      .select({
+        userId: schema.users.id,
+        email: schema.users.email,
+        name: schema.users.name,
+        role: schema.memberships.role,
+      })
+      .from(schema.memberships)
+      .innerJoin(schema.users, eq(schema.users.id, schema.memberships.userId))
+      .where(eq(schema.memberships.showId, c.var.show.id))
+      .orderBy(schema.users.name);
+    return c.json({ members: rows satisfies MemberDTO[] } satisfies MembersResponse);
+  })
+  .post("/shows/:id/members", requireMembership, requireOwner, async (c) => {
+    const body = await readJsonObject(c);
+    const email = normalizeEmail(str(body?.email));
+    const role = body?.role;
+    if (!isGrantable(role)) {
+      return c.json({ error: `role must be one of ${GRANTABLE_ROLES.join(", ")}` }, 400);
+    }
+    const user = await c.var.db
+      .select({ id: schema.users.id, email: schema.users.email, name: schema.users.name })
+      .from(schema.users)
+      .where(eq(schema.users.email, email))
+      .get();
+    // Accounts are created through invites; adding a member never creates one.
+    if (!user) return c.json({ error: "No account with that email; invite them first" }, 404);
+    const inserted = await c.var.db
+      .insert(schema.memberships)
+      .values({ showId: c.var.show.id, userId: user.id, role })
+      .onConflictDoNothing()
+      .returning({ userId: schema.memberships.userId });
+    if (inserted.length === 0) return c.json({ error: "Already a member of this show" }, 409);
+    const member: MemberDTO = { userId: user.id, email: user.email, name: user.name, role };
+    return c.json({ member }, 201);
+  })
+  .patch("/shows/:id/members/:userId", requireMembership, requireOwner, async (c) => {
+    const body = await readJsonObject(c);
+    const role = body?.role;
+    if (!isGrantable(role)) {
+      return c.json({ error: `role must be one of ${GRANTABLE_ROLES.join(", ")}` }, 400);
+    }
+    const userId = c.req.param("userId");
+    if (userId === c.var.user.id) return c.json({ error: "The owner's role can't change" }, 400);
+    const updated = await c.var.db
+      .update(schema.memberships)
+      .set({ role })
+      .where(
+        and(eq(schema.memberships.showId, c.var.show.id), eq(schema.memberships.userId, userId)),
+      )
+      .returning({ userId: schema.memberships.userId });
+    if (updated.length === 0) return c.json({ error: "Not a member of this show" }, 404);
+    // Open sockets carry no role (every mutate re-checks D1), so nothing to disconnect.
+    return c.json({ ok: true });
+  })
+  .delete("/shows/:id/members/:userId", requireMembership, requireOwner, async (c) => {
+    const userId = c.req.param("userId");
+    if (userId === c.var.user.id) return c.json({ error: "The owner can't be removed" }, 400);
+    const removed = await c.var.db
+      .delete(schema.memberships)
+      .where(
+        and(eq(schema.memberships.showId, c.var.show.id), eq(schema.memberships.userId, userId)),
+      )
+      .returning({ userId: schema.memberships.userId });
+    if (removed.length === 0) return c.json({ error: "Not a member of this show" }, 404);
+    await showStub(c.env, c.var.show.id).disconnectUser(userId);
+    return c.json({ ok: true });
   });

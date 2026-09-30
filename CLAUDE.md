@@ -1,6 +1,7 @@
 # Notes for Claude
 
-The project has left the spec-only phase: M0 (the application scaffold) is built. The stack
+The project has left the spec-only phase: M0 (the application scaffold) and M1a (the show
+data layer: core tables, ops, sync, history, members, Airtable import) are built. The stack
 is decided in `docs/decisions/0005-cloudflare-platform.md`; don't relitigate it without a
 new decision record. Build milestone by milestone; don't pull later-milestone features
 (e.g. the cue grid) into an earlier one.
@@ -28,13 +29,19 @@ new decision record. Build milestone by milestone; don't pull later-milestone fe
 | `pnpm db:generate` | Drizzle SQL migrations for both D1 and the ShowDO |
 | `pnpm db:migrate:local` | Apply D1 migrations to `.wrangler/state` |
 | `pnpm cf-typegen` | Regenerate `src/worker/worker-configuration.d.ts` (the `Env` type) after changing `wrangler.jsonc` or `.dev.vars` keys |
+| `pnpm seed:example` | With `pnpm dev` running: create "Some Like It Hot" and import `examples/*.csv` (`SEED_URL` overrides `http://localhost:5173`) |
 
 Before finishing any task: `pnpm check && pnpm e2e`.
 
 ## Layout
 
-- `src/shared/`: types used by both Worker and web (`api.ts` DTOs, `ws.ts` socket messages).
-  No runtime dependencies.
+- `src/shared/`: code used by both Worker and web: `api.ts` DTOs, `ws.ts` socket messages,
+  `tables.ts` (core table field specs + row types), `ops.ts` (op/resolved-op/snapshot
+  types), `order.ts` (order keys), `ids.ts` (UUIDv7). No runtime dependencies except
+  `fractional-indexing` in `order.ts`, which must run identically on both sides.
+- `src/worker/do/ops-engine.ts`: applies op batches to the ShowDO's SQLite.
+  `src/worker/import/airtable.ts`: CSVs → ops.
+- `src/web/lib/show-store.ts` (+ pure `show-state.ts`): the client store for one show.
 - `src/worker/`: `index.ts` (entry; exports DO classes), `app.ts` (Hono app under `/api`),
   `routes/`, `auth/`, `do/ShowDO.ts`, `db/d1/` (D1 schema + migrations), `db/do/` (ShowDO
   schema + migrations).
@@ -77,6 +84,8 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   3. D1: `pnpm db:migrate:local` (also runs on `pnpm dev`). DO: nothing; the constructor
      applies pending migrations in `blockConcurrencyWhile`.
   4. Add or extend a test in `test/worker/`.
+  D1 changes that drizzle can't see (e.g. a new enum value, a data fix) go in a custom
+  migration: `pnpm exec drizzle-kit generate --config drizzle.d1.config.ts --custom --name <what>`.
 - **Adding an API route.** Add a handler in the relevant `src/worker/routes/*.ts` (or a new
   file mounted in `app.ts`). Put request/response types in `src/shared/api.ts`, add a method
   to `src/web/lib/api.ts`, and cover it in `test/worker/api.test.ts`. Protect it with
@@ -85,6 +94,9 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   `src/worker/routes/shows.ts` (not exported) that loads the show + the caller's role into
   `c.var.show` / `c.var.role`; put show routes in that file, or export it if another file
   needs it. Errors are JSON `{ error }`; show-not-found and not-a-member are both 404.
+  Hono's typed `c.json` recurses forever on the recursive `Json` type (custom values), so
+  responses containing rows use `jsonBody()` from `routes/util.ts`, and the DO returns the
+  snapshot pre-serialised (`snapshotJson()`).
   Browser clients must send JSON (the CSRF middleware rejects cross-origin form posts).
   `GET /api/me` is the one exception to "401 when signed out": it returns `{ user: null }`.
 - **WebSockets.** `GET /api/shows/:id/ws` requires `Origin` to equal the request's own
@@ -98,14 +110,87 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   401. Signed-in pages pass caught errors to `useApiErrorHandler()` (`lib/auth.tsx`): a 401
   signs the client out, so `RequireAuth` redirects to `/login?next=<current path>`. Post-login
   `next` values go through `lib/safeNext.ts`.
-- **Deferred to M1:** a `ShowDO.disconnectUser(userId)` RPC called on logout and membership
-  removal (sockets carry `userId` as a hibernation tag and attachment, so this is a lookup via
-  `ctx.getWebSockets(userId)`), and an endpoint to add members to a show.
+- **Show data: the op model** (decision 0006). Every write to show data is a batch of ops
+  (`src/shared/ops.ts`): `create {table, id, fields, after?, before?}`, `update {table, id,
+  fields}`, `delete`, `move {table, id, after?, before?}`, `link`/`unlink {table, id, field,
+  targetId, position?}`. Send them with `store.mutate(ops)` on the client (or
+  `POST /api/shows/:id/mutate {clientId, ops}`, max 1000 ops); never write show tables any
+  other way. The DO (`ops-engine.ts`) applies a batch in one transaction, validates field
+  types / select options (`field_options`) / referenced ids / role, computes `order_key`
+  from neighbours (`after: null` = start, neither = end), fills timestamps and `created_by`,
+  expands deletes into explicit cascade ops (links removed; references to a deleted scene,
+  content or person set to null; cues/content of a deleted scene become Unassigned), logs
+  one `changes` row per changed field (create/delete: one row, field `*`), and broadcasts
+  `{type:"ops", prevVersion, version, clientId, ops}` with the *resolved* ops (or
+  `{type:"version"}` when over 256 KiB of UTF-8). Errors: 400/403 `{error, opIndex}`,
+  whole batch rolled back. Limits: ids must be lowercase UUIDv7 (`newId()`); request
+  bodies over 4 MB get 413 (`readJsonObjectLimited` in `routes/util.ts`); a row may not
+  exceed 512 KiB as JSON; `custom` keys `__proto__`/`constructor`/`prototype` are
+  rejected (by the Worker before the RPC, and again in the engine). A create whose
+  `after`/`before` row no longer exists falls back to the other neighbour, then the end of
+  its scene (cues/content), then the end of the table (`effectivePlacement` in
+  `shared/order.ts`, used by client and server); resolved creates carry the `placement`
+  actually used. Concurrent inserts after the same row: both kept; the one applied second
+  lands directly after the anchor, before the first. Field names on the wire are the snake_case storage names; row types are in
+  `src/shared/tables.ts`. `GET /snapshot` returns everything (ordered tables sorted by
+  `order_key`, then `id`); `GET /history?table=&id=&limit=` returns changes newest first
+  with `userName`. Order keys are compared as plain strings (byte order), never
+  `localeCompare`.
+- **Client store** (`src/web/lib/show-store.ts`). `<ShowStoreProvider showId userId>` (in
+  `ShowPage`) creates the store, loads the snapshot and feeds it from the show socket.
+  Read with `useShowStore(selector)` (selectors must return values from the state, not
+  new objects), `useRow(table, id)`, `useOrderedRows(table)`; write with `useMutate()`.
+  State: `version`, `status`, `tables` (Map by id per table), `order` (ids in show order for
+  scenes/cues/content), `joins` (`cueContent`, `cueAssignees`, `noteCues`,
+  `noteAssignees`: from-id → target ids), `fieldOptions` (`"cues.status"` → options).
+  `mutate` is optimistic (applies at once, including order keys and delete cascades, via
+  `show-state.ts`), sends one batch at a time, and on error rolls back and rethrows (an
+  `ApiError` with `opIndex`). Untouched rows keep object identity across updates.
+  **Deferred:** a snapshot refetch (version gap, reconnect, import) replaces every row
+  object, so every row re-renders; the grid (M1c) may need structural sharing there
+  (reuse the old object when a row is unchanged).
+- **Adding a field to a core table.** (1) Column in `src/worker/db/do/schema.ts` +
+  `pnpm db:generate` (nullable, or with a default, since existing shows have rows). (2) The
+  field spec in `FIELDS` and the row interface in `src/shared/tables.ts` (type drives
+  validation: text/number/bool/select/multiselect/ref). (3) For a select: seed its options
+  in a custom DO migration (`drizzle-kit generate --config drizzle.do.config.ts --custom`),
+  like `0002_seed_field_options.sql`. (4) If Airtable has the column, map it in
+  `src/worker/import/airtable.ts`. (5) Extend `test/worker/ops.test.ts` (and the import
+  test). New *link* fields also need a join table and an entry in `LINKS`.
+- **Roles** (`memberships.role`): `owner` (the creator; manages members), `editor`
+  (everything), `commenter` (read all; create notes, and update/delete/link only notes
+  they created), `viewer` (read only; `/mutate` is 403). Enforced per op in the DO from the
+  role the Worker read on that request. Members: `GET/POST /api/shows/:id/members`,
+  `PATCH/DELETE .../members/:userId` (owner only; the user must already have an account;
+  the owner can't be changed or removed). Removal and logout call
+  `ShowDO.disconnectUser(userId)`, which sends `{type:"revoked"}` to that user's sockets
+  and closes them with code 4003; `useShowSocket` treats `revoked` as terminal (status
+  `unauthorized`, "No access") and doesn't reconnect.
+- **Airtable import** (`POST /api/shows/:id/import/airtable`, multipart CSV files; editors
+  and owners; 4 MB max). A show that already has rows in any core table gets 409
+  `{error:"Show already has data"}` unless the request has `?append=1` (the UI asks for
+  confirmation first; appended rows are added, not merged). Files are recognised by Airtable's `<Table>-<View>.csv` name or by their
+  headers; the five core tables are imported, others skipped with a warning. The import is
+  one op batch (so history and broadcast work; `allowCreatedAt` lets it keep note
+  `Created Time`). CSV order becomes show order. Links resolve by primary text among the
+  imported rows; multi-value cells are CSV-parsed (Airtable quotes values with commas).
+  Assignee/creator names missing from Personnel get a new person (name only), reused on
+  later matches. Created people, unresolved links, duplicate cue numbers (first match
+  wins), dropped extra scene/content links on notes, and scene inference are reported as
+  `warnings`. The Cue List export has no Scene column: a cue's scene comes from its linked
+  content's scene when all agree (content's scene: its Scene column, else its `SSS-` name
+  prefix); a cue still without one takes the scene when the nearest scene-bearing cues
+  before and after it (CSV order) agree, else stays Unassigned. Note `created by` names go
+  to `custom.created_by_name`; `Created Time` is read as UTC.
 - **Writing an e2e test.** Add `e2e/<feature>.spec.ts`. Use helpers in `e2e/helpers.ts`
   (`login`, `createShow`, `uniqueName`). Tests run in parallel against one server whose DB
   persists for the run, so make data unique (`uniqueName`) and don't assume an empty DB.
   Prefer role/label locators; use `data-testid` for things without a good accessible name.
   Use separate `browser.newContext()`s to simulate multiple users.
+- **Writing a worker test.** Use `test/worker/helpers.ts` (`api`, `post`, `loginAdmin`,
+  `newUser`, `createShow`, `connectDO`, `collect`, `isType`). `api()` adds a same-origin
+  `Origin` to non-GET requests like a browser does (the CSRF check needs it on bodyless
+  and multipart requests). Example CSVs import as text with `?raw`.
 - **Every feature gets a test** (unit, worker or e2e).
 - TypeScript strict everywhere (`noUncheckedIndexedAccess` on). Biome formats and lints
   with `"rules": { "preset": "recommended" }` (Biome 2.5's replacement for the deprecated
