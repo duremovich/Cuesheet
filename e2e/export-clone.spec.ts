@@ -186,7 +186,7 @@ test("save as template → new show from it: structure, no cues", async ({ brows
   const form = page.getByRole("form", { name: "New from template" });
   await form.getByLabel("Template").selectOption({ label: template });
   const fresh = uniqueName("From template");
-  await form.getByLabel("New show name").fill(fresh);
+  await form.getByLabel("Name of the copy").fill(fresh);
   await form.getByRole("button", { name: "New from template" }).click();
   await waitForShowReady(page);
   await expect(page.getByTestId("show-name")).toHaveText(fresh);

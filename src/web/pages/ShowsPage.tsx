@@ -118,7 +118,7 @@ function TemplatesSection({ templates }: { templates: ShowSummaryDTO[] }) {
             </select>
           </label>
           <label style={{ flex: 1 }}>
-            <span>New show name</span>
+            <span>Name of the copy</span>
             <input name="name" type="text" required maxLength={200} />
           </label>
           <label>

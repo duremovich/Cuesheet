@@ -133,26 +133,32 @@ export function AirtableImport({
     const files = [...(e.target.files ?? [])];
     e.target.value = "";
     if (files.length === 0) return;
-    setError(null);
-    setResult(null);
-    try {
-      setPreview(await previewFiles(files));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  async function runImport(previews: FilePreview[]) {
-    // The server refuses (409) to import into a show with data unless told to append.
+    // Asked right away (before reading the files), so the question comes with the click.
     const state = store.getState();
-    const append = DATA_TABLES.some((t) => state.tables[t].size > 0);
-    if (append) {
+    if (DATA_TABLES.some((t) => state.tables[t].size > 0)) {
       const n = state.order.cues.length;
       const ok = window.confirm(
         `This show already has ${n} ${n === 1 ? "cue" : "cues"}. Import anyway? Rows will be added, not merged.`,
       );
       if (!ok) return;
     }
+    setError(null);
+    setResult(null);
+    try {
+      const previews = await previewFiles(files);
+      // Nothing to decide (only core CSVs, every column mapped): import straight away.
+      if (previews.every((p) => p.kind && p.columns.length === 0)) await runImport(previews);
+      else setPreview(previews);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function runImport(previews: FilePreview[]) {
+    // The server refuses (409) to import into a show with data unless told to append (the
+    // user agreed to that when choosing the files).
+    const state = store.getState();
+    const append = DATA_TABLES.some((t) => state.tables[t].size > 0);
     setPreview(null);
     setBusy(true);
     setError(null);
