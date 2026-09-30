@@ -62,8 +62,12 @@ Rules:
   and moves right; Escape cancels the edit; arrow keys move; Space opens the detail panel
   for the row; `Ctrl/⌘+Enter` inserts a newline in long text.
 - Select, multi-select and link cells open a picker on typing. The picker searches the
-  primary field (cue number, content name, person name) and shows a "Create '…'" row.
-  Enter picks, Tab picks and moves on, Escape closes.
+  primary field (cue number, content name, person name) plus secondary fields (scene,
+  description), ranks recently used and same-scene records first, and always shows a
+  "Create '…'" row at the bottom when there's no exact match. Enter picks, Tab picks and
+  moves on, Escape closes. Creating from the picker uses the current context (the row's
+  scene for new content; the naming pattern suggests the `SSS-NNN-` prefix) and never
+  opens a form; the new record is editable later from its own table.
 - Multi-select and link cells show chips; Backspace removes the last chip while editing.
 - Long text expands inline while editing and collapses to two lines when not.
 - Column widths, order, hidden fields, row height and frozen columns are per view.

@@ -27,6 +27,23 @@ The team uses Airtable today. It works, but:
 4. **Calculations are awkward.** Pixel-per-inch, screen dimensions and unit conversion
    (meters vs. feet/inches) are done with fragile formulas or outside the base.
 
+## Guiding principle: ease and speed of use
+
+Every design choice is judged by how fast a designer can get information in and out
+during tech. Concretely:
+
+- **Find or create in one motion.** Anywhere a record is linked (content on a cue, a person
+  on a note, a scene on content), typing opens a search over that table; if there's no
+  match, Enter creates the record right there and links it, without leaving the cell.
+- **Search is everywhere.** A global search (`⌘K`) jumps to any cue, content item, note,
+  scene or surface by number or name.
+- **Keyboard first, mouse optional.** Every common action has a shortcut; the mouse is
+  never required in the grid, tech mode or pickers.
+- **Never lose your place.** Rows don't move under you, panels open beside the grid rather
+  than over it, and focus returns to where you were.
+- **Sensible defaults, no forms.** New records inherit context (scene from the group,
+  cue from tech mode, session label from the show), so most entries are one field.
+
 ## Who uses it
 
 | Role | Access | Typical use |

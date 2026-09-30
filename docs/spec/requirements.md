@@ -21,8 +21,15 @@ specified in [ux.md](ux.md); the tables in [data-model.md](data-model.md).
   "add cue here", and dragging across groups re-links the row. Act as an optional outer
   group. Section rows for dividers that aren't scenes.
 - **R5 Fast grid entry.** Inline editing; Tab/Enter/arrow navigation; Space opens the
-  detail panel; typing on a selected cell starts editing; Escape cancels. Linked-record
-  pickers search by cue number, content name or person name and create-on-the-fly.
+  detail panel; typing on a selected cell starts editing; Escape cancels.
+- **R5a Find-or-create pickers.** Every linked-record field opens a search popup on
+  typing (fuzzy, over the linked table's primary field and a few secondary ones such as
+  scene or description); no match → Enter creates the record with the typed name, links
+  it, and it appears in that table's list immediately. Recently used and same-scene
+  records rank first. Works identically in the grid, detail panel, tech mode and script
+  view.
+- **R5b Global search.** `⌘K` searches cues, content, notes, scenes, surfaces and people
+  by number or name and jumps to the record (grid row, panel or script marker).
 - **R6 Notes panel.** Any cue or content item has a notes side panel; adding a note there
   pre-fills the links.
 - **R7 Tech mode.** A keyboard-driven layout for taking notes against the current cue:
