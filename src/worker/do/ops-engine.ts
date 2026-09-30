@@ -380,12 +380,14 @@ export class Batch {
         if (typeof value !== "number" || !Number.isFinite(value)) {
           this.fail(`${label} must be a number`);
         }
+        this.checkRange(label, spec, value);
         return value;
       case "measurement":
         // Meters. Lengths are never negative.
         if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
           this.fail(`${label} must be a length in meters (a number ≥ 0)`);
         }
+        this.checkRange(label, spec, value);
         return value;
       case "pixel_size":
         if (!isPixelSize(value)) this.fail(`${label} must be {w, h} in whole pixels`);
@@ -419,6 +421,17 @@ export class Batch {
         }
         return value;
       }
+    }
+  }
+
+  /** A FieldSpec's `integer` / `min` / `max`. */
+  private checkRange(label: string, spec: FieldSpec, value: number): void {
+    if (spec.integer && !Number.isInteger(value)) this.fail(`${label} must be a whole number`);
+    if (spec.min !== undefined && (spec.minExclusive ? value <= spec.min : value < spec.min)) {
+      this.fail(`${label} must be ${spec.minExclusive ? "more than" : "at least"} ${spec.min}`);
+    }
+    if (spec.max !== undefined && value > spec.max) {
+      this.fail(`${label} must be at most ${spec.max}`);
     }
   }
 

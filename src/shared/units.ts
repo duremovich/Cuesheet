@@ -103,7 +103,7 @@ interface Part {
  * ("14'9\"", "14' 9\"", "14' 9", "14 ft 9 in", with fractions: "9 1/2\"", "14' 3/4\"").
  * Empty text → null (clear); anything else, including negatives → `{error}`.
  */
-export function parseLength(text: string, unit: Unit): LengthParse {
+function parseLengthRaw(text: string, unit: Unit): LengthParse {
   const t = text
     .trim()
     .toLowerCase()
@@ -161,6 +161,58 @@ export function parseLength(text: string, unit: Unit): LengthParse {
     }
   }
   return { error: `Not a length: "${text.trim()}"` };
+}
+
+/** The longest length accepted anywhere (input, server, calculator results): 1 km. */
+export const MAX_LENGTH_M = 1000;
+
+/**
+ * Text → meters, within 0–MAX_LENGTH_M. Accepts a number in `unit` ("4.5"; in ft-in,
+ * decimal feet), a number with a unit ("4.5 m", "450cm", "1,200 mm", "177in", "14.75ft",
+ * "14'", "9\""), feet and inches ("14'9\"", "14' 9\"", "14' 9", "14 ft 9 in", with
+ * fractions: "9 1/2\"", "14' 3/4\""). Empty text → null (clear); anything else, including
+ * negatives and lengths over 1 km → `{error}`.
+ */
+export function parseLength(text: string, unit: Unit): LengthParse {
+  const r = parseLengthRaw(text, unit);
+  if (r && "m" in r && r.m > MAX_LENGTH_M) {
+    return { error: `Lengths go up to ${MAX_LENGTH_M} m` };
+  }
+  return r;
+}
+
+/** Does typed length text name its unit ("4 m", `14'`), or is it a bare number ("4")? */
+export function namesUnit(text: string): boolean {
+  const a = parseLengthRaw(text, "m");
+  const b = parseLengthRaw(text, "mm");
+  return !!a && "m" in a && !!b && "m" in b && a.m === b.m;
+}
+
+/**
+ * Typed length text made unambiguous: a bare number gets the unit it was typed in
+ * ("4" in cm → "4 cm"; in ft-in, decimal feet → "4 ft"). Text that names a unit, or
+ * doesn't parse, is returned trimmed.
+ */
+export function qualifyLength(text: string, unit: Unit): string {
+  const t = text.trim();
+  const r = parseLengthRaw(t, unit);
+  if (!r || "error" in r || namesUnit(t)) return t;
+  return `${t} ${unit === "ft-in" ? "ft" : unit}`;
+}
+
+/** Largest accepted lens (throw) ratio. */
+export const MAX_LENS_RATIO = 100;
+
+/** "1.5", "1.5:1", "1.5 : 1" → 1.5; empty → null; ≤ 0 or > 100 → `{error}`. */
+export function parseLensRatio(text: string): number | null | { error: string } {
+  const t = text.trim();
+  if (!t) return null;
+  const m = /^(\d+(?:\.\d*)?|\.\d+)\s*(?::\s*1(?:\.0*)?)?$/.exec(t);
+  const n = m ? Number(m[1]) : Number.NaN;
+  if (!Number.isFinite(n)) return { error: `Not a lens ratio: "${t}" (try 1.5 or 1.5:1)` };
+  if (n <= 0 || n > MAX_LENS_RATIO)
+    return { error: `Lens ratios are above 0, up to ${MAX_LENS_RATIO}` };
+  return n;
 }
 
 // ---- formatting ----

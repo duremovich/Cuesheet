@@ -77,6 +77,10 @@ export const NOT_PARSED: unique symbol = Symbol("not parsed");
  * a value of this column (e.g. an unknown select option or a non-number).
  */
 export function parseText<Row>(col: Column<Row>, text: string): unknown {
+  if (col.parse) {
+    const r = col.parse(text);
+    return "error" in r ? NOT_PARSED : r.value;
+  }
   switch (col.type) {
     case "text":
       return text;
@@ -115,6 +119,34 @@ export function parseText<Row>(col: Column<Row>, text: string): unknown {
  * Cell values equal for undo and "did this edit change anything". With `type`
  * "measurement", lengths within LENGTH_EPSILON are equal.
  */
+/** Why `text` isn't a value of `col` (for the inline message), or null when it parses. */
+export function parseError<Row>(col: Column<Row>, text: string): string | null {
+  if (parseText(col, text) !== NOT_PARSED) return null;
+  if (col.parse) {
+    const r = col.parse(text);
+    return "error" in r ? r.error : null;
+  }
+  switch (col.type) {
+    case "measurement": {
+      const r = parseLength(text, col.unit ?? "m");
+      return r && "error" in r ? r.error : null;
+    }
+    case "pixelsize": {
+      const r = parsePixelSize(text);
+      return r && "error" in r ? r.error : null;
+    }
+    case "number":
+      return `Not a number: "${text.trim()}"`;
+    default:
+      return `Not a valid ${col.title}: "${text.trim()}"`;
+  }
+}
+
+/** Clipboard text for a cell: lengths at full precision (with their unit), else as shown. */
+export function copyText<Row>(col: Column<Row>, v: unknown): string {
+  return col.type === "measurement" ? editTextOf(col, v) : formatValue(col, v);
+}
+
 export function valuesEqual(a: unknown, b: unknown, type?: ColumnType): boolean {
   if (a === b) return true;
   if (type === "measurement" && typeof a === "number" && typeof b === "number") {

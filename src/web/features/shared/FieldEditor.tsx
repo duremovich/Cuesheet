@@ -7,7 +7,7 @@ import { Chip, type CloseReason, type PickerItem, RecordPicker } from "../../com
 import { optionColor } from "../../components/grid/Chip";
 import { CellContent } from "../../components/grid/cells";
 import type { Column } from "../../components/grid/types";
-import { formatValue, NOT_PARSED } from "../../components/grid/values";
+import { formatValue, NOT_PARSED, parseError } from "../../components/grid/values";
 import { editorText, isFieldEditable, panelCommit, valueFromText } from "./panelFields";
 import styles from "./RowPanel.module.css";
 
@@ -121,7 +121,7 @@ function TextField<Row>({
   onCommit: (v: unknown) => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
-  const [invalid, setInvalid] = useState(false);
+  const [invalid, setInvalid] = useState<string | null>(null);
   const ref = useRef<HTMLInputElement & HTMLTextAreaElement>(null);
   const multiline = col.type === "longtext";
   // Lengths show rounded in the unit until focused, then precisely (so an unchanged commit is a no-op).
@@ -145,17 +145,17 @@ function TextField<Row>({
     if (draft === null) return;
     const v = valueFromText(col, draft);
     if (v === NOT_PARSED) {
-      setInvalid(true);
+      setInvalid(parseError(col, draft) ?? `Not a valid ${col.title}`);
       return;
     }
-    setInvalid(false);
+    setInvalid(null);
     setDraft(null);
     onCommit(v);
   };
   const common = {
     ref,
     "aria-label": col.title,
-    "aria-invalid": invalid || undefined,
+    "aria-invalid": invalid ? true : undefined,
     className: multiline ? styles.textarea : styles.input,
     value: shown,
     onFocus: () => {
@@ -176,12 +176,12 @@ function TextField<Row>({
         e.stopPropagation();
         reverted.current = true;
         setDraft(null);
-        setInvalid(false);
+        setInvalid(null);
         e.currentTarget.closest<HTMLElement>("[data-testid='row-panel']")?.focus();
       }
     },
   };
-  return multiline ? (
+  const field = multiline ? (
     <textarea rows={1} {...common} />
   ) : (
     <input
@@ -196,6 +196,15 @@ function TextField<Row>({
       }
       {...common}
     />
+  );
+  if (!invalid) return field;
+  return (
+    <>
+      {field}
+      <span className={styles.fieldError} role="alert">
+        {invalid}
+      </span>
+    </>
   );
 }
 

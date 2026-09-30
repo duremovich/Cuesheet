@@ -2,6 +2,7 @@
 // filters/color rules over measurements and formula columns.
 import { describe, expect, it } from "vitest";
 import { qty, type Value } from "../../../shared/formula";
+import { qualifyLength } from "../../../shared/units";
 import type { Filter } from "../../../shared/views";
 import { sortRows } from "../../components/grid/ordering";
 import type { Column } from "../../components/grid/types";
@@ -18,6 +19,7 @@ import {
   fieldKind,
   gridColorRules,
   matchesFilter,
+  measurementFilterMeters,
   opsFor,
 } from "./evaluate";
 import { hasMeasurements, resolveUnit, withUnit, withUnitFields } from "./units";
@@ -143,15 +145,33 @@ describe("filters over measurements and formulas", () => {
     expect(opsFor(width)).not.toContain("contains");
   });
 
-  it("compares in meters, values parsed with units or in the column's unit", () => {
+  it("the same saved filter matches the same rows in m, cm and ft-in", () => {
+    const filters = [
+      [{ key: "width", op: "gt", value: qualifyLength("400", "cm") }],
+      [{ key: "width", op: "lt", value: qualifyLength("2", "ft-in") }],
+      [{ key: "width", op: "gte", value: "4" }],
+    ] as Filter[][];
+    for (const f of filters) {
+      const results = (["m", "cm", "ft-in"] as const).map((u) => run(f, withUnitFields(fields, u)));
+      expect(results[1]).toEqual(results[0]);
+      expect(results[2]).toEqual(results[0]);
+    }
+    expect(run(filters[0] as Filter[])).toEqual(["a", "d"]);
+    expect(run(filters[1] as Filter[])).toEqual(["b"]);
+    expect(measurementFilterMeters("400 cm")).toBe(4);
+    expect(measurementFilterMeters(4)).toBe(4);
+    expect(measurementFilterMeters("x")).toBeNull();
+  });
+
+  it("compares in meters, values parsed with units (bare = meters)", () => {
     expect(run([{ key: "width", op: "gt", value: "4 m" }])).toEqual(["a", "d"]);
     expect(run([{ key: "width", op: "gt", value: "4" }])).toEqual(["a", "d"]);
     expect(run([{ key: "width", op: "lt", value: `2'` }])).toEqual(["b"]);
     expect(run([{ key: "width", op: "gte", value: "450cm" }])).toEqual(["a", "d"]);
     expect(run([{ key: "width", op: "is", value: "4.5m" }])).toEqual(["a"]);
     expect(run([{ key: "width", op: "isEmpty" }])).toEqual(["c"]);
-    // A bare number in centimeters when the view shows cm.
-    expect(run([{ key: "width", op: "gt", value: "400" }], withUnitFields(fields, "cm"))).toEqual([
+    // Older filters saved a bare number: meters, whatever unit the viewer uses.
+    expect(run([{ key: "width", op: "gt", value: 4 }], withUnitFields(fields, "cm"))).toEqual([
       "a",
       "d",
     ]);

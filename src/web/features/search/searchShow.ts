@@ -39,6 +39,14 @@ function numberScore(q: string, number: string | null): number | null {
 export function searchShow(data: ShowData, q: string, limit = 8): SearchGroup[] {
   if (!q.trim()) return [];
   const groups: SearchGroup[] = [];
+  /** Each group's best score: 0 exact / 1 prefix name (or cue number) match, else 2+. */
+  const best = new Map<SearchGroup, number>();
+  const add = (g: SearchGroup, score: number | null) => {
+    groups.push(g);
+    best.set(g, score ?? 3);
+  };
+  const nameScore = (...names: (string | null | undefined)[]) =>
+    Math.min(...names.map((n) => matchScore(q, [n]) ?? 3));
   const { tables, order } = data;
 
   // Cues: number matches first (exact, then prefix), then text matches, in show order.
@@ -53,45 +61,62 @@ export function searchShow(data: ShowData, q: string, limit = 8): SearchGroup[] 
     })
     .filter((x) => x.s !== null)
     .sort((a, b) => (a.s as number) - (b.s as number) || a.i - b.i)
-    .slice(0, limit)
-    .map(({ c }) => ({
-      tab: "cues" as const,
-      id: c.id,
-      title: c.number?.trim()
-        ? `Cue ${c.number.trim()}`
-        : c.is_section
-          ? "Section"
-          : "Cue (no number)",
-      detail: clip(c.description || c.sm_call),
-    }));
-  if (cueHits.length) groups.push({ tab: "cues", label: "Cues", hits: cueHits });
+    .slice(0, limit);
+  const cueBest = cueHits[0]?.s ?? null;
+  const cueList = cueHits.map(({ c }) => ({
+    tab: "cues" as const,
+    id: c.id,
+    title: c.number?.trim()
+      ? `Cue ${c.number.trim()}`
+      : c.is_section
+        ? "Section"
+        : "Cue (no number)",
+    detail: clip(c.description || c.sm_call),
+  }));
+  if (cueList.length) add({ tab: "cues", label: "Cues", hits: cueList }, cueBest);
 
   const scenes = order.scenes.map((id) => tables.scenes.get(id)).filter((s) => !!s);
-  const sceneHits = rankItems(scenes, q, (s) => [sceneTitle(s), s.song], { limit }).map((s) => ({
+  const sceneRanked = rankItems(scenes, q, (s) => [sceneTitle(s), s.song], { limit });
+  const sceneHits = sceneRanked.map((s) => ({
     tab: "scenes" as const,
     id: s.id,
     title: sceneTitle(s),
     detail: clip(s.song),
   }));
-  if (sceneHits.length) groups.push({ tab: "scenes", label: "Scenes", hits: sceneHits });
+  if (sceneHits.length) {
+    const s0 = sceneRanked[0];
+    add(
+      { tab: "scenes", label: "Scenes", hits: sceneHits },
+      s0 ? nameScore(sceneTitle(s0), s0.name, s0.number) : null,
+    );
+  }
 
   const content = order.content.map((id) => tables.content.get(id)).filter((c) => !!c);
-  const contentHits = rankItems(content, q, (c) => [c.name], { limit }).map((c) => ({
+  const contentRanked = rankItems(content, q, (c) => [c.name], { limit });
+  const contentHits = contentRanked.map((c) => ({
     tab: "content" as const,
     id: c.id,
     title: c.name || "(unnamed content)",
     detail: sceneTitle(c.scene_id ? tables.scenes.get(c.scene_id) : null),
   }));
-  if (contentHits.length) groups.push({ tab: "content", label: "Content", hits: contentHits });
+  if (contentHits.length) {
+    add({ tab: "content", label: "Content", hits: contentHits }, nameScore(contentRanked[0]?.name));
+  }
 
   const surfaces = order.surfaces.map((id) => tables.surfaces.get(id)).filter((s) => !!s);
-  const surfaceHits = rankItems(surfaces, q, (s) => [s.name, s.channel], { limit }).map((s) => ({
+  const surfaceRanked = rankItems(surfaces, q, (s) => [s.name, s.channel], { limit });
+  const surfaceHits = surfaceRanked.map((s) => ({
     tab: "surfaces" as const,
     id: s.id,
     title: s.name || s.channel || "(unnamed surface)",
     detail: clip(s.channel),
   }));
-  if (surfaceHits.length) groups.push({ tab: "surfaces", label: "Surfaces", hits: surfaceHits });
+  if (surfaceHits.length) {
+    add(
+      { tab: "surfaces", label: "Surfaces", hits: surfaceHits },
+      Math.min(...surfaceRanked.map((s) => nameScore(s.name, s.channel))),
+    );
+  }
 
   const notes = [...tables.notes.values()];
   const noteHits = rankItems(notes, q, (n) => [n.body], { limit }).map((n) => ({
@@ -100,16 +125,27 @@ export function searchShow(data: ShowData, q: string, limit = 8): SearchGroup[] 
     title: clip(n.body, 70) || "(empty note)",
     ...(n.status ? { detail: n.status } : {}),
   }));
-  if (noteHits.length) groups.push({ tab: "notes", label: "Notes", hits: noteHits });
+  // Note bodies aren't names: never ranked above other groups.
+  if (noteHits.length) add({ tab: "notes", label: "Notes", hits: noteHits }, null);
 
   const people = [...tables.persons.values()];
-  const peopleHits = rankItems(people, q, (p) => [p.name], { limit }).map((p) => ({
+  const peopleRanked = rankItems(people, q, (p) => [p.name], { limit });
+  const peopleHits = peopleRanked.map((p) => ({
     tab: "people" as const,
     id: p.id,
     title: p.name || "(no name)",
     detail: clip(p.role),
   }));
-  if (peopleHits.length) groups.push({ tab: "people", label: "People", hits: peopleHits });
+  if (peopleHits.length) {
+    add({ tab: "people", label: "People", hits: peopleHits }, nameScore(peopleRanked[0]?.name));
+  }
 
-  return groups;
+  // Groups with an exact or prefix name match (or cue number) come before groups with only
+  // partial text matches ("C WALL" finds the surface before cues mentioning a wall);
+  // otherwise the usual order.
+  const tier = (g: SearchGroup) => ((best.get(g) ?? 3) <= 1 ? 0 : 1);
+  return groups
+    .map((g, i) => ({ g, i }))
+    .sort((a, b) => tier(a.g) - tier(b.g) || a.i - b.i)
+    .map(({ g }) => g);
 }

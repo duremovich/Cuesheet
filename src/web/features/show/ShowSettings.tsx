@@ -204,7 +204,7 @@ function SettingsBody({
 /**
  * Measurement units (R11): the show's default (editors; stored in the ShowDO via the
  * `meta` op) and your own preference in this browser, which wins over it. A view's unit
- * toggle wins over both.
+ * override (Fields → Unit override) wins over both.
  */
 function UnitSettings() {
   const ws = useWorkspace();

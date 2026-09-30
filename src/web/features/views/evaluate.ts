@@ -196,6 +196,17 @@ function toTime(v: unknown): number {
 
 const DAY = 24 * 60 * 60 * 1000;
 
+/**
+ * A measurement filter value in meters. Values are saved with the unit they were typed in
+ * ("4 cm", `14'`); a bare number or unit-less text (older filters) is meters. null when it
+ * isn't a length.
+ */
+export function measurementFilterMeters(value: unknown): number | null {
+  const text = typeof value === "number" ? String(value) : typeof value === "string" ? value : "";
+  const r = parseLength(text, "m");
+  return r && "m" in r ? r.m : null;
+}
+
 /** Does one row match one (complete) filter? */
 export function matchesFilter<V>(f: FieldDef<V>, row: V, filter: Filter): boolean {
   const value0 = f.getValue(row);
@@ -210,13 +221,11 @@ export function matchesFilter<V>(f: FieldDef<V>, row: V, filter: Filter): boolea
 
   const kind = fieldKind(f);
   if (kind === "measurement") {
-    // Meters, compared with the filter value parsed as a length ("4 m", "14'", or a bare
-    // number in the column's unit).
+    // Meters, compared with the filter value as a length (saved with its unit; bare = m),
+    // so the same filter matches the same rows whatever unit the viewer uses.
     if (typeof raw !== "number") return op === "isNot";
-    const text = typeof value === "number" ? String(value) : typeof value === "string" ? value : "";
-    const parsed = parseLength(text, f.unit ?? "m");
-    if (!parsed || "error" in parsed) return false;
-    const t = parsed.m;
+    const t = measurementFilterMeters(value);
+    if (t === null) return false;
     switch (op) {
       case "is":
         return lengthsEqual(raw, t);

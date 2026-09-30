@@ -386,6 +386,12 @@
   text-align: right;
 }
 
+/* A refused value (e.g. a negative length): the editor stays open, outlined in red. */
+.editor[aria-invalid="true"] {
+  outline: 2px solid var(--color-danger);
+  outline-offset: -2px;
+}
+
 .editorArea {
   min-width: max(100%, 280px);
   min-height: 100%;

@@ -5,6 +5,7 @@ import {
   buildAirtableImport,
   detectKind,
   headerUnit,
+  headerUnitOrNull,
   parentChannel,
   parseAirtableTime,
   splitMulti,
@@ -68,6 +69,8 @@ describe("Airtable import helpers", () => {
     expect(headerUnit("Width (Feet)")).toBe("ft");
     expect(headerUnit("Height (in)")).toBe("in");
     expect(headerUnit("Width")).toBe("m");
+    expect(headerUnitOrNull("Width (Furlongs)")).toBeNull();
+    expect(headerUnit("Width (Furlongs)")).toBe("m");
     expect(parentChannel("CH02.1")).toBe("CH02");
     expect(parentChannel("CH02")).toBeNull();
   });
@@ -101,11 +104,21 @@ describe("Airtable import: surfaces", () => {
     expect(plan.warnings).toEqual([]);
   });
 
+  it("warns about header units it doesn't know", () => {
+    const text = ["Name,Channel Name,Width (Cubits),Height", "A,CH01,2,1"].join("\n");
+    const plan = buildAirtableImport([{ name: "Surfaces-x.csv", text }], {});
+    expect(plan.warnings).toEqual([
+      'Surfaces: "Width (Cubits)" names no unit Cuesheet knows; read as meters',
+    ]);
+    expect(creates(plan.ops, "surfaces")[0]?.fields.width).toBe(2);
+  });
+
   it("links Breakdown.Surfaces by name or channel, parents listed after children, feet headers", () => {
     const surfaces = [
       "Name,Channel Name,Width (Feet),Height (Feet)",
       "TOP,CH09.1,10,5",
       "WALL,CH09,20,x",
+      "LOST,CH07.2,1,1",
     ].join("\n");
     const breakdown = [
       "Scene Name,Location,Surfaces",
@@ -138,6 +151,7 @@ describe("Airtable import: surfaces", () => {
       expect.arrayContaining([
         expect.stringMatching(/"x" in Height \(Feet\) of WALL is not a length/),
         'Breakdown: surface "Nowhere" not found; link skipped',
+        "Surfaces: CH07.2 looks like a region of CH07, which isn't in the file; left top-level",
       ]),
     );
   });

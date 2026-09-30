@@ -105,6 +105,9 @@ Things the first build had to decide; each is easy to change.
   export's Breakdown.Surfaces column is empty; links resolve by surface name or channel
   when it has values. `content.resolution` stays text (M3a owns content); the
   `pixel_size` field type exists for it and for custom fields.
+- **Locale.** Lengths parse `.` as the decimal point and `,` only as a thousands separator
+  (`1,200 mm` = 1.2 m; `4,5 m` is refused rather than read as 4.5). A decimal-comma locale
+  would need its own rule; no change for now.
 - **Calculator.** The aspect lock starts off. The region diagram shows the region's
   share, not its position (surfaces have no offsets yet).
 

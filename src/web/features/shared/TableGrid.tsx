@@ -4,6 +4,7 @@
 import { type ReactNode, useCallback, useMemo, useRef } from "react";
 import { newId } from "../../../shared/ids";
 import type { Op } from "../../../shared/ops";
+import type { Unit } from "../../../shared/units";
 import { DataGrid } from "../../components/grid";
 import type { Column, Group, InsertPosition } from "../../components/grid/types";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
@@ -50,11 +51,13 @@ export interface TableConfig<V> {
   panelTitle: (v: V) => string;
   panelSections?: (v: V) => PanelSection[];
   /** Extra row panel tabs after Fields (e.g. a surface's Calculator). */
-  panelTabs?: (v: V) => PanelTab[];
+  panelTabs?: (v: V, ctx: { unit: Unit; viewUnit: Unit | undefined }) => PanelTab[];
   toolbar?: ReactNode;
   empty?: ReactNode;
   /** Native groups collapsed until the user expands them (a constant array). */
   defaultCollapsed?: string[];
+  /** Columns hidden at phone width unless the view lists them (a constant array). */
+  narrowHidden?: readonly string[];
   /** Where the toolbar's "+ Add" button inserts (default: the end of the last group). */
   addPosition?: InsertPosition;
   testId?: string;
@@ -100,6 +103,7 @@ export function TableGrid<V>(config: TableConfig<V>) {
     ...(config.groups ? { groups: config.groups } : {}),
     ...(nativeGroupKey ? { nativeGroupKey } : {}),
     ...(config.defaultCollapsed ? { defaultCollapsed: config.defaultCollapsed } : {}),
+    ...(config.narrowHidden ? { narrowHidden: config.narrowHidden } : {}),
     ...(config.extraFields ? { extraFields: config.extraFields } : {}),
     ...(dateFields ? { dateFields } : {}),
   });
@@ -210,7 +214,7 @@ export function TableGrid<V>(config: TableConfig<V>) {
             recordId={config.rowId(panelView)}
             onEdit={(key, value) => onEdit(config.rowId(panelView), key, value)}
             sections={config.panelSections?.(panelView) ?? []}
-            extraTabs={config.panelTabs?.(panelView)}
+            extraTabs={config.panelTabs?.(panelView, { unit: view.unit, viewUnit: view.viewUnit })}
             onClose={chrome.closePanel}
             onStep={chrome.stepPanel}
           />

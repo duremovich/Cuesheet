@@ -16,10 +16,15 @@ import type { ShowData } from "../../lib/show-state";
 
 /** Key → formula, in column order. `resultType` drives filters and sorting. */
 export const SURFACE_FORMULAS = {
-  ppi: { title: "PPI", source: "PPI(pixel_width, width)", resultType: "number" },
+  // PPI and pitch stay blank until both pixel dimensions are set.
+  ppi: {
+    title: "PPI",
+    source: "IF(AND(pixel_width, pixel_height), PPI(pixel_width, width))",
+    resultType: "number",
+  },
   pixel_pitch: {
     title: "Pitch (mm)",
-    source: "PITCH(width, pixel_width)",
+    source: "IF(AND(pixel_width, pixel_height), PITCH(width, pixel_width))",
     resultType: "number",
   },
   aspect_ratio: {

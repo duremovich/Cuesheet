@@ -50,7 +50,16 @@ const INFIX: Record<string, { bp: number; op: BinaryOp; right?: boolean }> = {
 const PREFIX_BP = 50;
 const MEMBER_BP = 80;
 
-export type ParseResult = { ast: Node } | { error: string; pos: number };
+/**
+ * `depth`: the formula nests deeper than MAX_DEPTH (brackets, calls, operator chains),
+ * refused so evaluation can't exhaust the stack.
+ */
+export type ParseResult = { ast: Node } | { error: string; pos: number; depth?: true };
+
+/** The deepest a formula may nest (parser recursion and AST depth). */
+export const MAX_DEPTH = 200;
+
+class DepthError extends FormulaSyntaxError {}
 
 /** Source → AST, or `{error, pos}` (never throws). */
 export function parse(src: string): ParseResult {
@@ -60,15 +69,49 @@ export function parse(src: string): ParseResult {
     const ast = p.expr(0);
     const rest = p.peek();
     if (rest.type !== "eof") throw new FormulaSyntaxError(`Unexpected "${rest.text}"`, rest.pos);
+    // Left-leaning chains (1+1+1…) are built by a loop, not recursion: measure them too.
+    if (astDepth(ast) > MAX_DEPTH) throw new DepthError(tooDeep, 0);
     return { ast };
   } catch (e) {
+    if (e instanceof DepthError) return { error: e.message, pos: e.pos, depth: true };
     if (e instanceof FormulaSyntaxError) return { error: e.message, pos: e.pos };
     throw e;
   }
 }
 
+const tooDeep = `Formula nests more than ${MAX_DEPTH} levels deep`;
+
+/** The AST's depth, measured with an explicit stack (no recursion). */
+export function astDepth(root: Node): number {
+  let max = 0;
+  const stack: [Node, number][] = [[root, 1]];
+  while (stack.length) {
+    const [n, d] = stack.pop() as [Node, number];
+    if (d > max) max = d;
+    if (d > MAX_DEPTH) return d;
+    switch (n.t) {
+      case "member":
+        stack.push([n.obj, d + 1]);
+        break;
+      case "neg":
+        stack.push([n.arg, d + 1]);
+        break;
+      case "bin":
+        stack.push([n.l, d + 1], [n.r, d + 1]);
+        break;
+      case "call":
+        for (const a of n.args) stack.push([a, d + 1]);
+        break;
+      default:
+        break;
+    }
+  }
+  return max;
+}
+
 class Parser {
   private i = 0;
+  private depth = 0;
   constructor(private readonly tokens: Token[]) {}
 
   peek(): Token {
@@ -93,6 +136,15 @@ class Parser {
   }
 
   expr(minBp: number): Node {
+    if (++this.depth > MAX_DEPTH) throw new DepthError(tooDeep, this.peek().pos);
+    try {
+      return this.exprInner(minBp);
+    } finally {
+      this.depth--;
+    }
+  }
+
+  private exprInner(minBp: number): Node {
     let left = this.prefix();
     for (;;) {
       const t = this.peek();

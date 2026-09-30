@@ -350,13 +350,16 @@ A small expression language, deliberately smaller than Airtable's:
   length, number ÷ length such as `pixel_width / width`, length + number, comparing a
   length with a number) is a `#UNIT` error. Pixels are plain numbers, so pixels per
   length goes through `PPI(pixels, length)`; `PITCH(length, pixels)` is mm per pixel,
-  `ASPECT(w, h)` gives "16:9" (or "1.78:1"). `M/CM/MM/IN/FT(x)` convert: a length → a
+  `ASPECT(w, h)` gives "16:9" (or "1.86:1"). `M/CM/MM/IN/FT(x)` convert: a length → a
   plain number in that unit (`IN(width)`), a number → a length in that unit (`IN(12)`).
   A blank input makes arithmetic blank (a surface with no pixel size has no PPI).
 - Links: `LOOKUP(link.field)` (one value, or the list), `COUNT(link)`,
   `SUM(link.field)`, `JOIN(link.field, ", ")`; `link.field` on a many-link is a list.
   A pixel size field reads `.w` / `.h`.
-- Errors are values (`#UNIT`, `#DIV/0`, `#VALUE`, `#NAME`, `#ERROR`) that propagate
+- `ROUND` rounds half away from zero (±20 digits); `ASPECT` names 16:9, 16:10, 4:3,
+  21:9, 32:9, 1:1 and 2.35:1 within 1%, else "1.86:1". Formulas nesting deeper than 200
+  levels are refused (`#DEPTH`).
+- Errors are values (`#UNIT`, `#DIV/0`, `#VALUE`, `#NAME`, `#ERROR`, `#DEPTH`) that propagate
   (except through the branch `IF` doesn't take) and show as a red cell with the message
   on hover.
 

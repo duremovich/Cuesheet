@@ -52,7 +52,10 @@ export interface CompiledFormula {
 /** Parse once, evaluate per row. A syntax error becomes a formula that yields it. */
 export function compile(source: string): CompiledFormula | FormulaError {
   const r = parse(source);
-  if ("error" in r) return { error: `${r.error} (at ${r.pos + 1})`, code: "#ERROR" };
+  if ("error" in r) {
+    if (r.depth) return { error: r.error, code: "#DEPTH" };
+    return { error: `${r.error} (at ${r.pos + 1})`, code: "#ERROR" };
+  }
   return { source, ast: r.ast, deps: dependencies(r.ast) };
 }
 

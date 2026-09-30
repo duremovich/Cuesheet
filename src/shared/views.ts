@@ -96,8 +96,8 @@ export interface ViewConfig {
    */
   forkedFrom?: string;
   /**
-   * Display unit for measurement columns in this view (the toolbar's m / cm / ft-in
-   * toggle). Unset: the user's preference, else the show's default (R11).
+   * The view's unit override for measurement columns (set only in Fields → Unit override;
+   * the toolbar toggle sets the user's own unit). Unset: the user's unit, else the show's default (R11).
    */
   unit?: Unit;
 }

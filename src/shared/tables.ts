@@ -3,6 +3,8 @@
 // Field names are the storage names (snake_case), as in docs/spec/data-model.md.
 // Adding a field: see "Adding a field to a core table" in CLAUDE.md.
 
+import { MAX_LENGTH_M, MAX_LENS_RATIO, MAX_PIXELS } from "./units";
+
 export const TABLE_NAMES = [
   "scenes",
   "cues",
@@ -52,6 +54,13 @@ export interface FieldSpec {
   auto?: boolean;
   /** Settable on create only (a view's table and owner). */
   immutable?: boolean;
+  /** number / measurement: allowed range (the engine refuses values outside it). */
+  min?: number;
+  /** `min` itself is not allowed (e.g. a lens ratio must be > 0). */
+  minExclusive?: boolean;
+  max?: number;
+  /** number: whole numbers only. */
+  integer?: boolean;
 }
 
 const text: FieldSpec = { type: "text" };
@@ -60,7 +69,10 @@ const bool: FieldSpec = { type: "bool" };
 const select: FieldSpec = { type: "select" };
 const multiselect: FieldSpec = { type: "multiselect" };
 const ref = (table: TableName): FieldSpec => ({ type: "ref", ref: table });
-const measurement: FieldSpec = { type: "measurement" };
+/** Meters, 0–1 km. */
+const measurement: FieldSpec = { type: "measurement", min: 0, max: MAX_LENGTH_M };
+/** Whole pixels, 1–MAX_PIXELS. */
+const pixels: FieldSpec = { type: "number", integer: true, min: 1, max: MAX_PIXELS };
 
 /** Writable (and auto) data fields per table. Excludes the common columns below. */
 export const FIELDS = {
@@ -135,10 +147,11 @@ export const FIELDS = {
     parent_id: ref("surfaces"),
     width: measurement,
     height: measurement,
-    pixel_width: number,
-    pixel_height: number,
+    pixel_width: pixels,
+    pixel_height: pixels,
     throw_distance: measurement,
-    lens_ratio: number,
+    /** Throw ratio (distance ÷ image width): > 0, ≤ 100. */
+    lens_ratio: { type: "number", min: 0, minExclusive: true, max: MAX_LENS_RATIO },
     description: text,
   },
   /** Saved views (R16): src/shared/views.ts, CLAUDE.md "Saved views". */

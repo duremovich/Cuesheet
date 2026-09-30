@@ -1,7 +1,7 @@
 // The active measurement unit (R11, ux.md §Measurements): the view's override, else your
 // preference (this browser), else the show's default, else meters. `withUnit` hands it to
-// the measurement (and length-formula) columns; `UnitToggle` is the toolbar's m / cm /
-// ft-in switch, which sets the view's override.
+// the measurement (and length-formula) columns; `UnitToggle` is the toolbar's m / cm / ft-in
+// switch, which sets *your* unit (never the view); a view sets its own only through Fields → Unit override (`ViewUnitChip` shows it).
 import { useCallback, useSyncExternalStore } from "react";
 import { FALLBACK_UNIT, isUnit, TOGGLE_UNITS, UNIT_LABELS, type Unit } from "../../../shared/units";
 import type { Column } from "../../components/grid/types";

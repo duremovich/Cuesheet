@@ -77,7 +77,7 @@ describe("surface formulas", () => {
     const c = computeSurface(show([s]), s);
     expect(c.ppi).toBeNull();
     expect(c.pixel_pitch).toBeNull();
-    expect(c.aspect_ratio).toBe("9:5");
+    expect(c.aspect_ratio).toBe("1.80:1");
     expect(c.throw_width).toMatchObject({ code: "#DIV/0" });
   });
 

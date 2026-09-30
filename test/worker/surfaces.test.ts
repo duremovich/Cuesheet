@@ -86,6 +86,35 @@ describe("surfaces: ops", () => {
     ok(await stub.mutate(ctx(), [{ op: "update", table: "surfaces", id, fields: { width: 0 } }]));
   });
 
+  it("enforces ranges: whole pixels 1..100000, lens ratio (0, 100], lengths ≤ 1000 m", async () => {
+    const stub = await freshShow();
+    const id = newId();
+    ok(await stub.mutate(ctx(), [surface(id, { name: "X" })]));
+    const upd = (fields: Record<string, unknown>) =>
+      stub.mutate(ctx(), [{ op: "update", table: "surfaces", id, fields }]);
+    for (const [fields, msg] of [
+      [{ pixel_width: 0 }, /pixel_width must be at least 1/],
+      [{ pixel_width: 100_001 }, /pixel_width must be at most 100000/],
+      [{ pixel_height: 1080.5 }, /pixel_height must be a whole number/],
+      [{ lens_ratio: 0 }, /lens_ratio must be more than 0/],
+      [{ lens_ratio: 101 }, /lens_ratio must be at most 100/],
+      [{ width: 1000.5 }, /width must be at most 1000/],
+      [{ throw_distance: 5000 }, /throw_distance must be at most 1000/],
+    ] as const) {
+      expect(fail(await upd(fields)).error).toMatch(msg);
+    }
+    ok(
+      await upd({
+        pixel_width: 100_000,
+        pixel_height: 1,
+        lens_ratio: 100,
+        width: 1000,
+        height: 0.001,
+        throw_distance: 0,
+      }),
+    );
+  });
+
   it("refuses parent cycles (self, direct, deep)", async () => {
     const stub = await freshShow();
     const [a, b, c] = [newId(), newId(), newId()];

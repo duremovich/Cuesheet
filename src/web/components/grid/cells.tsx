@@ -106,6 +106,7 @@ export function TextEditor({
   value,
   label,
   placeholder,
+  invalid,
   onChange,
 }: {
   multiline: boolean;
@@ -114,6 +115,8 @@ export function TextEditor({
   label: string;
   /** Ghost suggestion (Tab / → accepts it). */
   placeholder?: string | undefined;
+  /** Why the text was refused (aria-invalid + tooltip); the editor stays open. */
+  invalid?: string | undefined;
   onChange: (v: string) => void;
 }) {
   const ref = useRef<HTMLInputElement & HTMLTextAreaElement>(null);
@@ -163,6 +166,8 @@ export function TextEditor({
       inputMode={numeric ? "decimal" : undefined}
       className={styles.editor}
       aria-label={label}
+      aria-invalid={invalid ? true : undefined}
+      title={invalid}
       data-editor="true"
       placeholder={placeholder}
       value={value}

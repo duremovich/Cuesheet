@@ -6,8 +6,11 @@ import {
   formatPixelSize,
   isPixelSize,
   lengthsEqual,
+  namesUnit,
   parseLength,
+  parseLensRatio,
   parsePixelSize,
+  qualifyLength,
   UNITS,
 } from "./units";
 
@@ -168,5 +171,33 @@ describe("pixel sizes", () => {
     expect(isPixelSize({ w: 1.5, h: 1080 })).toBe(false);
     expect(isPixelSize("1920x1080")).toBe(false);
     expect(formatPixelSize({ w: 1920, h: 1080 })).toBe("1920×1080");
+  });
+});
+
+describe("limits, qualified text and lens ratios", () => {
+  it("refuses lengths over 1 km", () => {
+    expect(parseLength("1000 m", "m")).toEqual({ m: 1000 });
+    expect(parseLength("1001 m", "m")).toEqual({ error: "Lengths go up to 1000 m" });
+    expect(parseLength("4000", "ft-in")).toMatchObject({ error: expect.any(String) });
+  });
+
+  it("qualifies bare numbers with the unit they were typed in", () => {
+    expect(namesUnit("4 m")).toBe(true);
+    expect(namesUnit(`14'`)).toBe(true);
+    expect(namesUnit("4")).toBe(false);
+    expect(qualifyLength("4", "cm")).toBe("4 cm");
+    expect(qualifyLength(" 14.75 ", "ft-in")).toBe("14.75 ft");
+    expect(qualifyLength(`14' 6"`, "cm")).toBe(`14' 6"`);
+    expect(qualifyLength("wide", "m")).toBe("wide");
+  });
+
+  it("parses lens ratios", () => {
+    expect(parseLensRatio("1.5")).toBe(1.5);
+    expect(parseLensRatio("1.5:1")).toBe(1.5);
+    expect(parseLensRatio(" 0.8 : 1 ")).toBe(0.8);
+    expect(parseLensRatio("")).toBeNull();
+    for (const bad of ["0", "-1", "101", "1.5:2", "wide"]) {
+      expect(parseLensRatio(bad), bad).toMatchObject({ error: expect.any(String) });
+    }
   });
 });

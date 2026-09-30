@@ -124,6 +124,11 @@ describe("functions", () => {
     ["NOT(0)", true],
     ["ROUND(3.14159, 2)", 3.14],
     ["ROUND(2.5)", 3],
+    ["ROUND(-2.5)", -3],
+    ["ROUND(1.005, 2)", 1.01],
+    ["ROUND(-1.005, 2)", -1.01],
+    ["ROUND(1234.5, -2)", 1200],
+    ["ROUND(0.285, 2)", 0.29],
     ["MIN(3, 1, 2)", 1],
     ["MAX(3, 1, 2)", 3],
     ["ABS(-4)", 4],
@@ -146,6 +151,8 @@ describe("functions", () => {
     expect(code(calc("NOPE(1)"))).toBe("#NAME");
     expect(code(calc("missing + 1"))).toBe("#NAME");
     expect(code(calc("ROUND()"))).toBe("#ERROR");
+    expect(code(calc("ROUND(1, 21)"))).toBe("#VALUE");
+    expect(calc("ROUND(1.23456, 20)")).toBe(1.23456);
     expect(code(calc("'abc' * 2"))).toBe("#VALUE");
   });
 
@@ -209,8 +216,14 @@ describe("units", () => {
     expect(calc("PPI(pixel_width, width)", surface)).toBeCloseTo(10.8373, 3);
     expect(calc("PITCH(width, pixel_width)", surface)).toBeCloseTo(2.34375);
     expect(calc("ASPECT(pixel_width, pixel_height)", surface)).toBe("16:9");
-    expect(calc("ASPECT(width, height)", surface)).toBe("9:5");
-    expect(calc("ASPECT(1366, 768)")).toBe("1.78:1");
+    expect(calc("ASPECT(width, height)", surface)).toBe("1.80:1");
+    expect(calc("ASPECT(1366, 768)")).toBe("16:9");
+    expect(calc("ASPECT(1920, 1200)")).toBe("16:10");
+    expect(calc("ASPECT(1080, 1920)")).toBe("9:16");
+    expect(calc("ASPECT(2048, 872)")).toBe("2.35:1");
+    expect(calc("ASPECT(5120, 1440)")).toBe("32:9");
+    expect(calc("ASPECT(1.86, 1)")).toBe("1.86:1");
+    expect(calc("ASPECT(1, 3)")).toBe("1:3.00");
     expect(calc("ASPECT(size.w, size.h)", surface)).toBe("16:9");
     expect(calc("PPI(x, width)", record({ x: null, width: qty(1) }))).toBeNull();
     expect(code(calc("PPI(10, M(0))"))).toBe("#DIV/0");
@@ -273,5 +286,17 @@ describe("dependencies", () => {
     expect(f).toMatchObject({ deps: ["width"] });
     expect(run(f, record({ width: qty(1) }))).toEqual(qty(2));
     expect(run(compile("1 +"), EMPTY)).toMatchObject({ code: "#ERROR" });
+  });
+
+  it("refuses formulas nested beyond 200 levels as #DEPTH (no stack overflow)", () => {
+    const deep = `${"(".repeat(5000)}1${")".repeat(5000)}`;
+    expect(compile(deep)).toMatchObject({ code: "#DEPTH" });
+    expect(compile(`${"-".repeat(5000)}1`)).toMatchObject({ code: "#DEPTH" });
+    expect(compile(`${"ABS(".repeat(300)}1${")".repeat(300)}`)).toMatchObject({ code: "#DEPTH" });
+    expect(compile(Array(300).fill("1").join(" + "))).toMatchObject({ code: "#DEPTH" });
+    expect(compile(Array(300).fill("2").join(" ^ "))).toMatchObject({ code: "#DEPTH" });
+    const ok = compile(`${"(".repeat(150)}1${")".repeat(150)}`);
+    expect(run(ok, EMPTY)).toBe(1);
+    expect(run(compile(Array(150).fill("1").join(" + ")), EMPTY)).toBe(150);
   });
 });

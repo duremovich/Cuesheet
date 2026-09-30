@@ -514,7 +514,8 @@ views" below).
 - **Parsing** (`parseLength(text, activeUnit)` → `{m}` | `{error}` | null for empty):
   `4.5` (in the active unit; ft-in: decimal feet), `4.5 m`, `450cm`, `1,200 mm`, `177in`,
   `14.75ft`, `14'`, `9"`, `14'9"`, `14' 9"`, `14' 9`, `14 ft 9 in`, fractions (`14' 9 1/2"`,
-  `3/4"`), `1 m 20 cm`; smart quotes/primes are fine; negatives are errors.
+  `3/4"`), `1 m 20 cm`; smart quotes/primes are fine; negatives and lengths over 1 km
+  (`MAX_LENGTH_M`) are errors.
   **Formatting**: m 2 dp, cm 1 dp, mm 0 dp, in 1 dp, ft 2 dp, ft-in to the nearest 1/8"
   (`FT_IN_DENOMINATOR`; `14' 9 1/8"`). `formatLengthParts` splits the number from the
   muted unit label the grid shows. `editLength` is the editor's starting text: precise
@@ -527,8 +528,20 @@ views" below).
   sorts by area), `formula` (read-only; value is a formula `Value`; errors render as a
   red `#CODE` with the message as the tooltip; `resultType` number/text/measurement
   decides filtering and sorting; errors sort and filter as empty). Filters: kind
-  `measurement` takes `> ≥ < ≤ is is-not empty`; the value is parsed as a length (`4 m`,
-  `14'`, or a bare number in the active unit) and compared in meters.
+  `measurement` takes `> ≥ < ≤ is is-not empty`; the value is **saved with the unit it was
+  typed in** (`qualifyLength`: "4" typed while viewing cm is stored "4 cm"; `14' 6"` as
+  is), shown converted to the viewer's unit, and compared in meters
+  (`measurementFilterMeters`; a bare number or unit-less text from older filters is
+  meters), so one saved filter or color rule matches the same rows in every unit.
+- **Refused input** (a negative or out-of-range length, a bad pixel size, a lens ratio of
+  0): the grid keeps the editor open, marks it `aria-invalid` and says why in its status
+  line (`parseError`); the row panel shows the reason under the field; the calculator
+  under its input. Nothing is written. A `Column.parse(text) → {value} | {error}` overrides
+  a column's parsing (the lens ratio column accepts `1.5` or `1.5:1`). Copying measurement
+  cells copies the precise edit text (`copyText`), so pasting loses nothing.
+- **Limits** (server `FieldSpec` `min`/`minExclusive`/`max`/`integer`, checked by the op
+  engine, and the same on input): lengths 0–1000 m, pixel sizes whole 1–100,000, lens
+  ratio above 0 up to 100.
 - **Adding a measurement field**: column `real(...)` in the DO schema + migration; `FIELDS`
   entry `measurement` in `tables.ts` (row type `number | null`, meters); a grid column
   `{type: "measurement", getValue: (v) => v.row.field}` whose edit op writes the number
@@ -543,7 +556,11 @@ views" below).
   numbers, text, booleans, lengths `{value, unit: "m"}`, pixel sizes, lists, errors
   `{error, code}`. Dimension rules: length ± length, length × or ÷ number → length; length
   ÷ length → number; anything else with a length → `#UNIT`. Blank operands make
-  arithmetic blank. Errors propagate; nothing throws.
+  arithmetic blank. Errors propagate; nothing throws. Nesting deeper than 200 levels
+  (brackets, calls, operator chains; measured without recursion) compiles to a `#DEPTH`
+  error. `ROUND` rounds half away from zero after correcting binary error
+  (`ROUND(1.005, 2)` = 1.01); more than ±20 digits is `#VALUE`. `ASPECT` snaps to 16:9,
+  16:10, 4:3, 21:9, 32:9, 1:1, 2.35:1 within 1% (the closest), else `1.86:1`.
 - **Computed columns**: built-ins are declared in code (`features/surfaces/formulas.ts`,
   `SURFACE_FORMULAS`: `ppi`, `pixel_pitch`, `aspect_ratio`, `throw_width`), computed per
   row when the tab builds its view objects (`computeSurface`, cached by the ViewCache on
@@ -559,15 +576,30 @@ views" below).
   **Surfaces** columns on Scenes and Content (`surfaceLinkColumn`/`surfaceLinkOps`) and as
   editable reverse columns on Surfaces (link/unlink from the scene/content side). The
   Parent picker leaves out the surface and its regions. `images` (attachments) and the
-  gallery come with M3a.
+  gallery come with M3a. At ≤ 480 px the Channel column hides unless the view lists it
+  (`narrowHidden` on `TableGrid`/`useViewConfig`); Name is 140 px wide. The importer warns
+  about header units it doesn't know (read as meters) and about regions whose parent
+  channel isn't in the file.
+- **⌘K ranking** (`searchShow`): groups with an exact or prefix *name* match (or a cue
+  number) come before groups with only partial text matches, so "C WALL" lists the surface
+  before cues whose description mentions a wall; note bodies never count as names.
 - **Calculator** (`Calculator.tsx`, math in `calc.ts`): physical size, pixel size and PPI
-  (= pixel_width ÷ width in inches). One of the three is locked (lock buttons); editing
+  (= pixel_width ÷ width in inches; blank until both pixel sides are set, in the grid's
+  PPI/pitch columns too). One of the three is locked (lock buttons); editing
   another recomputes the third so the locked one stays: lock PPI + change width → pixel
   width follows; lock physical + change PPI → pixels follow; lock pixels + change PPI →
   size follows; editing the locked one acts as if the other stored one were locked.
-  "Keep aspect ratio" scales the height with the width (pixels too). Default lock: pixels
-  for a region whose parent has a pixel size, else physical. Pixels round to whole
-  numbers. Every change is one `update` op. Projector: throw distance + lens ratio →
+  "Keep aspect ratio" scales the height with the width (pixels too). The locked PPI and
+  the aspect ratios are captured when the lock / checkbox is engaged (`CalcRefs`) and
+  every edit computes from them, so rounding to whole pixels never drifts (a 10-edit round
+  trip returns exactly 1920×1080 / 4.5 m). Default lock: pixels for a region whose parent
+  has a pixel size, else physical. Pixels round to whole numbers; a result outside the
+  limits is refused with a message. "Use parent's PPI" (regions) fills the region's pixels
+  from its size. The pixels-aren't-square warning allows 1%. Every change is one `update` op.
+  **Units in the calculator**: it shows the grid's active unit (view override → your unit
+  → show default), live, including toolbar toggles while it's open (`TableGrid` passes
+  `{unit, viewUnit}` to `panelTabs`); its own toggle sets your unit, and says so when the
+  view's override wins. Projector: throw distance + lens ratio →
   image width, plus the distance / ratio that fills the surface's width. A region shows
   its parent's canvas and its share of it.
 

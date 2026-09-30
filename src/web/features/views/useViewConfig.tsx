@@ -17,6 +17,7 @@ import { useSearchParams } from "react-router";
 import { newId } from "../../../shared/ids";
 import type { Op } from "../../../shared/ops";
 import type { DataTableName, ViewRow } from "../../../shared/tables";
+import type { Unit } from "../../../shared/units";
 import {
   DEFAULT_VIEW_NAMES,
   defaultViewConfig,
@@ -41,6 +42,7 @@ import {
 } from "../../lib/show-store";
 import { groupOrder, placementFor } from "../shared/ops";
 import { readPref, writePref } from "../shared/prefs";
+import { useMediaQuery } from "../shared/useMediaQuery";
 import { useWorkspace } from "../show/workspace";
 import { type Draft, draftKey, getDraft, rebaseDraft, setDraft, useDraft } from "./drafts";
 import {
@@ -104,6 +106,11 @@ export interface ViewSetup<V> {
   focusRow?: (id: string) => void;
   /** One-click sorts in the Sort popover. */
   sortPresets?: SortPreset[];
+  /**
+   * Columns hidden at phone width (≤ 480 px) unless the view lists them in its fields
+   * (so showing one in Fields sticks).
+   */
+  narrowHidden?: readonly string[];
   /** "Sort now by cue number" (editors): resolves true when done. */
   sortNow?: { label: string; run: () => Promise<boolean> };
 }
@@ -145,6 +152,10 @@ export interface ViewState<V> {
     style: { display: "contents" };
   };
   toolbar: ReactNode;
+  /** The active measurement unit (view override → your unit → show default → m). */
+  unit: Unit;
+  /** The view's own unit override, if it has one. */
+  viewUnit: Unit | undefined;
 }
 
 const NO_IDS: string[] = [];
@@ -648,7 +659,18 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
   const unitFields = useMemo(() => withUnitFields(fields, unit), [fields, unit]);
   const showUnits = useMemo(() => hasMeasurements(setup.columns), [setup.columns]);
 
-  const columns = useMemo(() => layoutColumns(allColumns, config), [allColumns, config]);
+  const narrow = useMediaQuery("(max-width: 480px)");
+  const narrowHidden = setup.narrowHidden;
+  const layoutConfig = useMemo(() => {
+    if (!narrow || !narrowHidden?.length) return config;
+    const listed = new Set(config.fields.map((f) => f.key));
+    const extra = narrowHidden.filter((k) => !listed.has(k)).map((key) => ({ key, hidden: true }));
+    return extra.length ? { ...config, fields: [...config.fields, ...extra] } : config;
+  }, [narrow, narrowHidden, config]);
+  const columns = useMemo(
+    () => layoutColumns(allColumns, layoutConfig),
+    [allColumns, layoutConfig],
+  );
   const sortKey = JSON.stringify(gridSort(config, allColumns) ?? null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on the sort's value
   const sort = useMemo(() => gridSort(config, allColumns), [sortKey]);
@@ -911,7 +933,7 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
         current={current}
         shared={shared}
         mine={mine}
-        config={config}
+        config={layoutConfig}
         dirty={dirty}
         conflict={conflict}
         canEdit={canEdit}
@@ -956,6 +978,8 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
     trackActive,
     wrapProps,
     toolbar,
+    unit,
+    viewUnit: config.unit,
   };
 }
 

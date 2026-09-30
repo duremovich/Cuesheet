@@ -18,7 +18,7 @@ export interface Quantity {
   unit: "m";
 }
 
-export type ErrorCode = "#UNIT" | "#DIV/0" | "#VALUE" | "#NAME" | "#ERROR";
+export type ErrorCode = "#UNIT" | "#DIV/0" | "#VALUE" | "#NAME" | "#ERROR" | "#DEPTH";
 
 export interface FormulaError {
   error: string;
@@ -364,14 +364,47 @@ function asNumber(v: Value): number | FormulaError | null {
   return toNumber(v);
 }
 
-/** "16:9" when the ratio is a small fraction (denominator ≤ 32), else "1.78:1". */
+/**
+ * Round half away from zero to `digits` decimals (negative: tens, hundreds…), correcting
+ * binary representation error first so ROUND(1.005, 2) = 1.01 and ROUND(-2.5) = -3.
+ */
+export function roundHalfAway(n: number, digits: number): number {
+  const f = 10 ** digits;
+  const scaled = Number((Math.abs(n) * f).toPrecision(15));
+  return (Math.sign(n) * Math.round(scaled)) / f || 0;
+}
+
+/** Common aspect ratios the text snaps to (within 1%), as [width, height, text]. */
+const COMMON_ASPECTS: [number, number, string][] = [
+  [16, 9, "16:9"],
+  [16, 10, "16:10"],
+  [4, 3, "4:3"],
+  [21, 9, "21:9"],
+  [32, 9, "32:9"],
+  [1, 1, "1:1"],
+  [2.35, 1, "2.35:1"],
+];
+
+/** Within 1% of each other. */
+export function sameRatio(a: number, b: number): boolean {
+  return Math.abs(a / b - 1) <= 0.01;
+}
+
+/**
+ * "16:9", "16:10", "4:3", "21:9", "32:9", "1:1", "2.35:1" when within 1% of one of them
+ * (portrait ones flipped: "9:16"), else "1.86:1" (or "1:1.86" portrait).
+ */
 export function aspectText(w: number, h: number): string {
   const r = w / h;
-  for (let den = 1; den <= 32; den++) {
-    const num = Math.round(r * den);
-    if (num > 0 && Math.abs(num / den - r) <= r * 1e-4) return `${num}:${den}`;
+  const land = r >= 1 ? r : 1 / r;
+  // The closest common ratio within 1% (21:9 and 2.35:1 are only 0.7% apart).
+  let best: { text: string; off: number } | null = null;
+  for (const [a, b, text] of COMMON_ASPECTS) {
+    const off = Math.abs(land / (a / b) - 1);
+    if (off <= 0.01 && (!best || off < best.off)) best = { text, off };
   }
-  return `${r.toFixed(2)}:1`;
+  if (best) return r >= 1 ? best.text : best.text.split(":").reverse().join(":");
+  return r >= 1 ? `${r.toFixed(2)}:1` : `1:${(1 / r).toFixed(2)}`;
 }
 
 function call(fn: string, argNodes: Node[], rec: FormulaRecord): Operand {
@@ -409,10 +442,11 @@ function call(fn: string, argNodes: Node[], rec: FormulaRecord): Operand {
       if (isFormulaError(v)) return v;
       if (isFormulaError(d)) return d;
       if (v === null) return null;
-      const f = 10 ** Math.trunc(d ?? 0);
-      if (isQuantity(v)) return qty(Math.round(v.value * f) / f);
+      const digits = Math.trunc(d ?? 0);
+      if (Math.abs(digits) > 20) return err("#VALUE", "ROUND takes -20 to 20 digits");
+      if (isQuantity(v)) return qty(roundHalfAway(v.value, digits));
       const n = toNumber(v);
-      return isFormulaError(n) ? n : Math.round(n * f) / f;
+      return isFormulaError(n) ? n : roundHalfAway(n, digits);
     }
     case "ABS": {
       const a = arity(fn, argNodes, 1);

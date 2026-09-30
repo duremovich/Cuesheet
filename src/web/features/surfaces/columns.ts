@@ -5,7 +5,7 @@
 import type { Value } from "../../../shared/formula";
 import type { Op } from "../../../shared/ops";
 import type { SurfaceRow } from "../../../shared/tables";
-import type { PixelSize } from "../../../shared/units";
+import { type PixelSize, parseLensRatio } from "../../../shared/units";
 import type { Column, PickerItem } from "../../components/grid/types";
 import type { ShowStore } from "../../lib/show-store";
 import { linkDiffOps, textField } from "../shared/ops";
@@ -66,7 +66,7 @@ export function surfaceColumns(opts: {
   const { store } = opts;
   const text = (key: (typeof TEXT)[number]) => (v: SurfaceView) => v.surface[key] ?? "";
   const cols: Column<SurfaceView>[] = [
-    { key: "name", title: "Name", type: "text", width: 180, frozen: true, getValue: text("name") },
+    { key: "name", title: "Name", type: "text", width: 140, frozen: true, getValue: text("name") },
     { key: "channel", title: "Channel", type: "text", width: 100, getValue: text("channel") },
     {
       key: "parent",
@@ -120,6 +120,11 @@ export function surfaceColumns(opts: {
       type: "number",
       width: 90,
       getValue: (v) => v.surface.lens_ratio,
+      // "1.5" or "1.5:1"; above 0, up to 100.
+      parse: (t) => {
+        const r = parseLensRatio(t);
+        return r !== null && typeof r === "object" ? r : { value: r };
+      },
     },
     formulaColumn("throw_width", 120),
     {

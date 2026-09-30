@@ -40,11 +40,13 @@ import type {
   RowHeight,
 } from "./types";
 import {
+  copyText,
   type EditRecord,
   editTextOf,
   emptyValue,
   formatValue,
   NOT_PARSED,
+  parseError,
   parseText,
   parseTsv,
   toTsv,
@@ -74,7 +76,7 @@ interface CellRef {
 }
 
 type Editing =
-  | { kind: "text"; rowId: string; key: string; draft: string }
+  | { kind: "text"; rowId: string; key: string; draft: string; invalid?: string }
   | { kind: "picker"; rowId: string; key: string; query: string; value: unknown };
 
 interface ColLayout<Row> {
@@ -715,14 +717,22 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     if (e?.kind !== "text") return;
     const col = colOf(e.key);
     const entry = ref.current.allRows.get(e.rowId);
+    const text = draftOverride ?? e.draft;
+    const value = col ? parseText(col, text) : NOT_PARSED;
+    if (col && entry && value === NOT_PARSED) {
+      // Refused (a non-number, a negative or out-of-range length…): say why, keep editing.
+      const why = parseError(col, text) ?? `Not a valid ${col.title}`;
+      const next: Editing = { ...e, draft: text, invalid: why };
+      setEditing(next);
+      ref.current = { ...ref.current, editing: next };
+      showHint(why);
+      return;
+    }
     setEditing(null);
     ref.current = { ...ref.current, editing: null };
     focusPending.current = true;
-    if (col && entry) {
-      const value = parseText(col, draftOverride ?? e.draft);
-      if (value !== NOT_PARSED && !valuesEqual(value, col.getValue(entry.row), col.type)) {
-        applyEdits([{ rowId: e.rowId, key: e.key, value }]);
-      }
+    if (col && entry && !valuesEqual(value, col.getValue(entry.row), col.type)) {
+      applyEdits([{ rowId: e.rowId, key: e.key, value }]);
     }
     if (then === "down") move("down");
     else if (then === "right") move("right", { wrap: true });
@@ -1288,12 +1298,12 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       grid = cur.navRows
         .map((i) => cur.items[i] as RowItem<Row>)
         .filter((it) => cur.selected.includes(it.id))
-        .map((it) => cur.cols.map((c) => formatValue(c.col, c.col.getValue(it.row))));
+        .map((it) => cur.cols.map((c) => copyText(c.col, c.col.getValue(it.row))));
     } else {
       const byRow = new Map<string, string[]>();
       for (const { item, col } of rangeCells()) {
         const list = byRow.get(item.id) ?? [];
-        list.push(formatValue(col, col.getValue(item.row)));
+        list.push(copyText(col, col.getValue(item.row)));
         byRow.set(item.id, list);
       }
       grid = [...byRow.values()];
@@ -1388,7 +1398,9 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
         ref.current = { ...ref.current, editing: null };
         if (col && entry) {
           const value = parseText(col, e.draft);
-          if (value !== NOT_PARSED && !valuesEqual(value, col.getValue(entry.row), col.type)) {
+          if (value === NOT_PARSED) {
+            showHint(`Not saved: ${parseError(col, e.draft) ?? `not a valid ${col.title}`}`);
+          } else if (!valuesEqual(value, col.getValue(entry.row), col.type)) {
             applyEdits([{ rowId: e.rowId, key: e.key, value }]);
           }
         }
@@ -1629,7 +1641,8 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     setDraft(v) {
       const e = ref.current.editing;
       if (e?.kind === "text") {
-        const upd = { ...e, draft: v };
+        const { invalid: _was, ...rest } = e;
+        const upd = { ...rest, draft: v };
         setEditing(upd);
         ref.current = { ...ref.current, editing: upd };
       }
@@ -2340,6 +2353,7 @@ function GridRowImpl<Row>(p: GridRowProps<Row>) {
               value={editing.draft}
               label={c.col.title}
               placeholder={ghost}
+              invalid={editing.invalid}
               onChange={api.setDraft}
             />
           ) : (

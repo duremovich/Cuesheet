@@ -86,6 +86,11 @@ export interface Column<Row> {
    * from the active unit (view → user → show), see features/views/units.ts.
    */
   unit?: Unit;
+  /**
+   * Custom parsing of typed/pasted text (instead of the type's default), e.g. a lens ratio
+   * that accepts "1.5:1". `{error}` refuses the text with that message.
+   */
+  parse?: (text: string) => { value: unknown } | { error: string };
   /** formula: what the result is, for filters and sorting (default text). */
   resultType?: "number" | "text" | "measurement";
 }

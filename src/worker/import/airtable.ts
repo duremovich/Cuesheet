@@ -78,12 +78,18 @@ export function parseAirtableTime(v: string | undefined): number | null {
 
 /** The unit a "Width (Meters)" style header names (meters when it names none). */
 export function headerUnit(header: string): Unit {
+  return headerUnitOrNull(header) ?? "m";
+}
+
+/** The header's unit; null when its parentheses name something that isn't a unit. */
+export function headerUnitOrNull(header: string): Unit | null {
   const u = /\(([^)]*)\)/.exec(header)?.[1]?.trim().toLowerCase() ?? "";
+  if (u === "" || /^(met(er|re)s?|m)$/.test(u)) return "m";
   if (/^(feet|foot|ft)$/.test(u)) return "ft";
   if (/^(inches|inch|in)$/.test(u)) return "in";
   if (/^(centimet(er|re)s?|cm)$/.test(u)) return "cm";
   if (/^(millimet(er|re)s?|mm)$/.test(u)) return "mm";
-  return "m";
+  return null;
 }
 
 /** "CH02.1" → "CH02" (a region's parent channel); null for a top-level channel. */
@@ -159,6 +165,11 @@ export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions
   const surfaceChannel: { id: string; channel: string | null; index: number }[] = [];
   const widthHeader = surfaceHeaders.find((h) => /^width\b/i.test(h.trim()));
   const heightHeader = surfaceHeaders.find((h) => /^height\b/i.test(h.trim()));
+  for (const h of [widthHeader, heightHeader]) {
+    if (h && (byKind.get("surfaces")?.length ?? 0) > 0 && headerUnitOrNull(h) === null) {
+      warnings.add(`Surfaces: "${h}" names no unit Cuesheet knows; read as meters`);
+    }
+  }
   const length = (row: CsvRow, header: string | undefined, name: string | null) => {
     const raw = header ? clean(row[header]) : null;
     if (!raw || !header) return null;
@@ -200,6 +211,11 @@ export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions
   for (const s of surfaceChannel) {
     const pc = s.channel ? parentChannel(s.channel) : null;
     const parentId = pc ? surfaceByChannel.get(pc.toLowerCase()) : undefined;
+    if (pc && !parentId) {
+      warnings.add(
+        `Surfaces: ${s.channel} looks like a region of ${pc}, which isn't in the file; left top-level`,
+      );
+    }
     if (!parentId || parentId === s.id) continue;
     const at = createIndex.get(s.id) as number;
     const op = ops[at];

@@ -1,7 +1,8 @@
 // The surface calculator's math (R12, S2; ux.md §Measurements and the surface calculator).
 // Physical size (meters), pixel size and PPI are tied by  ppi = pixel_width / width_in_inches
-// (square pixels). Two are stored (width, pixel width); PPI is derived. Editing one of the
-// three recomputes another so that the *locked* one stays put:
+// (square pixels). Two are stored (width, pixel width); PPI is derived, and blank until
+// both pixel dimensions are set. Editing one of the three recomputes another so that the
+// *locked* one stays put:
 //
 //   edit ↓ / lock →   physical            pixels              ppi
 //   width             pixels stay (PPI)   pixels stay (PPI)   pixel width follows
@@ -10,9 +11,12 @@
 //
 // (Editing the locked quantity itself behaves as if the other stored one were locked.)
 // Heights work the same way. With the aspect lock on, changing a width scales the height
-// by the same factor (and a height the width), for the physical size and the pixels
-// alike. Pixel counts are rounded to whole pixels. Pure; tested in calc.test.ts.
-import { METERS_PER_INCH } from "../../../shared/units";
+// (and a height the width), for the physical size and the pixels alike. The locked PPI and
+// the aspect ratios are captured when the lock is engaged (`CalcRefs`) and every edit
+// computes from them, so rounding to whole pixels never drifts: going back to a size gives
+// back exactly its pixels. Results outside the stored limits are refused. Pure; tested in
+// calc.test.ts.
+import { MAX_LENGTH_M, MAX_PIXELS, METERS_PER_INCH } from "../../../shared/units";
 
 export type Lock = "physical" | "pixels" | "ppi";
 
@@ -26,24 +30,77 @@ export interface CalcState {
 
 export type CalcField = keyof CalcState | "ppi";
 
+/** Values captured when a lock is engaged; edits compute from these, not the rounded state. */
+export interface CalcRefs {
+  /** The PPI held by the PPI lock. */
+  ppi?: number | null;
+  /** height ÷ width, captured when the aspect lock went on. */
+  aspect?: { physical: number | null; pixels: number | null } | null;
+}
+
+export type CalcResult = Partial<CalcState> | { error: string };
+
 const inches = (m: number) => m / METERS_PER_INCH;
 const meters = (inch: number) => inch * METERS_PER_INCH;
 const px = (n: number) => Math.max(1, Math.round(n));
-const ok = (n: number | null): n is number => n !== null && Number.isFinite(n) && n > 0;
+const ok = (n: number | null | undefined): n is number =>
+  n !== null && n !== undefined && Number.isFinite(n) && n > 0;
 
-/** Pixels per inch (from the width), or null when either side is missing. */
+/** Pixels per inch (from the width); null unless the width and both pixel sides are set. */
 export function ppiOf(s: CalcState): number | null {
-  return ok(s.pixel_width) && ok(s.width) ? s.pixel_width / inches(s.width) : null;
+  return ok(s.pixel_width) && ok(s.pixel_height) && ok(s.width)
+    ? s.pixel_width / inches(s.width)
+    : null;
 }
 
-/** Millimeters per pixel. */
+/** Millimeters per pixel (same conditions as PPI). */
 export function pitchOf(s: CalcState): number | null {
-  return ok(s.pixel_width) && ok(s.width) ? (s.width * 1000) / s.pixel_width : null;
+  return ok(s.pixel_width) && ok(s.pixel_height) && ok(s.width)
+    ? (s.width * 1000) / s.pixel_width
+    : null;
+}
+
+/** height ÷ width of the physical size and of the pixels (to capture for the aspect lock). */
+export function aspectRefs(s: CalcState): { physical: number | null; pixels: number | null } {
+  return {
+    physical: ok(s.width) && ok(s.height) ? s.height / s.width : null,
+    pixels: ok(s.pixel_width) && ok(s.pixel_height) ? s.pixel_height / s.pixel_width : null,
+  };
+}
+
+/** Physical and pixel aspect differ by more than 1% (pixels aren't square). */
+export function nonSquarePixels(s: CalcState): boolean {
+  const a = aspectRefs(s);
+  return a.physical !== null && a.pixels !== null && Math.abs(a.pixels / a.physical - 1) > 0.01;
+}
+
+/** A proposed change within the stored limits, or why not. */
+function checked(s: CalcState, next: CalcState): CalcResult {
+  for (const k of ["width", "height"] as const) {
+    const v = next[k];
+    if (v !== null && v > MAX_LENGTH_M) {
+      return { error: `That would make the ${k} ${Math.round(v)} m (at most ${MAX_LENGTH_M} m)` };
+    }
+  }
+  for (const k of ["pixel_width", "pixel_height"] as const) {
+    const v = next[k];
+    if (v !== null && v > MAX_PIXELS) {
+      return {
+        error: `That would need ${v} pixels (at most ${MAX_PIXELS.toLocaleString("en-US")})`,
+      };
+    }
+  }
+  const out: Partial<CalcState> = {};
+  for (const k of ["width", "height", "pixel_width", "pixel_height"] as const) {
+    if (next[k] !== s[k]) out[k] = next[k];
+  }
+  return out;
 }
 
 /**
  * The stored fields to write after editing `field` to `value` (null clears it), keeping
- * `lock` fixed and, with `aspect`, the width:height ratio. Only changed fields are returned.
+ * `lock` fixed and, with `aspect`, the width:height ratio. Only changed fields are returned;
+ * `{error}` when a result would be out of range (nothing should be written then).
  */
 export function applyCalcEdit(
   s: CalcState,
@@ -51,38 +108,39 @@ export function applyCalcEdit(
   value: number | null,
   lock: Lock,
   aspect: boolean,
-): Partial<CalcState> {
+  refs: CalcRefs = {},
+): CalcResult {
   const next: CalcState = { ...s };
-  const ppi = ppiOf(s);
+  const ppi = ok(refs.ppi) ? refs.ppi : ppiOf(s);
+  const ratios = refs.aspect ?? aspectRefs(s);
   switch (field) {
     case "width":
     case "height": {
-      const other = field === "width" ? "height" : "width";
-      const pxSame = field === "width" ? "pixel_width" : "pixel_height";
-      const pxOther = field === "width" ? "pixel_height" : "pixel_width";
+      const isW = field === "width";
+      const other = isW ? "height" : "width";
+      const pxSame = isW ? "pixel_width" : "pixel_height";
+      const pxOther = isW ? "pixel_height" : "pixel_width";
       next[field] = value;
-      const old = s[field];
-      if (aspect && ok(value) && ok(old) && ok(s[other])) {
-        next[other] = (s[other] * value) / old;
+      if (aspect && ok(value) && ok(ratios.physical)) {
+        next[other] = isW ? value * ratios.physical : value / ratios.physical;
       }
       if (lock === "ppi" && ppi !== null) {
         if (ok(value)) next[pxSame] = px(ppi * inches(value));
-        if (next[other] !== s[other] && ok(next[other])) {
-          next[pxOther] = px(ppi * inches(next[other]));
-        }
+        const o = next[other];
+        if (o !== s[other] && ok(o)) next[pxOther] = px(ppi * inches(o));
       }
       break;
     }
     case "pixel_width":
     case "pixel_height": {
-      const other = field === "pixel_width" ? "pixel_height" : "pixel_width";
-      const lenSame = field === "pixel_width" ? "width" : "height";
-      const lenOther = field === "pixel_width" ? "height" : "width";
-      next[field] = value === null ? null : px(value);
-      const old = s[field];
-      const v = next[field];
-      if (aspect && ok(v) && ok(old) && ok(s[other])) {
-        next[other] = px((s[other] * v) / old);
+      const isW = field === "pixel_width";
+      const other = isW ? "pixel_height" : "pixel_width";
+      const lenSame = isW ? "width" : "height";
+      const lenOther = isW ? "height" : "width";
+      const v = value === null ? null : px(value);
+      next[field] = v;
+      if (aspect && ok(v) && ok(ratios.pixels)) {
+        next[other] = px(isW ? v * ratios.pixels : v / ratios.pixels);
       }
       if (lock === "ppi" && ppi !== null) {
         if (ok(v)) next[lenSame] = meters(v / ppi);
@@ -107,11 +165,18 @@ export function applyCalcEdit(
       break;
     }
   }
-  const out: Partial<CalcState> = {};
-  for (const k of ["width", "height", "pixel_width", "pixel_height"] as const) {
-    if (next[k] !== s[k]) out[k] = next[k];
-  }
-  return out;
+  return checked(s, next);
+}
+
+/** Pixels for the physical size at `ppi` (a region taking its parent's PPI). */
+export function pixelsAtPpi(s: CalcState, ppi: number): CalcResult {
+  if (!ok(ppi) || !ok(s.width)) return { error: "Set the region's width first" };
+  const next: CalcState = {
+    ...s,
+    pixel_width: px(ppi * inches(s.width)),
+    pixel_height: ok(s.height) ? px(ppi * inches(s.height)) : s.pixel_height,
+  };
+  return checked(s, next);
 }
 
 /** The lock a surface starts with: pixels for a region of a parent with a pixel canvas. */

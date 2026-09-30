@@ -118,8 +118,17 @@ test("import → 15 surfaces in meters; ft-in toggle; typing 4'6\" stores meters
   await expect
     .poll(async () => (await surfaces(page, showId)).find((s) => s.name === "L TRUSS WALL")?.width)
     .toBeCloseTo(1.3716, 6);
-  // Bad input stays in the editor and changes nothing.
-  await typeInto(page, cellOf(truss, "height"), "tall");
+  // Refused input keeps the editor open, marked invalid, with the reason; nothing changes.
+  const editor = grid(page).locator('[data-editor="true"]');
+  await typeInto(page, cellOf(truss, "height"), "-3");
+  await expect(editor).toHaveAttribute("aria-invalid", "true");
+  await expect(editor).toHaveValue("-3");
+  await expect(
+    page.getByRole("status").filter({ hasText: "Lengths can't be negative" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await typeInto(page, cellOf(truss, "height"), "2 km");
+  await expect(editor).toHaveAttribute("aria-invalid", "true");
   await page.keyboard.press("Escape");
   await expect(cellOf(truss, "height")).toHaveText("1.50 m");
 
@@ -192,7 +201,7 @@ test("pixel size → PPI, calculator with a PPI lock, regions", async ({ browser
   await t.fill("9");
   await t.press("Enter");
   const l = calc.getByTestId("calc-lens");
-  await l.fill("1.5");
+  await l.fill("1.5:1");
   await l.press("Enter");
   await expect(calc.getByTestId("calc-image-width")).toHaveText("6.00 m");
   await expect(cellOf(lpro, "throw_width")).toHaveText("6.00 m");
@@ -209,6 +218,22 @@ test("pixel size → PPI, calculator with a PPI lock, regions", async ({ browser
     "aria-pressed",
     "true",
   );
+  // "Use parent's PPI" fills the region's pixels from its size at the parent's 20 PPI.
+  await region.getByRole("button", { name: "Use parent's PPI" }).click();
+  await expect(cellOf(top, "pixels")).toHaveText(/^354[34]×1969$/);
+  await expect(cellOf(top, "ppi")).toHaveText("20");
+
+  // The calculator follows the toolbar's unit, live.
+  await unitButton(page, "ft-in").click();
+  await expect(rp.getByTestId("calc-width")).toHaveValue(`14' 9 1/8"`);
+  // An out-of-range result is refused with a message, nothing written.
+  await rp.getByRole("button", { name: "Keep the PPI fixed" }).click();
+  const tw = rp.getByTestId("calc-width");
+  await tw.click();
+  await tw.fill("900 m");
+  await tw.press("Enter");
+  await expect(rp.getByTestId("calc-width-error")).toContainText("pixels");
+  await expect(cellOf(top, "width")).toHaveText(`14' 9 1/8"`);
 });
 
 test("filter width > 4 m, color rule on PPI < 30, show default unit", async ({ browser }) => {
@@ -309,6 +334,9 @@ test("scenes ↔ surfaces link chips; parent/child cycles refused", async ({ bro
 test("surfaces at 390px: grid and calculator fit", async ({ browser }) => {
   const { page } = await surfaceShow(browser, { width: 390, height: 844 });
   await expect(page.getByTestId("row-count")).toHaveText("15 surfaces");
+  // Channel hides at phone width (Fields can show it again).
+  await expect(grid(page).getByRole("columnheader", { name: "Name" })).toBeVisible();
+  await expect(grid(page).getByRole("columnheader", { name: "Channel" })).toHaveCount(0);
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   );
