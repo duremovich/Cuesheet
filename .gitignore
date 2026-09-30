@@ -3,3 +3,6 @@ Thumbs.db
 *.swp
 .vscode/
 .idea/
+
+# Agent worktrees (nested checkouts, never commit)
+.claude/worktrees/
