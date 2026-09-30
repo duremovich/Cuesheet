@@ -1,0 +1,52 @@
+{
+  "name": "cuesheet",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm db:migrate:local && vite dev",
+    "build": "vite build",
+    "preview": "pnpm build && pnpm db:migrate:local && vite preview",
+    "typecheck": "tsc -b",
+    "lint": "biome check --error-on-warnings .",
+    "format": "biome check --write .",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "check": "pnpm typecheck && pnpm lint && pnpm test",
+    "db:generate": "drizzle-kit generate --config drizzle.d1.config.ts && drizzle-kit generate --config drizzle.do.config.ts",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "cf-typegen": "wrangler types src/worker/worker-configuration.d.ts"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.3",
+    "hono": "^4.13.11",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-router": "^7.18.4"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.14",
+    "@cloudflare/vite-plugin": "^1.62.2",
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "@playwright/test": "1.56.1",
+    "@types/node": "^22.20.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "drizzle-kit": "^0.31.11",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.1",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.144.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "workerd"
+    ]
+  }
+}

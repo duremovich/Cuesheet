@@ -1,0 +1,129 @@
+/*
+ * Theme tokens. Every color in the app comes from these variables; never hardcode colors
+ * in components. Dark is the default; <html data-theme="light"> switches to light.
+ * The choice is made before first paint by the inline script in index.html: the user's
+ * stored choice, otherwise dark. The system color scheme (prefers-color-scheme) is ignored.
+ * See src/web/lib/theme.ts.
+ *
+ * Contrast: text / text-muted / status colors / option fg-on-bg pairs meet WCAG AA (4.5:1)
+ * on bg, surface and surface-raised in both themes. Dark surfaces are never pure black or
+ * white; pure white surfaces are intended in LIGHT mode only. src/web/styles/theme.test.ts
+ * checks all of this; keep it passing when you change a value.
+ */
+
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Background layers, darkest to lightest: each step up is "closer" to the viewer. */
+  --color-bg-sunken: #141619; /* inputs, wells */
+  --color-bg: #181a1e; /* page */
+  --color-surface: #202328; /* header, cards, panels */
+  --color-surface-raised: #2a2e34; /* popovers, menus, hovered rows */
+  --color-surface-hover: #31363d;
+
+  --color-border: #3a3f47;
+  --color-border-strong: #505762;
+
+  --color-text: #e7e9ec;
+  --color-text-muted: #a4abb5;
+  --color-text-on-accent: #0e1726;
+
+  --color-accent: #6ea8fe;
+  --color-accent-hover: #8cbbff;
+  --color-accent-subtle: #1e2f4a;
+  --color-focus-ring: #8cbbff;
+
+  --color-danger: #ff8a80;
+  --color-danger-subtle: #3d1f1f;
+  --color-warning: #f0c05a;
+  --color-warning-subtle: #3a3020;
+  --color-success: #6fd388;
+  --color-success-subtle: #1d3526;
+
+  /* Select-option chips (single/multi select fields in M1+). fg on bg is AA in both themes. */
+  --option-gray-bg: #3a3f47;
+  --option-gray-fg: #e7e9ec;
+  --option-red-bg: #4a2323;
+  --option-red-fg: #ffb4ab;
+  --option-orange-bg: #4a2f1a;
+  --option-orange-fg: #ffc38a;
+  --option-yellow-bg: #463c17;
+  --option-yellow-fg: #f5dc85;
+  --option-green-bg: #1f3d29;
+  --option-green-fg: #9be2ad;
+  --option-teal-bg: #183d3d;
+  --option-teal-fg: #8fe0dc;
+  --option-blue-bg: #1e3350;
+  --option-blue-fg: #a9cbff;
+  --option-purple-bg: #362a52;
+  --option-purple-fg: #d2bfff;
+  --option-pink-bg: #4a2440;
+  --option-pink-fg: #ffb0e0;
+
+  --shadow-raised: 0 4px 16px rgb(0 0 0 / 0.45);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --color-bg-sunken: #eceef1;
+  --color-bg: #f5f6f8;
+  --color-surface: #ffffff;
+  --color-surface-raised: #ffffff;
+  --color-surface-hover: #eef1f5;
+
+  --color-border: #d6dae0;
+  --color-border-strong: #b3bac4;
+
+  --color-text: #1c2026;
+  --color-text-muted: #565f6b;
+  --color-text-on-accent: #ffffff;
+
+  --color-accent: #1f63d6;
+  --color-accent-hover: #1850b0;
+  --color-accent-subtle: #e3edfd;
+  --color-focus-ring: #1f63d6;
+
+  --color-danger: #b3261e;
+  --color-danger-subtle: #fbe9e8;
+  --color-warning: #8a5a00;
+  --color-warning-subtle: #fdf3dc;
+  --color-success: #1b7a36;
+  --color-success-subtle: #e4f5e8;
+
+  --option-gray-bg: #e8eaed;
+  --option-gray-fg: #3a404a;
+  --option-red-bg: #fde2e0;
+  --option-red-fg: #8c1d18;
+  --option-orange-bg: #feead7;
+  --option-orange-fg: #8a4200;
+  --option-yellow-bg: #fcf1c7;
+  --option-yellow-fg: #6b5000;
+  --option-green-bg: #dcf3e2;
+  --option-green-fg: #16622c;
+  --option-teal-bg: #d6f2f0;
+  --option-teal-fg: #0f5e5a;
+  --option-blue-bg: #dde9fd;
+  --option-blue-fg: #1848a0;
+  --option-purple-bg: #ebe3fc;
+  --option-purple-fg: #5b30a6;
+  --option-pink-bg: #fce1f1;
+  --option-pink-fg: #8e1f63;
+
+  --shadow-raised: 0 4px 16px rgb(20 30 50 / 0.12);
+}
+
+:root {
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+}

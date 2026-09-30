@@ -1,0 +1,4 @@
+# Copy to .dev.vars (git-ignored). Read by `pnpm dev`, `pnpm preview` and the e2e server.
+# On first request, if no users exist, this account is created as the admin.
+ADMIN_EMAIL=admin@cuesheet.test
+ADMIN_PASSWORD=change-me-please

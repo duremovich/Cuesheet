@@ -1,0 +1,31 @@
+// Cloudflare Worker configuration. See docs/decisions/0005-cloudflare-platform.md.
+// Local dev and tests run entirely under workerd/miniflare; nothing here is deployed
+// from the sandbox. Real IDs for D1/R2 get filled in when we first deploy.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cuesheet",
+  "main": "./src/worker/index.ts",
+  "compatibility_date": "2026-08-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "not_found_handling": "single-page-application",
+    // API routes always hit the Worker, even when a request looks like a navigation.
+    "run_worker_first": ["/api/*"]
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "SHOW", "class_name": "ShowDO" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ShowDO"] }],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "cuesheet",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "src/worker/db/d1/migrations"
+    }
+  ],
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "cuesheet-files" }],
+  "observability": { "enabled": true },
+  // Outbound to *.cloudflare.com is blocked in the sandbox; never phone home.
+  "send_metrics": false
+}
