@@ -296,8 +296,11 @@ views" below).
   in the same batch, server-side, mirrored optimistically in `show-state.ts`), `position`,
   `config` (JSON, field type `json`, validated by `viewConfigError`). It's a normal table in
   the op engine (`TABLE_NAMES` includes `views`; `DATA_TABLES` is the five data tables, used
-  for "show has data" and what a view can be for). The snapshot carries every view, other
-  members' personal ones too (the UI shows only yours). **Defaults:** `seedDefaultViews`
+  for "show has data" and what a view can be for). **Personal views are private:**
+  `GET /snapshot` (`snapshotJson(userId)`) and `/history` return shared views plus the
+  caller's own; the DO sends ops on a personal view only to its owner's sockets (tagged by
+  user id) and everyone else gets the same `ops` message without them (possibly empty), so
+  versions stay gap-free (`Batch.viewOwners`, `ShowDO.broadcastBatch`). **Defaults:** `seedDefaultViews`
   runs when the DO starts and gives every data table without a shared view one shared
   default ("All cues" grouped by scene, "All notes" by status, "All content" by scene,
   scenes/people ungrouped) without logging a change or bumping the version, so old shows get
@@ -316,17 +319,25 @@ views" below).
   `rows`/`groups`, `sort`, `rowHeight`, `colorRules`, `collapsed`, `onColumnResize`) plus
   the `toolbar` (`ViewBar`: switcher + Filter/Sort/Group/Fields/Row height/Color popovers).
   `evaluate.ts` compiles filters and color rules against `Column.getValue` (typed: numbers,
-  cue numbers as decimals, dates for `dateFields`, selects by value, links by **label**);
-  incomplete filters are skipped. `grouping.ts` groups by any select/multiselect/link/
+  cue numbers as decimals, dates for `dateFields`, selects by value, links by **record id**
+  with `Filter.labels` caching the picked labels for display, so renames don't break
+  filters; `contains` on a link matches labels); incomplete filters are skipped. Filters
+  saved with labels (before ids) are resolved to ids on read (`migrateLinkFilters`: the
+  rows' links, then the column's picker search) and stored as ids on the next save.
+  Sorts may use hidden columns: the hook passes every column as the grid's `sortColumns`. `grouping.ts` groups by any select/multiselect/link/
   multilink (empty group first; multi-valued fields group by combination); the tab's own
   groups are used when the view groups by its `nativeGroupKey`
   (`views/tableDefaults.ts`: cues/content → scene, notes → status). A filter hides groups
   left empty. Inserting/dragging into a view-made group maps the position to a neighbour
   (`mapPosition`) and sets the field with the tab's edit ops (`groupOps`).
-- **Saving.** Personal views save as you go (debounced 400 ms). A shared view changed by an
-  editor is a draft (`drafts.ts`, in memory) until **Save view** / **Discard**; a viewer or
-  commenter changing a shared view gets a personal copy ("<name> (mine)", toast "Saved as my
-  view"). Column resizes are view changes too.
+- **Saving.** Personal views save as you go (debounced 400 ms; flushed on leaving the tab
+  or page). A shared view changed by an editor is a draft (`drafts.ts`, also in
+  localStorage `cuesheet.viewdraft.<user>.<show>.<view>`, so it survives a reload with
+  "Unsaved changes") until **Save view** / **Discard**. Viewers/commenters on a shared view:
+  column widths and frozen count are their own localStorage overlay
+  (`cuesheet.viewlayout.<user>.<show>.<view>`, `differsOnlyInLayout`), never a copy; any
+  other change (filter, sort, group, hidden fields, row height, color) makes a personal copy
+  ("<name> (mine)", toast "Saved as my view").
 - **Filter holds.** A row you insert or are editing stays visible while it's the active row
   even if it no longer matches; when you leave it (another row, or focus leaves the grid and
   its pickers) it's hidden and a toast "Hidden by the current filter" offers **Undo

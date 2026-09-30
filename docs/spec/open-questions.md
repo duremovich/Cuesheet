@@ -88,24 +88,11 @@ Things the first build had to decide; each is easy to change.
 
 ## Saved views (M2a decisions to confirm)
 
-- **Who sees personal views.** The snapshot and broadcasts carry every member's personal
-  views (the UI lists only your own). Fine for a small team; filter them per user on the
-  server if they should be private.
-- **Saving.** Personal views save as you change them; a shared view changed by an editor
-  is a draft with Save / Discard (lost on reload). Should editors' changes to shared views
-  save immediately instead (Airtable-style)?
-- **Viewers' copies.** Any change a viewer/commenter makes to a shared view, including a
-  column resize, creates "<name> (mine)". Is a resize too small a reason?
-- **Filters on links match by label** ("Scene is 105 Backstage"): renaming the record
-  breaks the filter. Store ids instead?
 - **Filtered groups.** With a filter on, groups left empty are hidden (the Unassigned group
   too). "Undo filter" in the "Hidden by the current filter" toast clears all the view's
   filters, not just the last one.
 - **A table always has a shared view.** The DO recreates the default when a table has no
   shared view left (the UI won't delete the last one either).
-- **Sorting by a hidden column** is ignored (the grid sorts by visible columns).
-- **Multi-valued grouping** (notes by assignee) groups by the exact combination ("Alice,
-  Bob" is its own group), like Airtable. Should a note appear under each assignee instead?
 
 ## Infrastructure
 
@@ -135,3 +122,9 @@ Things the first build had to decide; each is easy to change.
 - **Tech entry**: laptop at the tech table and phone/tablet. → R7
 - **Also needed**: script view with cue placement and version re-anchoring (R20), shot
   lists (R14), calculations and unit conversion (R11, R12), images on surfaces (R13).
+- **Saved views (M2a)** → CLAUDE.md "Saved views": personal views are private (snapshot,
+  history and broadcasts are per user); an editor's unsaved changes to a shared view are a
+  draft kept in the browser until Save/Discard; viewers' column widths and frozen columns
+  are a per-browser overlay, other changes make a personal copy; link filters store record
+  ids (renames keep working); multi-valued grouping groups by combination (Airtable-style,
+  for now); sorting by a hidden column is allowed.

@@ -40,8 +40,13 @@ export interface Filter {
   /** A column key of the table's grid (or one of its extra filter fields). */
   key: string;
   op: FilterOp;
-  /** string (text, select value, link label, date `YYYY-MM-DD`), number, or string[]. */
+  /**
+   * string (text, select value, date `YYYY-MM-DD`, a linked record's **id** for link
+   * fields; `contains` on a link matches its label), number, or string[] (ids for links).
+   */
   value?: unknown;
+  /** Link filters: record id → label when picked, for display (the id does the matching). */
+  labels?: Record<string, string>;
 }
 
 export type MatchMode = "and" | "or";
@@ -92,6 +97,7 @@ export const MAX_FIELDS = 200;
 const MAX_KEY = 64;
 const MAX_VALUE_CHARS = 1000;
 const MAX_LIST = 200;
+const RESERVED_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
@@ -106,6 +112,21 @@ function filterError(f: unknown, where: string): string | null {
   if (!isKey(f.key)) return `${where}.key must be a field key`;
   if (!(FILTER_OPS as readonly string[]).includes(f.op as string)) {
     return `${where}.op is not a filter operator`;
+  }
+  if (f.labels !== undefined) {
+    if (!isObject(f.labels)) return `${where}.labels must be an object`;
+    const entries = Object.entries(f.labels);
+    if (entries.length > MAX_LIST) return `${where}.labels has too many entries`;
+    for (const [k, l] of entries) {
+      if (
+        RESERVED_KEYS.has(k) ||
+        k.length > MAX_KEY ||
+        typeof l !== "string" ||
+        l.length > MAX_VALUE_CHARS
+      ) {
+        return `${where}.labels must map ids to text`;
+      }
+    }
   }
   const v = f.value;
   if (v === undefined || v === null) return null;

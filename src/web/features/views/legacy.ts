@@ -21,6 +21,10 @@ export const legacyKey = {
 export const collapsedKey = (userId: string, showId: string, viewId: string) =>
   `cuesheet.collapsed.${userId}.${showId}.view.${viewId}`;
 
+/** A viewer's/commenter's own column widths + frozen count on a shared view. */
+export const layoutKey = (userId: string, showId: string, viewId: string) =>
+  `cuesheet.viewlayout.${userId}.${showId}.${viewId}`;
+
 /** Last view opened per user, show and table (used when the URL names none). */
 export const lastViewKey = (userId: string, showId: string, table: string) =>
   `cuesheet.view.${userId}.${showId}.${table}`;

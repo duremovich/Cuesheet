@@ -241,8 +241,8 @@ test("a viewer changing a shared view gets their own copy; the shared one is unc
   await addStatusFilter(viewer, "Cued");
   await expect.poll(() => shownNumbers(viewer)).toEqual(CUED);
 
-  const views = async () => {
-    const res = await owner.request.get(`/api/shows/${showId}/snapshot`);
+  const views = async (as: Page = viewer) => {
+    const res = await as.request.get(`/api/shows/${showId}/snapshot`);
     return (
       (await res.json()) as {
         tables: {
@@ -263,11 +263,160 @@ test("a viewer changing a shared view gets their own copy; the shared one is unc
   const shared = list.find((v) => v.name === "All cues");
   expect(shared?.config).toMatchObject({ rowHeight: "normal", filters: [] });
   expect(list.find((v) => v.name === "All cues (mine)")?.config.rowHeight).toBe("tall");
+  // Personal views are private: the owner's snapshot doesn't carry the viewer's copy.
+  expect((await views(owner)).map((v) => v.name)).toEqual(["All cues"]);
 
   // The owner still sees the shared view as it was.
   await owner.reload();
   await expect(owner.getByTestId("current-view")).toHaveText("All cues");
   await expect(owner.getByTestId("cue-count")).toHaveText("120 cues");
+});
+
+test("a viewer's column widths and frozen columns are theirs, without copying the view", async ({
+  browser,
+}) => {
+  const { page: owner, showId } = await exampleShow(browser);
+  const { page: viewer } = await addMember(browser, owner, showId, "viewer");
+  pages.push(viewer);
+  trackErrors(viewer, errors);
+  await openCues(viewer, showId);
+  const header = grid(viewer).getByRole("columnheader", { name: /^Description/ });
+  const before = (await header.boundingBox())?.width ?? 0;
+  const resizer = grid(viewer).getByRole("separator", { name: "Resize Description column" });
+  await resizer.focus();
+  await viewer.keyboard.press("Shift+ArrowRight");
+  await viewer.keyboard.press("Shift+ArrowRight");
+  await expect
+    .poll(async () => (await header.boundingBox())?.width ?? 0)
+    .toBeGreaterThan(before + 60);
+
+  const fields = await openPanel(viewer, "Fields");
+  await fields.getByLabel("Frozen columns").fill("2");
+  await closePanel(viewer, "Fields");
+  await expect(grid(viewer).getByRole("columnheader", { name: /^Description/ })).toHaveAttribute(
+    "data-frozen",
+    "true",
+  );
+  // Still the shared view, no copy.
+  await expect(viewer.getByTestId("current-view")).toHaveText("All cues");
+  await expect(viewer.getByTestId("toast").filter({ hasText: "Saved as my view" })).toHaveCount(0);
+
+  await viewer.reload();
+  await expect(viewer.getByTestId("current-view")).toHaveText("All cues");
+  await expect
+    .poll(async () => (await header.boundingBox())?.width ?? 0)
+    .toBeGreaterThan(before + 60);
+  await expect(header).toHaveAttribute("data-frozen", "true");
+  const snap = await owner.request.get(`/api/shows/${showId}/snapshot`);
+  const views = ((await snap.json()) as { tables: { views: { table: string }[] } }).tables.views;
+  expect(views.filter((v) => v.table === "cues")).toHaveLength(1);
+  // The owner's layout is untouched.
+  await owner.reload();
+  await expect(grid(owner).getByRole("columnheader", { name: /^Description/ })).not.toHaveAttribute(
+    "data-frozen",
+    "true",
+  );
+});
+
+test("an editor's unsaved changes to a shared view survive a reload until discarded", async ({
+  browser,
+}) => {
+  const { page } = await exampleShow(browser);
+  await addStatusFilter(page, "Cued");
+  await expect(page.getByTestId("view-dirty")).toBeVisible();
+  await expect(page.getByTestId("cue-count")).toHaveText("3 of 120 cues");
+  await page.reload();
+  await expect(page.getByTestId("view-dirty")).toBeVisible();
+  await expect(page.getByTestId("cue-count")).toHaveText("3 of 120 cues");
+  await page.getByRole("button", { name: "Discard" }).click();
+  await expect(page.getByTestId("view-dirty")).toHaveCount(0);
+  await expect(page.getByTestId("cue-count")).toHaveText("120 cues");
+  await page.reload();
+  await expect(grid(page).getByTestId("grid-row").first()).toBeVisible();
+  await expect(page.getByTestId("view-dirty")).toHaveCount(0);
+  await expect(page.getByTestId("cue-count")).toHaveText("120 cues");
+});
+
+test("a link filter keeps working when the record is renamed; sorting by a hidden field", async ({
+  browser,
+}) => {
+  const { page, showId } = await exampleShow(browser);
+  await duplicateView(page, "By scene");
+  const d = await openPanel(page, "Filter");
+  await d.getByRole("button", { name: "+ Add filter" }).click();
+  await d.getByLabel("Filter 1 field").selectOption({ label: "Scene" });
+  await d.getByLabel("Filter 1 operator").selectOption("is");
+  const value = d.getByLabel("Filter 1 value");
+  const sceneId = await value.locator("option").nth(1).getAttribute("value");
+  await value.selectOption({ index: 1 });
+  await closePanel(page, "Filter");
+  const count = page.getByTestId("cue-count");
+  await expect(count).toHaveText(/ of 120 cues$/);
+  const filtered = await count.textContent();
+
+  // Saved with the scene's id (and its label for display).
+  await expect
+    .poll(async () => {
+      const saved = await page.request.get(`/api/shows/${showId}/snapshot`);
+      const view = (
+        (await saved.json()) as {
+          tables: { views: { name: string; config: { filters: { value: unknown }[] } }[] };
+        }
+      ).tables.views.find((v) => v.name === "By scene");
+      return view?.config.filters[0]?.value;
+    })
+    .toBe(sceneId);
+
+  // Rename the scene elsewhere (the API): the filter holds the id, so nothing changes.
+  const res = await page.request.post(`/api/shows/${showId}/mutate`, {
+    data: {
+      clientId: "e2e",
+      ops: [{ op: "update", table: "scenes", id: sceneId, fields: { name: "Renamed" } }],
+    },
+  });
+  expect(res.status()).toBe(200);
+  await page.reload();
+  await expect(count).toHaveText(filtered ?? "");
+
+  // Sort by cue number descending, then hide the Cue column: still sorted by it.
+  const sort = await openPanel(page, "Sort");
+  await sort.getByRole("button", { name: "+ Add sort" }).click();
+  await sort.getByLabel("Sort 1 field").selectOption({ label: "Cue" });
+  await sort.getByLabel("Sort 1 direction").selectOption("desc");
+  await closePanel(page, "Sort");
+  const numbersBefore = await shownNumbers(page);
+  const numeric = numbersBefore.map(Number.parseFloat);
+  expect(numeric).toEqual([...numeric].sort((a, b) => b - a));
+  const descBefore = await rows(page).locator('[data-col="description"]').allTextContents();
+  const fields = await openPanel(page, "Fields");
+  await fields.getByRole("checkbox", { name: "Cue", exact: true }).uncheck();
+  await closePanel(page, "Fields");
+  await expect(grid(page).getByRole("columnheader", { name: /^Cue\b/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Sort", exact: true })).toHaveText("Sorted by Cue");
+  // Same rows in the same (descending cue number) order with the Cue column hidden.
+  await expect
+    .poll(() => rows(page).locator('[data-col="description"]').allTextContents())
+    .toEqual(descBefore);
+  await expect
+    .poll(async () => {
+      const saved = await page.request.get(`/api/shows/${showId}/snapshot`);
+      const v = (
+        (await saved.json()) as {
+          tables: {
+            views: {
+              name: string;
+              config: { sorts: unknown[]; fields: { key: string; hidden?: boolean }[] };
+            }[];
+          };
+        }
+      ).tables.views.find((x) => x.name === "By scene");
+      return [v?.config.sorts.length, v?.config.fields.find((f) => f.key === "number")?.hidden];
+    })
+    .toEqual([1, true]);
+  await page.reload();
+  await expect
+    .poll(() => rows(page).locator('[data-col="description"]').allTextContents())
+    .toEqual(descBefore);
 });
 
 test("notes can be grouped by assignee", async ({ browser }) => {

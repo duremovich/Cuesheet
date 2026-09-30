@@ -50,7 +50,8 @@ to try on the **Cues** tab:
   height** and **Color** panels. Try *Filter → Status is Cued*, *Color → + Cues by status*,
   hiding a column in *Fields*, or *Group → Assignees* on the Notes tab. Personal views save
   as you go; changes to a shared view show **Unsaved changes** with Save / Discard
-  (editors), and a viewer who changes one gets their own copy.
+  (editors, kept across reloads), and a viewer who changes one gets their own copy (column
+  widths and frozen columns just stay theirs). Personal views are visible only to you.
 - Drag a row by the handle on its row number into another scene: its scene changes.
 - In a **Content** cell type a new name and pick **Create "…"**: it's created in the cue's
   scene with the `SSS-NNN-` prefix and shows up on the Content tab.

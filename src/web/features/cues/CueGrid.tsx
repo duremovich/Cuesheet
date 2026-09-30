@@ -122,7 +122,7 @@ export function CueGrid() {
   const prevHints = useRef<Map<string, CellDecoration>>(new Map());
   const hints = useMemo(() => {
     const display = (shownGroups ?? [{ rows: shownRows ?? [] }]).flatMap((g) =>
-      sort ? sortRows(g.rows, sort, vc.columns) : g.rows,
+      sort ? sortRows(g.rows, sort, baseColumns) : g.rows,
     );
     const next = cueNumberHints(
       display.map((v) => ({
@@ -136,7 +136,7 @@ export function CueGrid() {
     if (hintsEqual(prevHints.current, next)) return prevHints.current;
     prevHints.current = next;
     return next;
-  }, [shownGroups, shownRows, sort, vc.columns]);
+  }, [shownGroups, shownRows, sort, baseColumns]);
   const cellDecoration = useCallback(
     (v: CueView, key: string) => (key === "number" ? hints.get(v.id) : undefined),
     [hints],
@@ -337,6 +337,7 @@ export function CueGrid() {
           isSection={(v) => v.cue.is_section}
           sectionLabelKey="description"
           sort={sort}
+          sortColumns={vc.sortColumns}
           rowHeight={vc.rowHeight}
           colorRules={vc.colorRules}
           cellDecoration={cellDecoration}

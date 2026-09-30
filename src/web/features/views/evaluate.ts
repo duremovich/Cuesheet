@@ -1,6 +1,8 @@
 // Evaluating a saved view's config on the client (R16, R17): filters, color rules and the
 // field layout, all over the grid's columns (`Column.getValue` gives typed values, see the
 // grid README "Value shapes"). Pure; unit-tested in evaluate.test.ts.
+
+import { isValidId } from "../../../shared/ids";
 import type {
   Filter,
   FilterOp,
@@ -11,6 +13,7 @@ import type {
 import { LIST_OPS, VALUELESS_OPS } from "../../../shared/views";
 import { isEmptyValue } from "../../components/grid/ordering";
 import type { ColorRule, Column, ColumnType, PickerItem } from "../../components/grid/types";
+import { jsonEqual } from "../../lib/show-state";
 
 /**
  * A field a view can filter, color or group by: a grid column, or an extra field that
@@ -139,6 +142,57 @@ function items(f: FieldDef<unknown>, v: unknown): string[] {
   }
 }
 
+/** A link/multilink value as a list of picker items. */
+export function linkItems(v: unknown): PickerItem[] {
+  if (Array.isArray(v)) return v as PickerItem[];
+  return v ? [v as PickerItem] : [];
+}
+
+/** A link filter value (an id; or, not yet resolved, a label) matches a linked record. */
+function itemMatches(p: PickerItem, x: string): boolean {
+  return p.id === x || (!isValidId(x) && norm(p.label) === norm(x));
+}
+
+const ID_OPS = new Set<FilterOp>(["is", "isNot", "anyOf", "noneOf"]);
+
+/**
+ * Link filters saved with labels (before they stored ids) → ids, resolving each label once
+ * against the records `lookup` knows (the linked records in the rows, then the column's
+ * picker search). Unresolvable labels stay (they still match by label). Returns `config`
+ * itself when nothing changed.
+ */
+export function migrateLinkFilters<V>(
+  config: ViewConfig,
+  fields: ReadonlyMap<string, FieldDef<V>>,
+  lookup: (field: FieldDef<V>, label: string) => PickerItem | undefined,
+): ViewConfig {
+  let changed = false;
+  const fix = (f: Filter): Filter => {
+    const field = fields.get(f.key);
+    if (!field || fieldKind(field) !== "link" || !ID_OPS.has(f.op)) return f;
+    const values = Array.isArray(f.value) ? f.value : typeof f.value === "string" ? [f.value] : [];
+    const labels: Record<string, string> = { ...(f.labels ?? {}) };
+    let touched = false;
+    const next = values.map((x) => {
+      if (typeof x !== "string" || isValidId(x)) return x;
+      const hit = lookup(field, x);
+      if (!hit) return x;
+      touched = true;
+      labels[hit.id] = hit.label;
+      return hit.id;
+    });
+    if (!touched) return f;
+    changed = true;
+    return { ...f, value: Array.isArray(f.value) ? next : next[0], labels };
+  };
+  const filters = config.filters.map(fix);
+  const colorRules = config.colorRules.map((r) => {
+    const when = r.when.map(fix);
+    return when.every((w, i) => w === r.when[i]) ? r : { ...r, when };
+  });
+  return changed ? { ...config, filters, colorRules } : config;
+}
+
 /** Local midnight of a `YYYY-MM-DD` value, or NaN. */
 export function dayStart(value: unknown): number {
   if (typeof value !== "string") return Number.NaN;
@@ -178,7 +232,31 @@ export function matchesFilter<V>(f: FieldDef<V>, row: V, filter: Filter): boolea
   const list = LIST_OPS.has(op) ? (Array.isArray(value) ? value.map(String) : []) : [];
   const target = typeof value === "number" ? String(value) : typeof value === "string" ? value : "";
 
-  if (kind === "select" || kind === "multi" || kind === "link") {
+  if (kind === "link") {
+    // Values are record ids (a label only in a filter saved before ids and not yet
+    // resolved); `contains` matches labels.
+    const picked = linkItems(raw);
+    const has = (x: string) => picked.some((p) => itemMatches(p, x));
+    const t = norm(target);
+    switch (op) {
+      case "is":
+        return has(target);
+      case "isNot":
+        return !has(target);
+      case "contains":
+        return picked.some((p) => norm(p.label).includes(t));
+      case "notContains":
+        return !picked.some((p) => norm(p.label).includes(t));
+      case "anyOf":
+        return list.some(has);
+      case "noneOf":
+        return !list.some(has);
+      default:
+        return false;
+    }
+  }
+
+  if (kind === "select" || kind === "multi") {
     const its = items(f as FieldDef<unknown>, raw).map(norm);
     const t = norm(target);
     switch (op) {
@@ -353,13 +431,65 @@ export function withFieldOrder<V>(
     });
 }
 
-/** The grid's `sort` prop: the view's sorts over visible columns when the sort is live. */
+/** The grid's `sort` prop: the view's sorts (hidden columns too) when the sort is live. */
 export function gridSort<V>(
   config: ViewConfig,
-  visible: readonly Column<V>[],
+  columns: readonly Column<V>[],
 ): { key: string; dir: "asc" | "desc" }[] | undefined {
   if (config.sortMode !== "live") return undefined;
-  const keys = new Set(visible.map((c) => c.key));
+  const keys = new Set(columns.map((c) => c.key));
   const sorts = config.sorts.filter((s) => keys.has(s.key));
   return sorts.length ? sorts : undefined;
+}
+
+/**
+ * A viewer's/commenter's own column widths and frozen count on a shared view (kept in
+ * their browser, never forking the view).
+ */
+export interface LayoutOverlay {
+  widths: Record<string, number>;
+  frozenCount?: number;
+}
+
+/** `config` with the overlay's widths and frozen count; column order stays as it was. */
+export function applyLayoutOverlay(
+  config: ViewConfig,
+  overlay: LayoutOverlay,
+  columnKeys: readonly string[],
+): ViewConfig {
+  const listed = new Set(config.fields.map((f) => f.key));
+  const needsAll = Object.keys(overlay.widths).some((k) => !listed.has(k));
+  const all = needsAll
+    ? [...config.fields, ...columnKeys.filter((k) => !listed.has(k)).map((key) => ({ key }))]
+    : config.fields;
+  const fields = all.map((f) => {
+    const width = overlay.widths[f.key];
+    return width ? { ...f, width } : f;
+  });
+  return {
+    ...config,
+    fields,
+    ...(overlay.frozenCount !== undefined ? { frozenCount: overlay.frozenCount } : {}),
+  };
+}
+
+/** The widths and frozen count a config sets (to store as an overlay). */
+export function layoutOverlayOf(config: ViewConfig): LayoutOverlay {
+  const widths: Record<string, number> = {};
+  for (const f of config.fields) if (f.width) widths[f.key] = f.width;
+  return { widths, frozenCount: config.frozenCount };
+}
+
+/** Do two configs differ only in column widths and frozen count? */
+export function differsOnlyInLayout<V>(
+  a: ViewConfig,
+  b: ViewConfig,
+  columns: readonly Column<V>[],
+): boolean {
+  const strip = (c: ViewConfig) => ({
+    ...c,
+    frozenCount: 0,
+    fields: fieldList(columns, c).map((f) => ({ key: f.key, hidden: f.hidden })),
+  });
+  return jsonEqual(strip(a), strip(b));
 }

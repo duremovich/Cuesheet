@@ -214,6 +214,7 @@ export function TableGrid<V>(config: TableConfig<V>) {
           rowId={config.rowId}
           {...(view.groups ? { groups: view.groups } : { rows: view.rows ?? [] })}
           sort={view.sort}
+          sortColumns={view.sortColumns}
           rowHeight={view.rowHeight}
           colorRules={view.colorRules}
           collapsed={view.collapsed}

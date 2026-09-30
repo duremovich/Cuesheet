@@ -3,15 +3,19 @@ import type { Filter } from "../../../shared/views";
 import { defaultViewConfig } from "../../../shared/views";
 import type { ColorRule, Column, PickerItem } from "../../components/grid/types";
 import {
+  applyLayoutOverlay,
   compareScalar,
   compileFilters,
+  differsOnlyInLayout,
   type FieldDef,
   fieldList,
   gridColorRules,
   gridSort,
   isComplete,
   layoutColumns,
+  layoutOverlayOf,
   matchesFilter,
+  migrateLinkFilters,
   opsFor,
   withFieldOrder,
 } from "./evaluate";
@@ -301,7 +305,7 @@ describe("layout and sort", () => {
     ]);
   });
 
-  it("gridSort applies only in live mode and only over visible columns", () => {
+  it("gridSort applies only in live mode, over known columns (hidden ones too)", () => {
     const base = defaultViewConfig("cues");
     const sorts = [
       { key: "number", dir: "asc" as const },
@@ -311,5 +315,92 @@ describe("layout and sort", () => {
     expect(gridSort({ ...base, sorts, sortMode: "live" }, cols)).toEqual(sorts);
     expect(gridSort({ ...base, sorts, sortMode: "live" }, cols.slice(0, 1))).toEqual([sorts[0]]);
     expect(gridSort({ ...base, sorts: [], sortMode: "live" }, cols)).toBeUndefined();
+  });
+});
+
+describe("link filters store ids", () => {
+  const SCENE_ID = "0190a1b2-0000-7000-8000-000000000001";
+  const withScene = (label: string) => row({ scene: { id: SCENE_ID, label } });
+
+  it("match by id, so renaming the record keeps the filter working", () => {
+    const f: Filter = { key: "scene", op: "is", value: SCENE_ID, labels: { [SCENE_ID]: "105" } };
+    expect(matchesFilter(F.scene, withScene("105 Backstage"), f)).toBe(true);
+    expect(matchesFilter(F.scene, withScene("105 Renamed"), f)).toBe(true);
+    const other = row({ scene: { id: "other", label: "105 Backstage" } });
+    expect(matchesFilter(F.scene, other, f)).toBe(false);
+    const any: Filter = { key: "scene", op: "anyOf", value: [SCENE_ID] };
+    expect(matchesFilter(F.scene, withScene("x"), any)).toBe(true);
+  });
+
+  it("migrates label filters to ids once, caching the label; unknown labels stay", () => {
+    const config = {
+      ...defaultViewConfig("notes"),
+      filters: [
+        { key: "scene", op: "is", value: "105 backstage" },
+        { key: "people", op: "anyOf", value: ["Alice", "Nobody"] },
+        { key: "body", op: "contains", value: "grunge" },
+      ] as Filter[],
+      colorRules: [
+        {
+          when: [{ key: "scene", op: "isNot", value: "105 Backstage" }] as Filter[],
+          mode: "and" as const,
+          target: "row" as const,
+          color: "red" as const,
+        },
+      ],
+    };
+    const known: PickerItem[] = [
+      { id: SCENE_ID, label: "105 Backstage" },
+      { id: "0190a1b2-0000-7000-8000-00000000000a", label: "Alice" },
+    ];
+    const lookup = (_f: FieldDef<R>, label: string) =>
+      known.find((p) => p.label.toLowerCase() === label.toLowerCase());
+    const out = migrateLinkFilters(config, fields, lookup);
+    expect(out.filters[0]).toEqual({
+      key: "scene",
+      op: "is",
+      value: SCENE_ID,
+      labels: { [SCENE_ID]: "105 Backstage" },
+    });
+    expect(out.filters[1]?.value).toEqual(["0190a1b2-0000-7000-8000-00000000000a", "Nobody"]);
+    expect(out.filters[2]).toBe(config.filters[2]);
+    expect(out.colorRules[0]?.when[0]?.value).toBe(SCENE_ID);
+    // Unresolved labels still match by label; already-migrated configs come back as-is.
+    expect(matchesFilter(F.people, row(), out.filters[1] as Filter)).toBe(false);
+    expect(migrateLinkFilters(out, fields, lookup)).toBe(out);
+  });
+});
+
+describe("layout overlay (viewers' own widths)", () => {
+  const cols: Column<R>[] = [F.number, F.body, F.status];
+
+  it("applies widths and frozen count without moving columns", () => {
+    const base = { ...defaultViewConfig("cues"), fields: [{ key: "status" }] };
+    const out = applyLayoutOverlay(base, { widths: { body: 333 }, frozenCount: 2 }, [
+      "number",
+      "body",
+      "status",
+    ]);
+    expect(out.fields).toEqual([{ key: "status" }, { key: "number" }, { key: "body", width: 333 }]);
+    expect(out.frozenCount).toBe(2);
+    expect(layoutColumns(cols, out).map((c) => c.key)).toEqual(
+      layoutColumns(cols, base).map((c) => c.key),
+    );
+    expect(layoutOverlayOf(out)).toEqual({ widths: { body: 333 }, frozenCount: 2 });
+  });
+
+  it("tells layout-only changes from real ones", () => {
+    const base = defaultViewConfig("cues");
+    const wider = {
+      ...base,
+      fields: [{ key: "number" }, { key: "body", width: 400 }, { key: "status" }],
+    };
+    expect(differsOnlyInLayout(base, wider, cols)).toBe(true);
+    expect(differsOnlyInLayout(base, { ...base, frozenCount: 3 }, cols)).toBe(true);
+    expect(differsOnlyInLayout(base, { ...base, rowHeight: "tall" }, cols)).toBe(false);
+    const hidden = { ...base, fields: [{ key: "body", hidden: true }] };
+    expect(differsOnlyInLayout(base, hidden, cols)).toBe(false);
+    const moved = { ...base, fields: [{ key: "status" }] };
+    expect(differsOnlyInLayout(base, moved, cols)).toBe(false);
   });
 });

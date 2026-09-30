@@ -2,8 +2,7 @@
 // Filter panel and by color rules).
 import { useId, useMemo } from "react";
 import { type Filter, type FilterOp, LIST_OPS, VALUELESS_OPS } from "../../../shared/views";
-import type { PickerItem } from "../../components/grid/types";
-import { type FieldDef, fieldKind, opLabel, opsFor } from "./evaluate";
+import { type FieldDef, fieldKind, linkItems, opLabel, opsFor } from "./evaluate";
 import styles from "./ViewBar.module.css";
 
 /** A fresh condition on `field`. */
@@ -11,20 +10,36 @@ export function newFilter<V>(field: FieldDef<V>): Filter {
   return { key: field.key, op: opsFor(field)[0] ?? "is" };
 }
 
-/** The choices a list/select value editor offers: option values, or labels seen in rows. */
-function useChoices<V>(field: FieldDef<V> | undefined, rows: readonly V[]): string[] {
+interface Choice {
+  /** What the filter stores: an option value, or a linked record's id. */
+  value: string;
+  label: string;
+}
+
+/**
+ * The choices a list/select value editor offers: a select's options, or the records the
+ * rows link to (by id, labelled; plus ids the filter already holds, by their cached label).
+ */
+function useChoices<V>(
+  field: FieldDef<V> | undefined,
+  rows: readonly V[],
+  cached: Record<string, string> | undefined,
+): Choice[] {
   return useMemo(() => {
     if (!field) return [];
-    if (field.options?.length) return field.options.map((o) => o.value);
-    if (field.type !== "link" && field.type !== "multilink") return [];
-    const seen = new Set<string>();
-    for (const r of rows) {
-      const v = field.getValue(r);
-      const items = Array.isArray(v) ? (v as PickerItem[]) : v ? [v as PickerItem] : [];
-      for (const p of items) if (p.label) seen.add(p.label);
+    if (field.options?.length) {
+      return field.options.map((o) => ({ value: o.value, label: o.label ?? o.value }));
     }
-    return [...seen].sort(new Intl.Collator(undefined, { numeric: true }).compare).slice(0, 500);
-  }, [field, rows]);
+    if (field.type !== "link" && field.type !== "multilink") return [];
+    const seen = new Map<string, string>();
+    for (const r of rows) for (const p of linkItems(field.getValue(r))) seen.set(p.id, p.label);
+    for (const [id, l] of Object.entries(cached ?? {})) if (!seen.has(id)) seen.set(id, l);
+    const collator = new Intl.Collator(undefined, { numeric: true });
+    return [...seen]
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => collator.compare(a.label, b.label))
+      .slice(0, 500);
+  }, [field, rows, cached]);
 }
 
 export function FilterEditor<V>({
@@ -46,7 +61,7 @@ export function FilterEditor<V>({
 }) {
   const field = fields.find((f) => f.key === filter.key);
   const ops = field ? opsFor(field) : [];
-  const choices = useChoices(field, rows);
+  const choices = useChoices(field, rows, filter.labels);
   const listId = useId();
   const kind = field ? fieldKind(field) : "text";
 
@@ -57,7 +72,11 @@ export function FilterEditor<V>({
     onChange({ key, op: allowed.includes(filter.op) ? filter.op : (allowed[0] ?? "is") });
   };
   const setOp = (op: FilterOp) => {
-    const next: Filter = { key: filter.key, op };
+    const next: Filter = {
+      key: filter.key,
+      op,
+      ...(filter.labels ? { labels: filter.labels } : {}),
+    };
     // Keep a compatible value (a single value ↔ a list converts).
     if (!VALUELESS_OPS.has(op)) {
       const v = filter.value;
@@ -69,7 +88,22 @@ export function FilterEditor<V>({
     }
     onChange(next);
   };
-  const setValue = (value: unknown) => onChange({ ...filter, value });
+  const isLink = kind === "link";
+  /** Set the value; link filters also cache the picked records' labels. */
+  const setValue = (value: unknown) => {
+    if (!isLink || !(typeof value === "string" || Array.isArray(value))) {
+      const { labels: _l, ...rest } = filter;
+      onChange({ ...rest, value });
+      return;
+    }
+    const ids = Array.isArray(value) ? (value as string[]) : [value];
+    const labels: Record<string, string> = {};
+    for (const id of ids) {
+      const c = choices.find((x) => x.value === id);
+      if (c) labels[id] = c.label;
+    }
+    onChange({ ...filter, value, labels });
+  };
 
   let editor: React.ReactNode = null;
   if (field && !VALUELESS_OPS.has(filter.op)) {
@@ -79,18 +113,18 @@ export function FilterEditor<V>({
         choices.length > 0 ? (
           <fieldset className={styles.choiceList} aria-label={`${label} values`}>
             {choices.map((c) => (
-              <label key={c} className={styles.check}>
+              <label key={c.value} className={styles.check}>
                 <input
                   type="checkbox"
-                  checked={picked.has(c)}
+                  checked={picked.has(c.value)}
                   onChange={(e) => {
                     const next = new Set(picked);
-                    if (e.target.checked) next.add(c);
-                    else next.delete(c);
-                    setValue(choices.filter((x) => next.has(x)));
+                    if (e.target.checked) next.add(c.value);
+                    else next.delete(c.value);
+                    setValue(choices.filter((x) => next.has(x.value)).map((x) => x.value));
                   }}
                 />
-                {c}
+                {c.label}
               </label>
             ))}
           </fieldset>
@@ -110,7 +144,7 @@ export function FilterEditor<V>({
           />
         );
     } else if (
-      (kind === "select" || kind === "multi") &&
+      (kind === "select" || kind === "multi" || kind === "link") &&
       (filter.op === "is" || filter.op === "isNot")
     ) {
       editor = (
@@ -121,9 +155,14 @@ export function FilterEditor<V>({
           onChange={(e) => setValue(e.target.value || undefined)}
         >
           <option value="">Choose…</option>
+          {typeof filter.value === "string" &&
+            filter.value &&
+            !choices.some((c) => c.value === filter.value) && (
+              <option value={filter.value}>{filter.value}</option>
+            )}
           {choices.map((c) => (
-            <option key={c} value={c}>
-              {c}
+            <option key={c.value} value={c.value}>
+              {c.label}
             </option>
           ))}
         </select>
@@ -164,7 +203,7 @@ export function FilterEditor<V>({
           {choices.length > 0 && (
             <datalist id={listId}>
               {choices.map((c) => (
-                <option key={c} value={c} />
+                <option key={c.value} value={c.label} />
               ))}
             </datalist>
           )}

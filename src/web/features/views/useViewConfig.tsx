@@ -27,6 +27,7 @@ import type {
   Column,
   Group,
   InsertPosition,
+  PickerItem,
   RowHeight,
   SortSpec,
 } from "../../components/grid/types";
@@ -37,12 +38,18 @@ import { readPref, writePref } from "../shared/prefs";
 import { useWorkspace } from "../show/workspace";
 import { draftKey, getDraft, setDraft, useDraft } from "./drafts";
 import {
+  applyLayoutOverlay,
   compileFilters,
+  differsOnlyInLayout,
   type FieldDef,
   gridColorRules,
   gridSort,
   isComplete,
+  type LayoutOverlay,
   layoutColumns,
+  layoutOverlayOf,
+  linkItems,
+  migrateLinkFilters,
 } from "./evaluate";
 import { filterGroups, groupRows, isGroupable } from "./grouping";
 import {
@@ -51,6 +58,7 @@ import {
   collapsedKey,
   hasViewSettings,
   lastViewKey,
+  layoutKey,
   readLegacyPrefs,
 } from "./legacy";
 import { colorPresets } from "./presets";
@@ -94,6 +102,8 @@ export interface ViewState<V> {
   rows?: V[];
   groups?: Group<V>[];
   sort: SortSpec[] | undefined;
+  /** Every column, for the grid's `sortColumns` (a view may sort by a hidden field). */
+  sortColumns: Column<V>[];
   rowHeight: RowHeight;
   colorRules: ReturnType<typeof gridColorRules<V>>;
   collapsed: string[];
@@ -163,8 +173,22 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
   const viewId = current?.id ?? `builtin:${table}`;
   const isPersonal = !!current && current.owner_user_id !== null;
 
-  // --- Config: saved, draft, working ---
-  const dKey = draftKey(showId, viewId);
+  // --- Fields (columns + extras) ---
+  const extras = setup.extraFields ?? (NO_EXTRAS as FieldDef<V>[]);
+  const dateFields = setup.dateFields;
+  const fields = useMemo(() => {
+    const m = new Map<string, FieldDef<V>>();
+    for (const c of setup.columns) {
+      m.set(c.key, dateFields?.includes(c.key) ? { ...c, valueType: "date" } : c);
+    }
+    for (const f of extras) if (!m.has(f.key)) m.set(f.key, f);
+    return m;
+  }, [setup.columns, extras, dateFields]);
+  const columnsRef = useRef(setup.columns);
+  columnsRef.current = setup.columns;
+
+  // --- Config: saved, draft (unsaved changes), layout overlay, working ---
+  const dKey = draftKey(userId, showId, viewId);
   const draft = useDraft(dKey);
   const savedConfig = current?.config;
   const saved = useMemo(
@@ -174,15 +198,47 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
         : defaultViewConfig(table),
     [savedConfig, table],
   );
-  const config = draft ?? saved;
   const dirty = !isPersonal && !!draft && !jsonEqual(draft, saved);
   // A draft that matches what's saved (after a save lands) is dropped.
   useEffect(() => {
     if (draft && jsonEqual(draft, saved)) setDraft(dKey, undefined);
   }, [draft, saved, dKey]);
+  // Link filters saved with labels (before ids) resolve to ids here, once per config.
+  const rowsForLookup = useRef(setup.rows);
+  rowsForLookup.current = setup.rows;
+  const base = draft ?? saved;
+  const migratedBase = useMemo(
+    () =>
+      migrateLinkFilters(base, fields, (field, label) =>
+        findRecord(field, label, rowsForLookup.current),
+      ),
+    [base, fields],
+  );
+  // Viewers/commenters on a shared view: their own widths/frozen count on top.
+  const usesOverlay = !canEdit && !isPersonal;
+  const lKey = layoutKey(userId, showId, viewId);
+  const [overlayState, setOverlayState] = useState<{ key: string; value?: LayoutOverlay }>(() => ({
+    key: lKey,
+    ...readOverlay(lKey),
+  }));
+  const overlay = overlayState.key === lKey ? overlayState.value : readOverlay(lKey).value;
+  useEffect(() => {
+    if (overlayState.key !== lKey) setOverlayState({ key: lKey, ...readOverlay(lKey) });
+  }, [lKey, overlayState.key]);
+  const config = useMemo(
+    () =>
+      usesOverlay && overlay
+        ? applyLayoutOverlay(
+            migratedBase,
+            overlay,
+            setup.columns.map((c) => c.key),
+          )
+        : migratedBase,
+    [usesOverlay, overlay, migratedBase, setup.columns],
+  );
 
-  const latest = useRef({ current, config, viewId, dKey, shared, mine });
-  latest.current = { current, config, viewId, dKey, shared, mine };
+  const latest = useRef({ current, config, viewId, dKey, lKey, shared, mine });
+  latest.current = { current, config, viewId, dKey, lKey, shared, mine };
 
   const select = useCallback(
     (id: string | null) => {
@@ -241,12 +297,20 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
         return;
       }
       if (!view || canEdit) {
-        // Shared view, editor: a draft until Save / Discard.
-        setDraft(cur.dKey, next);
+        // Shared view, editor: a draft until Save / Discard (kept across reloads).
+        setDraft(cur.dKey, next, true);
         latest.current = { ...cur, config: next };
         return;
       }
-      // Viewers/commenters can't change a shared view: copy it into a personal one.
+      if (differsOnlyInLayout(cur.config, next, columnsRef.current)) {
+        // Widths / frozen columns: just theirs, in this browser (no copy of the view).
+        const value = layoutOverlayOf(next);
+        writePref(cur.lKey, value);
+        setOverlayState({ key: cur.lKey, value });
+        latest.current = { ...cur, config: next };
+        return;
+      }
+      // Other changes to a shared view: copy it into a personal one for them.
       const id = newId();
       store
         .mutate([
@@ -270,24 +334,28 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
         current: row,
         config: next,
         viewId: id,
-        dKey: draftKey(showId, id),
+        dKey: draftKey(userId, showId, id),
+        lKey: layoutKey(userId, showId, id),
       };
       select(id);
       toast("Saved as my view");
     },
     [userId, canEdit, store, table, nextPosition, reportError, select, toast, flush, showId],
   );
-  // Leaving the tab with a pending personal save: write it now.
-  useEffect(
-    () => () => {
-      if (saveTimer.current !== null) {
-        window.clearTimeout(saveTimer.current);
-        const cur = latest.current;
-        if (cur.current) flush(cur.current.id, cur.dKey);
-      }
-    },
-    [flush],
-  );
+  // Leaving the tab (or the page) with a pending personal save: write it now.
+  useEffect(() => {
+    const flushNow = () => {
+      if (saveTimer.current === null) return;
+      window.clearTimeout(saveTimer.current);
+      const cur = latest.current;
+      if (cur.current) flush(cur.current.id, cur.dKey);
+    };
+    window.addEventListener("pagehide", flushNow);
+    return () => {
+      window.removeEventListener("pagehide", flushNow);
+      flushNow();
+    };
+  }, [flush]);
 
   const actions = useMemo<ViewActions>(
     () => ({
@@ -348,7 +416,7 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
         send([{ op: "update", table: "views", id, fields: { name } }], "rename the view"),
       remove: (id) => {
         send([{ op: "delete", table: "views", id }], "delete the view");
-        setDraft(draftKey(showId, id), undefined);
+        setDraft(draftKey(userId, showId, id), undefined);
         if (latest.current.current?.id === id) select(null);
       },
       setDefault: (id) =>
@@ -409,22 +477,10 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
     }
   });
 
-  // --- Fields ---
-  const extras = setup.extraFields ?? (NO_EXTRAS as FieldDef<V>[]);
-  const dateFields = setup.dateFields;
-  const fields = useMemo(() => {
-    const m = new Map<string, FieldDef<V>>();
-    for (const c of setup.columns) {
-      m.set(c.key, dateFields?.includes(c.key) ? { ...c, valueType: "date" } : c);
-    }
-    for (const f of extras) if (!m.has(f.key)) m.set(f.key, f);
-    return m;
-  }, [setup.columns, extras, dateFields]);
-
   const columns = useMemo(() => layoutColumns(setup.columns, config), [setup.columns, config]);
-  const sortKey = JSON.stringify(gridSort(config, columns) ?? null);
+  const sortKey = JSON.stringify(gridSort(config, setup.columns) ?? null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on the sort's value
-  const sort = useMemo(() => gridSort(config, columns), [sortKey]);
+  const sort = useMemo(() => gridSort(config, setup.columns), [sortKey]);
   const colorRules = useMemo(
     () => gridColorRules(config.colorRules, fields),
     [config.colorRules, fields],
@@ -641,6 +697,7 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
     columns,
     ...(out.rows ? { rows: out.rows } : { groups: out.groups ?? [] }),
     sort,
+    sortColumns: setup.columns,
     rowHeight: config.rowHeight,
     colorRules,
     collapsed,
@@ -655,6 +712,37 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
     wrapProps,
     toolbar,
   };
+}
+
+function readOverlay(key: string): { value?: LayoutOverlay } {
+  const v = readPref<LayoutOverlay | undefined>(
+    key,
+    undefined,
+    (x): x is LayoutOverlay | undefined =>
+      typeof x === "object" &&
+      x !== null &&
+      typeof (x as LayoutOverlay).widths === "object" &&
+      (x as LayoutOverlay).widths !== null,
+  );
+  return v ? { value: v } : {};
+}
+
+/** A linked record by label: among the rows' links first, then the column's picker search. */
+function findRecord<V>(
+  field: FieldDef<V>,
+  label: string,
+  rows: readonly V[],
+): PickerItem | undefined {
+  const want = label.trim().toLocaleLowerCase();
+  const same = (p: PickerItem) => p.label.trim().toLocaleLowerCase() === want;
+  for (const r of rows) {
+    const hit = linkItems(field.getValue(r)).find(same);
+    if (hit) return hit;
+  }
+  const first = rows[0];
+  if (!field.search || first === undefined) return undefined;
+  const found = field.search(label, first);
+  return Array.isArray(found) ? found.find(same) : undefined;
 }
 
 function readStoredIds(key: string): string[] | undefined {

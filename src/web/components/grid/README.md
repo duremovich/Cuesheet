@@ -43,6 +43,7 @@ underlined; an unnumbered cue suggests the midpoint number). Source: `src/web/pa
 | `onDelete` | `(rowIds) => void` | Delete key on a row selection (the active row must be in it), or the context menu. More than one row asks for confirmation first |
 | `onOpenRow` | `(rowId) => void` | Space, the expand icon, or "Open" in the menu |
 | `sort` | `{key, dir}[]` | Live sort (see Ordering). Omit for show order |
+| `sortColumns` | `Column<Row>[]` | Columns `sort` keys resolve against when some aren't shown (a view sorting by a hidden field). Default: `columns` |
 | `colorRules` | `ColorRule<Row>[]` | Conditional formatting. Memoize it |
 | `cellDecoration` | `(row, key) => {warning?, ghost?} \| undefined` | `warning`: wavy orange underline + tooltip + screen-reader text. `ghost`: a suggestion shown in the active empty cell (and as the editor's placeholder); Tab or → accepts it, typing replaces it. Text/long text/number columns. Memoize it |
 | `rowHeight` | `"compact" \| "normal" \| "tall"` | 30 / 40 / 72 px; long text clamps to 1 / 2 / 3 lines |
