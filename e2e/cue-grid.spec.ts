@@ -85,12 +85,12 @@ async function serverNumbers(page: Page, showId: string) {
   return (await snapshot(page, showId)).tables.cues.map((c) => c.number);
 }
 
+/** Picks an action in the view toolbar's Sort panel. */
 async function sortMenu(page: Page, item: string) {
-  await page.getByRole("button", { name: "Sort" }).click();
+  await page.getByRole("button", { name: "Sort", exact: true }).click();
   await page
-    .getByRole("menu", { name: "Sort" })
-    .getByRole("menuitem", { name: item })
-    .or(page.getByRole("menu", { name: "Sort" }).getByRole("menuitemcheckbox", { name: item }))
+    .getByRole("dialog", { name: "Sort" })
+    .getByRole("button", { name: item, exact: true })
     .click();
 }
 
@@ -162,7 +162,7 @@ test("an unnumbered cue stays where it was inserted (show order)", async ({ brow
 test("live sort holds an edited row until focus leaves it", async ({ browser }) => {
   const { page } = await exampleShow(browser);
   await sortMenu(page, "Sort by cue number (live)");
-  await expect(page.getByRole("button", { name: "Sort" })).toHaveText(/Sorted by cue number/);
+  await expect(page.getByRole("button", { name: "Sort", exact: true })).toHaveText(/Sorted by Cue/);
   const row = rowByCue(page, "0.30");
   const at = await rowIndex(row);
   await cellOf(row, "number").click();
@@ -353,8 +353,10 @@ test("a viewer gets a read-only cue list with no insert", async ({ browser }) =>
   const res = await viewer.request.get(`/api/shows/${showId}/snapshot`);
   expect(((await res.json()) as { tables: { cues: unknown[] } }).tables.cues).toHaveLength(120);
   // "Sort now" isn't offered either (live sort is a personal view setting, so it is).
-  await viewer.getByRole("button", { name: "Sort" }).click();
-  await expect(viewer.getByRole("menuitem", { name: "Sort now by cue number" })).toHaveCount(0);
+  await viewer.getByRole("button", { name: "Sort", exact: true }).click();
+  const sortPanel = viewer.getByRole("dialog", { name: "Sort" });
+  await expect(sortPanel.getByRole("button", { name: "Sort by cue number (live)" })).toBeVisible();
+  await expect(sortPanel.getByRole("button", { name: "Sort now by cue number" })).toHaveCount(0);
 });
 
 test("the Scene cell creates a new scene; the cue moves to the end of it", async ({ browser }) => {

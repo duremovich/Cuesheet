@@ -1,14 +1,8 @@
-// Per-browser UI preferences in localStorage (column widths, collapsed groups, live sort).
-// Saved views (M2) will replace most of this. Storage may be unavailable (private mode,
-// blocked site data): reads fall back to the default and writes are best-effort.
+// Per-browser UI preferences in localStorage: collapsed groups per view and the last view
+// opened per table (keys in features/views/legacy.ts, which also migrates the M1c prefs
+// into saved views). Storage may be unavailable (private mode, blocked site data): reads
+// fall back to the default and writes are best-effort.
 import { useCallback, useEffect, useState } from "react";
-
-export const prefKey = {
-  widths: (showId: string, table: string) => `cuesheet.widths.${showId}.${table}`,
-  collapsed: (userId: string, showId: string, table: string) =>
-    `cuesheet.collapsed.${userId}.${showId}.${table}`,
-  sort: (showId: string, table: string) => `cuesheet.sort.${showId}.${table}`,
-};
 
 export function readPref<T>(key: string, fallback: T, valid: (v: unknown) => v is T): T {
   try {
@@ -56,9 +50,3 @@ export function usePref<T>(
 
 export const isStringArray = (v: unknown): v is string[] =>
   Array.isArray(v) && v.every((x) => typeof x === "string");
-
-export const isWidthMap = (v: unknown): v is Record<string, number> =>
-  typeof v === "object" &&
-  v !== null &&
-  !Array.isArray(v) &&
-  Object.values(v).every((x) => typeof x === "number" && x > 0 && x < 5000);

@@ -9,6 +9,9 @@ import type { Column, Group, InsertPosition } from "../../components/grid/types"
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
 import { type TabKey, tabInfo } from "../show/tabs";
 import { useWorkspace } from "../show/workspace";
+import type { FieldDef } from "../views/evaluate";
+import { DATE_FIELDS, NATIVE_GROUP_KEY } from "../views/tableDefaults";
+import { useViewConfig } from "../views/useViewConfig";
 import { type PanelSection, RowPanel } from "./RowPanel";
 import { TableFrame, ToolbarButton } from "./TableFrame";
 import { GRID_ACTIONS, useTableChrome } from "./useTableChrome";
@@ -24,9 +27,18 @@ export interface TableConfig<V> {
   plural?: string;
   columns: Column<V>[];
   rowId: (v: V) => string;
-  /** Exactly one of rows / groups. */
+  /**
+   * All rows in the table's order (default: the groups' rows). `groups` is the tab's own
+   * grouping, used when the saved view groups by `nativeGroupKey`; any other grouping,
+   * filtering and sorting comes from the view (features/views/useViewConfig.tsx).
+   */
   rows?: V[];
   groups?: Group<V>[];
+  nativeGroupKey?: string;
+  /** Extra fields a view can filter/color by (not columns). */
+  extraFields?: FieldDef<V>[];
+  /** Readonly timestamp columns (before/after filters). */
+  dateFields?: readonly string[];
   /** The ops for a grid edit. */
   editOps: (view: V, key: string, value: unknown) => Op[];
   /** The create op(s) for a new row with id `id` (omit: no inserting). */
@@ -39,7 +51,7 @@ export interface TableConfig<V> {
   panelSections?: (v: V) => PanelSection[];
   toolbar?: ReactNode;
   empty?: ReactNode;
-  /** Groups collapsed until the user expands them (a constant array). */
+  /** Native groups collapsed until the user expands them (a constant array). */
   defaultCollapsed?: string[];
   /** Where the toolbar's "+ Add" button inserts (default: the end of the last group). */
   addPosition?: InsertPosition;
@@ -60,13 +72,38 @@ export function TableGrid<V>(config: TableConfig<V>) {
   const cfg = useRef(config);
   cfg.current = config;
 
+  // The saved view (below) decides whether a row is shown; the chrome asks it first.
+  const revealRef = useRef<((id: string) => "shown" | "pending" | "missing") | null>(null);
   const chrome = useTableChrome({
     tab: config.tab,
     columns: config.columns,
     ready: status === "ready",
     hasRow: useCallback((id: string) => byIdRef.current.has(id), []),
-    ...(config.defaultCollapsed ? { defaultCollapsed: config.defaultCollapsed } : {}),
+    reveal: useCallback((id: string) => revealRef.current?.(id) ?? "shown", []),
   });
+
+  const table = tabInfo(config.tab).table;
+  const nativeGroupKey = config.nativeGroupKey ?? NATIVE_GROUP_KEY[table];
+  const dateFields = config.dateFields ?? DATE_FIELDS[table];
+  const view = useViewConfig<V>({
+    table,
+    focusRow: useCallback((id: string) => chrome.grid.current?.focusRow(id), [chrome.grid]),
+    columns: config.columns,
+    rowId: config.rowId,
+    rows: all,
+    editOps: useCallback(
+      (v: V, key: string, value: unknown) => cfg.current.editOps(v, key, value),
+      [],
+    ),
+    ...(config.groups ? { groups: config.groups } : {}),
+    ...(nativeGroupKey ? { nativeGroupKey } : {}),
+    ...(config.defaultCollapsed ? { defaultCollapsed: config.defaultCollapsed } : {}),
+    ...(config.extraFields ? { extraFields: config.extraFields } : {}),
+    ...(dateFields ? { dateFields } : {}),
+  });
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  revealRef.current = view.reveal;
 
   const report = ws.reportError;
   const send = useCallback(
@@ -89,7 +126,12 @@ export function TableGrid<V>(config: TableConfig<V>) {
   const insert = useCallback(
     (pos: InsertPosition) => {
       const id = newId();
-      send(cfg.current.createOps?.(id, pos) ?? [], `add the ${cfg.current.noun}`);
+      const v = viewRef.current;
+      v.hold(id); // an insert that doesn't match the filter stays until you leave it
+      send(
+        [...(cfg.current.createOps?.(id, v.mapPosition(pos)) ?? []), ...v.groupOps(id, pos)],
+        `add the ${cfg.current.noun}`,
+      );
       return id;
     },
     [send],
@@ -98,7 +140,13 @@ export function TableGrid<V>(config: TableConfig<V>) {
   const onMove = useCallback(
     (id: string, pos: InsertPosition) => {
       const v = byIdRef.current.get(id);
-      if (v) send(cfg.current.moveOps?.(v, pos) ?? [], `move the ${cfg.current.noun}`);
+      const vc = viewRef.current;
+      if (v) {
+        send(
+          [...(cfg.current.moveOps?.(v, vc.mapPosition(pos)) ?? []), ...vc.groupOps(id, pos, v)],
+          `move the ${cfg.current.noun}`,
+        );
+      }
     },
     [send],
   );
@@ -117,7 +165,7 @@ export function TableGrid<V>(config: TableConfig<V>) {
   );
 
   const addAtEnd = () => {
-    const last = config.groups?.at(-1);
+    const last = view.groups?.at(-1);
     const id = insert(config.addPosition ?? (last ? { groupId: last.id } : {}));
     requestAnimationFrame(() => chrome.grid.current?.focusRow(id));
   };
@@ -125,6 +173,14 @@ export function TableGrid<V>(config: TableConfig<V>) {
   const panelView = chrome.panelRow ? byId.get(chrome.panelRow) : undefined;
   const canInsert = !!config.createOps;
   const count = all.length;
+  const onActiveRowChange = chrome.onActiveRowChange;
+  const onActive = useCallback(
+    (id: string | null) => {
+      viewRef.current.trackActive(id);
+      onActiveRowChange(id);
+    },
+    [onActiveRowChange],
+  );
 
   return (
     <TableFrame
@@ -132,9 +188,11 @@ export function TableGrid<V>(config: TableConfig<V>) {
       testId={config.testId}
       toolbar={
         <>
-          <span className="muted">
+          <span className="muted" data-testid="row-count">
+            {view.filtered ? `${view.shownCount} of ` : ""}
             {count} {count === 1 ? config.noun : (config.plural ?? `${config.noun}s`)}
           </span>
+          {view.toolbar}
           {config.toolbar}
           {canInsert && <ToolbarButton onClick={addAtEnd}>+ Add {config.noun}</ToolbarButton>}
         </>
@@ -156,25 +214,31 @@ export function TableGrid<V>(config: TableConfig<V>) {
         ) : null
       }
     >
-      <DataGrid<V>
-        ref={chrome.grid}
-        aria-label={config.label}
-        columns={chrome.columns}
-        rowId={config.rowId}
-        {...(config.groups ? { groups: config.groups } : { rows: config.rows ?? [] })}
-        collapsed={chrome.collapsed}
-        onCollapsedChange={chrome.onCollapsedChange}
-        onColumnResize={chrome.onColumnResize}
-        onActiveRowChange={chrome.onActiveRowChange}
-        onOpenRow={chrome.onOpenRow}
-        {...(chrome.onEscape ? { onEscape: chrome.onEscape } : {})}
-        addRowLabel={`Add ${config.noun}`}
-        onEdit={onEdit}
-        {...(canInsert ? { onInsert: insert } : {})}
-        {...(config.moveOps ? { onMove } : {})}
-        {...(config.deleteOps ? { onDelete } : {})}
-        onError={(e, action) => report(e, GRID_ACTIONS[action])}
-      />
+      <div {...view.wrapProps}>
+        <DataGrid<V>
+          ref={chrome.grid}
+          aria-label={config.label}
+          columns={view.columns}
+          rowId={config.rowId}
+          {...(view.groups ? { groups: view.groups } : { rows: view.rows ?? [] })}
+          sort={view.sort}
+          sortColumns={view.sortColumns}
+          rowHeight={view.rowHeight}
+          colorRules={view.colorRules}
+          collapsed={view.collapsed}
+          onCollapsedChange={view.onCollapsedChange}
+          onColumnResize={view.onColumnResize}
+          onActiveRowChange={onActive}
+          onOpenRow={chrome.onOpenRow}
+          {...(chrome.onEscape ? { onEscape: chrome.onEscape } : {})}
+          addRowLabel={`Add ${config.noun}`}
+          onEdit={onEdit}
+          {...(canInsert ? { onInsert: insert } : {})}
+          {...(config.moveOps ? { onMove } : {})}
+          {...(config.deleteOps ? { onDelete } : {})}
+          onError={(e, action) => report(e, GRID_ACTIONS[action])}
+        />
+      </div>
     </TableFrame>
   );
 }

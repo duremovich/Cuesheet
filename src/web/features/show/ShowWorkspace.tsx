@@ -9,17 +9,20 @@ import {
   IMPORT_LABEL,
 } from "../../components/AirtableImport";
 import { AppHeader } from "../../components/AppHeader";
-import type { SortSpec } from "../../components/grid/types";
 import { PresenceIndicator } from "../../components/PresenceIndicator";
 import { ApiError, api } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
-import { useShowSocketState, useShowStore, useShowStoreInstance } from "../../lib/show-store";
+import {
+  useShowSocketState,
+  useShowStore,
+  useShowStoreInstance,
+  useViewsFor,
+} from "../../lib/show-store";
 import { setTheme } from "../../lib/theme";
 import pageStyles from "../../pages/pages.module.css";
 import { planSortNow } from "../cues/sortNow";
 import { SessionControl } from "../notes/SessionControl";
 import { CommandPalette, goToCommands, type PaletteCommand } from "../search/CommandPalette";
-import { prefKey, readPref, writePref } from "../shared/prefs";
 import { Toasts, useToasts } from "../shared/Toasts";
 import type { FocusState } from "../shared/useTableChrome";
 import { TECH_SHORTCUT_LABEL, techUrl, useTechShortcut } from "../tech/useTechShortcut";
@@ -33,16 +36,6 @@ const SHORTCUT =
 
 /** The mutate endpoint takes at most 1000 ops per batch. */
 const MAX_BATCH = 1000;
-
-const isSort = (v: unknown): v is SortSpec[] =>
-  Array.isArray(v) &&
-  v.every(
-    (s) =>
-      typeof s === "object" &&
-      s !== null &&
-      typeof (s as SortSpec).key === "string" &&
-      ((s as SortSpec).dir === "asc" || (s as SortSpec).dir === "desc"),
-  );
 
 export function ShowWorkspace({ data }: { data: ShowResponse }) {
   const { user } = useAuth();
@@ -77,23 +70,6 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
     [members],
   );
 
-  // Live sort of the cue list (per show, per browser until saved views).
-  const sortKey = prefKey.sort(showId, "cues");
-  const [cueSort, setCueSortState] = useState<SortSpec[] | undefined>(() =>
-    readPref<SortSpec[] | undefined>(
-      sortKey,
-      undefined,
-      isSort as (v: unknown) => v is SortSpec[] | undefined,
-    ),
-  );
-  const setCueSort = useCallback(
-    (s: SortSpec[] | undefined) => {
-      writePref(sortKey, s);
-      setCueSortState(s);
-    },
-    [sortKey],
-  );
-
   const reportError = useCallback(
     (e: unknown, what: string) => {
       const reason = e instanceof ApiError || e instanceof Error ? errorMessage(e) : String(e);
@@ -108,26 +84,26 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
     const plan = planSortNow(cues);
     if (plan.ops.length === 0) {
       toast("The cue list is already in cue-number order.");
-      setCueSort(undefined);
-      return;
+      return true;
     }
     if (plan.unnumbered > 0) {
       const n = plan.unnumbered;
       const ok = window.confirm(
         `${n} ${n === 1 ? "cue has" : "cues have"} no number and will go to the end of the show. Sort anyway?`,
       );
-      if (!ok) return;
+      if (!ok) return false;
     }
     try {
       for (let i = 0; i < plan.ops.length; i += MAX_BATCH) {
         await store.mutate(plan.ops.slice(i, i + MAX_BATCH));
       }
-      setCueSort(undefined);
       toast("Show order now follows cue numbers.");
+      return true;
     } catch (e) {
       reportError(e, "sort the cue list");
+      return false;
     }
-  }, [store, toast, setCueSort, reportError]);
+  }, [store, toast, reportError]);
 
   const workspace = useMemo<Workspace>(
     () => ({
@@ -140,24 +116,10 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
       memberNames,
       toast,
       reportError,
-      cueSort,
-      setCueSort,
       sortCuesNow,
       openImport: () => importer.current?.open(),
     }),
-    [
-      showId,
-      showName,
-      role,
-      user,
-      canEdit,
-      memberNames,
-      toast,
-      reportError,
-      cueSort,
-      setCueSort,
-      sortCuesNow,
-    ],
+    [showId, showName, role, user, canEdit, memberNames, toast, reportError, sortCuesNow],
   );
 
   // Keep the active tab visible when the tab strip scrolls (phones).
@@ -198,8 +160,26 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
     (tab: TabKey) => navigate(`/shows/${encodeURIComponent(showId)}/${tab}`),
     [navigate, showId],
   );
+  // "Switch view: <name>" for the tab you're on (its shared views, then yours).
+  const pathTab = TABS.find((t) => pathname.split("/")[3] === t.key);
+  const tabViews = useViewsFor(pathTab?.table ?? "cues", user?.id ?? "");
+  const viewCommands = useMemo<PaletteCommand[]>(
+    () =>
+      pathTab
+        ? [...tabViews.shared, ...tabViews.mine].map((v) => ({
+            id: `view-${v.id}`,
+            label: `Switch view: ${v.name || "Untitled view"}`,
+            run: () =>
+              navigate(
+                `/shows/${encodeURIComponent(showId)}/${pathTab.key}?view=${encodeURIComponent(v.id)}`,
+              ),
+          }))
+        : [],
+    [pathTab, tabViews, navigate, showId],
+  );
   const commands = useMemo<PaletteCommand[]>(
     () => [
+      ...viewCommands,
       ...(canEdit
         ? [
             {
@@ -233,7 +213,7 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
         ? [{ id: "import", label: IMPORT_LABEL, run: () => workspace.openImport() }]
         : []),
     ],
-    [canEdit, go, workspace, navigate, showId, currentCue],
+    [canEdit, go, workspace, navigate, showId, currentCue, viewCommands],
   );
   const onPick = useCallback(
     (tab: TabKey, id: string) => {

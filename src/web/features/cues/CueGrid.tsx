@@ -3,23 +3,33 @@
 import { useCallback, useMemo, useRef } from "react";
 import { newId } from "../../../shared/ids";
 import type { Op } from "../../../shared/ops";
-import { DataGrid, sortRows } from "../../components/grid";
+import { DataGrid } from "../../components/grid";
 import type { CellDecoration, Column, InsertPosition, MenuItem } from "../../components/grid/types";
 import { sceneIdForGroup, UNASSIGNED, ViewCache } from "../../lib/show-selectors";
 import type { ShowState } from "../../lib/show-store";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
-import { MenuButton } from "../shared/MenuButton";
 import { groupOrder, placementFor } from "../shared/ops";
 import { RowPanel } from "../shared/RowPanel";
 import { TableFrame, ToolbarButton } from "../shared/TableFrame";
 import styles from "../shared/TableFrame.module.css";
 import { GRID_ACTIONS, useTableChrome } from "../shared/useTableChrome";
 import { useWorkspace } from "../show/workspace";
+import type { FieldDef } from "../views/evaluate";
+import { type SortPreset, useViewConfig } from "../views/useViewConfig";
 import { cueColumns, cueEditOps } from "./columns";
 import { cueNumberHints, hintsEqual, type InsertAnchor } from "./cueNumbers";
-import { buildCueViews, type CueView, cueGroups, openNotesByScene } from "./cueViews";
+import {
+  buildCueViews,
+  type CueView,
+  cueGroups,
+  hintOrder,
+  openNotesByCue,
+  openNotesByScene,
+} from "./cueViews";
 
-const NUMBER_SORT = [{ key: "number", dir: "asc" as const }];
+const SORT_PRESETS: SortPreset[] = [
+  { label: "Sort by cue number (live)", sorts: [{ key: "number", dir: "asc" }] },
+];
 
 const selectState = (s: ShowState) => s;
 
@@ -65,19 +75,61 @@ export function CueGrid() {
     () => cueColumns({ store, fieldOptions, editable }),
     [store, fieldOptions, editable],
   );
+  // The saved view (below) decides whether a row is shown; the chrome asks it first.
+  const revealRef = useRef<((id: string) => "shown" | "pending" | "missing") | null>(null);
   const chrome = useTableChrome({
     tab: "cues",
     columns: baseColumns,
     ready: state.status === "ready",
     hasRow: useCallback((id: string) => viewsRef.current.has(id), []),
+    reveal: useCallback((id: string) => revealRef.current?.(id) ?? "shown", []),
   });
 
+  // --- The saved view: filters, grouping, sort, fields, colors ---
+  // biome-ignore lint/correctness/useExhaustiveDependencies: recomputed when notes / links change
+  const openByCue = useMemo(() => openNotesByCue(state), [tables.notes, joins.noteCues]);
+  const extraFields = useMemo<FieldDef<CueView>[]>(
+    () => [
+      {
+        key: "open_notes",
+        title: "Open notes",
+        type: "number",
+        getValue: (v) => openByCue.get(v.id) ?? 0,
+      },
+    ],
+    [openByCue],
+  );
+  const sortNow = useMemo(
+    () => ({ label: "Sort now by cue number", run: ws.sortCuesNow }),
+    [ws.sortCuesNow],
+  );
+  const vc = useViewConfig<CueView>({
+    table: "cues",
+    focusRow: useCallback((id: string) => chrome.grid.current?.focusRow(id), [chrome.grid]),
+    columns: baseColumns,
+    extraFields,
+    rowId: (v) => v.id,
+    rows: views,
+    groups,
+    nativeGroupKey: "scene",
+    editOps: cueEditOps,
+    sortPresets: SORT_PRESETS,
+    sortNow,
+  });
+  const vcRef = useRef(vc);
+  vcRef.current = vc;
+  revealRef.current = vc.reveal;
+  const shownGroups = vc.groups;
+  const shownRows = vc.rows;
+
   // --- Cue number hints (ghost midpoint, duplicates) ---
-  const sort = ws.cueSort;
+  const sort = vc.sort;
   const anchors = useRef(new Map<string, InsertAnchor>());
   const prevHints = useRef<Map<string, CellDecoration>>(new Map());
+  // Over ALL cues (show order, or the full sorted order under a live sort), never the
+  // filtered display: a filter mustn't change the suggested number or hide a duplicate.
   const hints = useMemo(() => {
-    const display = groups.flatMap((g) => (sort ? sortRows(g.rows, sort, baseColumns) : g.rows));
+    const display = hintOrder(groups, sort, baseColumns);
     const next = cueNumberHints(
       display.map((v) => ({
         id: v.id,
@@ -136,8 +188,12 @@ export function CueGrid() {
   );
 
   const insert = useCallback(
-    (pos: InsertPosition, fields: Record<string, unknown> = {}) => {
+    (at: InsertPosition, fields: Record<string, unknown> = {}) => {
       const id = newId();
+      const v = vcRef.current;
+      // An insert that doesn't match the view's filter stays until you leave it.
+      v.hold(id);
+      const pos = v.mapPosition(at);
       let sceneId = sceneIdForGroup(pos.groupId);
       if (sceneId === undefined) {
         const n = viewsRef.current.get(pos.afterRowId ?? pos.beforeRowId ?? "");
@@ -158,6 +214,7 @@ export function CueGrid() {
             fields: { scene_id: sceneId, ...fields },
             ...placementFor(pos, groupOrder(groupsRef.current)),
           },
+          ...v.groupOps(id, at),
         ],
         "add the cue",
       ).catch(() => undefined);
@@ -168,9 +225,10 @@ export function CueGrid() {
   const onInsert = useCallback((pos: InsertPosition) => insert(pos), [insert]);
 
   const onMove = useCallback(
-    (id: string, pos: InsertPosition) => {
+    (id: string, at: InsertPosition) => {
       const view = viewsRef.current.get(id);
       if (!view) return;
+      const pos = vcRef.current.mapPosition(at);
       const ops: Op[] = [
         { op: "move", table: "cues", id, ...placementFor(pos, groupOrder(groupsRef.current), id) },
       ];
@@ -178,6 +236,7 @@ export function CueGrid() {
       if (sceneId !== undefined && sceneId !== (view.cue.scene_id ?? null)) {
         ops.push({ op: "update", table: "cues", id, fields: { scene_id: sceneId } });
       }
+      ops.push(...vcRef.current.groupOps(id, at, view));
       void send(ops, "move the cue").catch(() => undefined);
     },
     [send],
@@ -203,6 +262,7 @@ export function CueGrid() {
       const prev = lastActive.current;
       if (prev && prev !== id) anchors.current.delete(prev);
       lastActive.current = id;
+      vcRef.current.trackActive(id);
       onActiveRowChange(id);
     },
     [onActiveRowChange],
@@ -225,12 +285,15 @@ export function CueGrid() {
   );
 
   const addCueAtEnd = () => {
-    const last = groups.at(-1);
+    const last = vc.groups?.at(-1);
     const id = insert(last ? { groupId: last.id } : {});
     requestAnimationFrame(() => chrome.grid.current?.focusRow(id));
   };
 
   const cueCount = views.filter((v) => !v.cue.is_section).length;
+  const shownCues = (shownGroups?.flatMap((g) => g.rows) ?? shownRows ?? []).filter(
+    (v) => !v.cue.is_section,
+  ).length;
   const panelView = chrome.panelRow ? viewsById.get(chrome.panelRow) : undefined;
 
   return (
@@ -240,25 +303,10 @@ export function CueGrid() {
       toolbar={
         <>
           <span className="muted" data-testid="cue-count">
+            {vc.filtered ? `${shownCues} of ` : ""}
             {cueCount} {cueCount === 1 ? "cue" : "cues"}
           </span>
-          <MenuButton
-            label="Sort"
-            pressed={!!sort}
-            items={[
-              {
-                label: "Sort by cue number (live)",
-                checked: !!sort,
-                onSelect: () => ws.setCueSort(NUMBER_SORT),
-              },
-              { label: "Remove sort", disabled: !sort, onSelect: () => ws.setCueSort(undefined) },
-              ...(editable
-                ? [{ label: "Sort now by cue number", onSelect: () => void ws.sortCuesNow() }]
-                : []),
-            ]}
-          >
-            {sort ? "Sorted by cue number" : "Sort"} ▾
-          </MenuButton>
+          {vc.toolbar}
           {editable && (
             <ToolbarButton onClick={addCueAtEnd} title="Add a cue at the end of the show">
               + Add cue
@@ -286,27 +334,32 @@ export function CueGrid() {
         ) : null
       }
     >
-      <DataGrid<CueView>
-        ref={chrome.grid}
-        aria-label="Cue list"
-        columns={chrome.columns}
-        rowId={(v) => v.id}
-        groups={groups}
-        isSection={(v) => v.cue.is_section}
-        sectionLabelKey="description"
-        sort={sort}
-        cellDecoration={cellDecoration}
-        collapsed={chrome.collapsed}
-        onCollapsedChange={chrome.onCollapsedChange}
-        onColumnResize={chrome.onColumnResize}
-        onActiveRowChange={onActive}
-        onOpenRow={chrome.onOpenRow}
-        {...(chrome.onEscape ? { onEscape: chrome.onEscape } : {})}
-        addRowLabel="Add cue"
-        onEdit={onEdit}
-        {...(editable ? { onInsert, onMove, onDelete, extraMenuItems } : {})}
-        onError={(e, action) => report(e, GRID_ACTIONS[action])}
-      />
+      <div {...vc.wrapProps}>
+        <DataGrid<CueView>
+          ref={chrome.grid}
+          aria-label="Cue list"
+          columns={vc.columns}
+          rowId={(v) => v.id}
+          {...(shownGroups ? { groups: shownGroups } : { rows: shownRows ?? [] })}
+          isSection={(v) => v.cue.is_section}
+          sectionLabelKey="description"
+          sort={sort}
+          sortColumns={vc.sortColumns}
+          rowHeight={vc.rowHeight}
+          colorRules={vc.colorRules}
+          cellDecoration={cellDecoration}
+          collapsed={vc.collapsed}
+          onCollapsedChange={vc.onCollapsedChange}
+          onColumnResize={vc.onColumnResize}
+          onActiveRowChange={onActive}
+          onOpenRow={chrome.onOpenRow}
+          {...(chrome.onEscape ? { onEscape: chrome.onEscape } : {})}
+          addRowLabel="Add cue"
+          onEdit={onEdit}
+          {...(editable ? { onInsert, onMove, onDelete, extraMenuItems } : {})}
+          onError={(e, action) => report(e, GRID_ACTIONS[action])}
+        />
+      </div>
     </TableFrame>
   );
 }

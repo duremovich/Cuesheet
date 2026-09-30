@@ -94,6 +94,7 @@ export function ContentGrid() {
       testId="content-list"
       columns={columns}
       rowId={(v) => v.id}
+      rows={views}
       groups={groups}
       editOps={contentEditOps}
       {...(canEdit

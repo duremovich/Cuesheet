@@ -43,6 +43,7 @@ underlined; an unnumbered cue suggests the midpoint number). Source: `src/web/pa
 | `onDelete` | `(rowIds) => void` | Delete key on a row selection (the active row must be in it), or the context menu. More than one row asks for confirmation first |
 | `onOpenRow` | `(rowId) => void` | Space, the expand icon, or "Open" in the menu |
 | `sort` | `{key, dir}[]` | Live sort (see Ordering). Omit for show order |
+| `sortColumns` | `Column<Row>[]` | Columns `sort` keys resolve against when some aren't shown (a view sorting by a hidden field). Default: `columns` |
 | `colorRules` | `ColorRule<Row>[]` | Conditional formatting. Memoize it |
 | `cellDecoration` | `(row, key) => {warning?, ghost?} \| undefined` | `warning`: wavy orange underline + tooltip + screen-reader text. `ghost`: a suggestion shown in the active empty cell (and as the editor's placeholder); Tab or → accepts it, typing replaces it. Text/long text/number columns. Memoize it |
 | `rowHeight` | `"compact" \| "normal" \| "tall"` | 30 / 40 / 72 px; long text clamps to 1 / 2 / 3 lines |
@@ -97,7 +98,8 @@ Link values carry labels so the grid can render and undo without lookups. The co
   decision 0003); only the dragged row's key changes. Dropping onto a collapsed group
   appends to it and expands it.
 - **Live sort** (`sort` set): the grid sorts (stable, multi-key, **empty values last** in
-  both directions; decimal strings compare numerically, so 14.2 < 14.25 < 14.3). The row
+  both directions; cue-number-like strings compare by `compareNumericText`: the decimal
+  numerically, then the letter suffix, so 14.2 < 14.25 < 14.3 < 14.3A < 14.5). The row
   you're in is **held in its slot** (its position within its group) while focus stays in
   it, whatever its own values or its neighbors' values do, including remote edits. When
   focus leaves the row (another row, Escape when not editing, focus leaving the grid), it
@@ -195,7 +197,10 @@ background (`--option-<color>-bg`, text stays `--color-text`); `cell` rules stac
 wins) and set background + text (`--option-<color>-bg/fg`). Chips keep a faint outline so
 they still read as pills on a row of the same color. Selection and range highlight draw on
 top. Build the rules from a view's saved rule list (field, operator, value) in the data
-layer; keep the array identity stable (`useMemo`).
+layer; keep the array identity stable (`useMemo`). The show's tabs do this with
+`gridColorRules` in `src/web/features/views/evaluate.ts` (saved views, CLAUDE.md "Saved
+views"), which also lays out `columns` (order, hidden, widths, `frozen`) and the `sort`
+from the view.
 
 ## Wiring a real table
 

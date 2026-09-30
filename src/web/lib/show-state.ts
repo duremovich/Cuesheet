@@ -44,6 +44,7 @@ export function emptyData(): ShowData {
       content: new Map(),
       notes: new Map(),
       persons: new Map(),
+      views: new Map(),
     },
     order: { scenes: [], cues: [], content: [] },
     joins: {
@@ -166,6 +167,34 @@ export function resolveLocal(data: ShowData, ops: Op[], ctx: LocalContext): Reso
     const resolved = resolveOne(state, op, ctx);
     state = applyResolved(state, resolved);
     out.push(...resolved);
+    if (op.table === "views" && (op.op === "create" || op.op === "update")) {
+      const cleared = clearOtherDefaults(state, op.id, ctx);
+      state = applyResolved(state, cleared);
+      out.push(...cleared);
+    }
+  }
+  return out;
+}
+
+/** Like the server: a shared view that became the default un-defaults the table's others. */
+function clearOtherDefaults(data: ShowData, id: string, ctx: LocalContext): ResolvedOp[] {
+  const view = data.tables.views.get(id);
+  if (!view?.is_default || view.owner_user_id !== null) return [];
+  const out: ResolvedOp[] = [];
+  for (const other of data.tables.views.values()) {
+    if (
+      other.id !== id &&
+      other.table === view.table &&
+      other.owner_user_id === null &&
+      other.is_default
+    ) {
+      out.push({
+        op: "update",
+        table: "views",
+        id: other.id,
+        fields: { is_default: false, updated_at: ctx.now, updated_by: ctx.userId },
+      });
+    }
   }
   return out;
 }
@@ -178,7 +207,14 @@ function resolveOne(data: ShowData, op: Op, ctx: LocalContext): ResolvedOp[] {
       if (rows.has(op.id)) throw new LocalOpError(`${op.table} ${op.id} already exists`);
       const fields: FieldValues = {};
       for (const [name, spec] of Object.entries(FIELDS[op.table]) as [string, FieldSpec][]) {
-        fields[name] = spec.type === "bool" ? false : spec.type === "multiselect" ? [] : null;
+        fields[name] =
+          spec.type === "bool"
+            ? false
+            : spec.type === "multiselect"
+              ? []
+              : spec.type === "json"
+                ? {}
+                : null;
       }
       Object.assign(fields, { custom: {} }, op.fields, {
         created_at: ctx.now,

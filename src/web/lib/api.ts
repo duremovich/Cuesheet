@@ -48,11 +48,17 @@ export class UnauthorizedError extends ApiError {
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function request<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  init: { keepalive?: boolean } = {},
+): Promise<T> {
   const isForm = body instanceof FormData;
   const res = await fetch(`/api${path}`, {
     method,
     credentials: "same-origin",
+    ...(init.keepalive ? { keepalive: true } : {}),
     // FormData sets its own multipart Content-Type (with boundary).
     headers: body === undefined || isForm ? {} : { "Content-Type": "application/json" },
     body: body === undefined ? undefined : isForm ? body : JSON.stringify(body),
@@ -89,8 +95,9 @@ export const api = {
 
   // Show data (M1). Most callers go through the show store (lib/show-store.ts).
   snapshot: (id: string) => request<SnapshotResponse>("GET", showPath(id, "/snapshot")),
-  mutate: (id: string, body: MutateRequest) =>
-    request<MutateResponse>("POST", showPath(id, "/mutate"), body),
+  /** `keepalive`: the request outlives the page (a save sent from pagehide). */
+  mutate: (id: string, body: MutateRequest, opts: { keepalive?: boolean } = {}) =>
+    request<MutateResponse>("POST", showPath(id, "/mutate"), body, opts),
   history: (id: string, q: { table?: string; id?: string; limit?: number } = {}) => {
     const params = new URLSearchParams();
     for (const [k, v] of Object.entries(q)) if (v !== undefined) params.set(k, String(v));

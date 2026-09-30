@@ -1,13 +1,13 @@
-// Everything a table tab wires around its DataGrid besides data: column widths and
-// collapsed groups (localStorage), the `?<param>=<rowId>` URL state, focus requests from
-// ⌘K (router state `{ focus: rowId }`), and the row panel's open state.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+// Everything a table tab wires around its DataGrid besides data and the saved view: the
+// `?<param>=<rowId>` URL state, focus requests from ⌘K (router state `{ focus: rowId }`),
+// and the row panel's open state. Column layout and collapsed groups come from the view
+// (features/views/useViewConfig.ts).
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "react-router";
 import type { Column, DataGridHandle, GridAction } from "../../components/grid/types";
 import { useShowStoreInstance } from "../../lib/show-store";
 import { type TabKey, tabInfo } from "../show/tabs";
 import { useWorkspace } from "../show/workspace";
-import { isStringArray, isWidthMap, prefKey, usePref } from "./prefs";
 
 /** "Couldn't <this>: <reason>" for each grid action (the grid's onError). */
 export const GRID_ACTIONS: Record<GridAction, string> = {
@@ -18,9 +18,6 @@ export const GRID_ACTIONS: Record<GridAction, string> = {
   delete: "delete",
 };
 
-const NO_WIDTHS: Record<string, number> = {};
-const NO_IDS: string[] = [];
-
 /** Router state that asks a tab to focus a row (set by the command palette). */
 export interface FocusState {
   focus?: string;
@@ -28,36 +25,21 @@ export interface FocusState {
 
 export function useTableChrome<Row>(opts: {
   tab: TabKey;
+  /** Every column (the row panel shows all fields, whatever the view hides). */
   columns: Column<Row>[];
   /** Data has loaded (a URL/⌘K focus waits for it). */
   ready: boolean;
   hasRow: (id: string) => boolean;
-  /** Collapsed group ids until the user changes them (keep the array constant). */
-  defaultCollapsed?: string[];
+  /**
+   * The saved view's check before focusing a row (`useViewConfig().reveal`): a row its
+   * filter hides is held and shown first ("pending": focus on a later render).
+   */
+  reveal?: (id: string) => "shown" | "pending" | "missing";
 }) {
   const { tab, ready } = opts;
-  const { showId, userId, toast } = useWorkspace();
+  const { toast } = useWorkspace();
   const { table, param, noun } = tabInfo(tab);
-
-  const [widths, setWidths] = usePref(prefKey.widths(showId, table), NO_WIDTHS, isWidthMap);
-  const columns = useMemo(
-    () =>
-      opts.columns.map((c) => {
-        const w = widths[c.key];
-        return w ? { ...c, width: w } : c;
-      }),
-    [opts.columns, widths],
-  );
-  const onColumnResize = useCallback(
-    (key: string, width: number) => setWidths({ ...widths, [key]: Math.round(width) }),
-    [widths, setWidths],
-  );
-
-  const [collapsed, onCollapsedChange] = usePref(
-    prefKey.collapsed(userId, showId, table),
-    opts.defaultCollapsed ?? NO_IDS,
-    isStringArray,
-  );
+  const columns = opts.columns;
 
   // --- URL state: ?<param>=<active row id> ---
   const grid = useRef<DataGridHandle>(null);
@@ -94,6 +76,7 @@ export function useTableChrome<Row>(opts: {
       }
       return;
     }
+    if (opts.reveal?.(id) === "pending") return; // shown on the next render
     pendingFocus.current = null;
     grid.current?.focusRow(id);
   });
@@ -157,9 +140,6 @@ export function useTableChrome<Row>(opts: {
   return {
     grid,
     columns,
-    onColumnResize,
-    collapsed,
-    onCollapsedChange,
     onActiveRowChange,
     activeRow,
     onOpenRow,

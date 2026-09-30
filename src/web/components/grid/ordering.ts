@@ -11,23 +11,37 @@ export function isEmptyValue(v: unknown): boolean {
   return false;
 }
 
-const NUMERIC = /^\s*-?(\d+\.?\d*|\.\d+)\s*$/;
+/** A decimal with an optional letter suffix: "14.25", "8.5A", ".5". */
+const NUMERIC_TEXT = /^\s*(-?(?:\d+(?:\.\d*)?|\.\d+))\s*([A-Za-z]*)\s*$/;
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
 /**
- * Default comparator for two non-empty values. Numbers compare numerically, and so do
- * strings that are both plain decimals (cue numbers: 14.2 < 14.25 < 14.3); other strings
- * use a natural, case-insensitive collation.
+ * Compares two cue-number-like strings: the decimal part numerically, then the letter
+ * suffix (none first): 14.2 = 14.20 < 14.25 < 14.3 < 14.3A < 14.3B, 14.05A < 14.5.
+ * Returns null when either isn't of that form. Used by the grid's sort and view filters.
+ */
+export function compareNumericText(a: string, b: string): number | null {
+  const ma = NUMERIC_TEXT.exec(a);
+  const mb = NUMERIC_TEXT.exec(b);
+  if (!ma || !mb) return null;
+  const d = Number.parseFloat(ma[1] ?? "") - Number.parseFloat(mb[1] ?? "");
+  if (d !== 0) return d;
+  const sa = (ma[2] ?? "").toUpperCase();
+  const sb = (mb[2] ?? "").toUpperCase();
+  return sa === sb ? 0 : sa < sb ? -1 : 1;
+}
+
+/**
+ * Default comparator for two non-empty values. Numbers compare numerically, cue-number-like
+ * strings by `compareNumericText`; other strings use a natural, case-insensitive collation.
  */
 export function compareValues(a: unknown, b: unknown): number {
   if (typeof a === "number" && typeof b === "number") return a - b;
   if (typeof a === "boolean" && typeof b === "boolean") return Number(a) - Number(b);
   const sa = String(a);
   const sb = String(b);
-  if (NUMERIC.test(sa) && NUMERIC.test(sb)) {
-    const d = Number.parseFloat(sa) - Number.parseFloat(sb);
-    if (d !== 0) return d;
-  }
+  const n = compareNumericText(sa, sb);
+  if (n !== null && n !== 0) return n;
   return collator.compare(sa, sb);
 }
 
@@ -145,6 +159,8 @@ export interface LayoutInput<Row> {
   columns: readonly Column<Row>[];
   rowId: (r: Row) => string;
   sort?: readonly SortSpec[] | undefined;
+  /** Columns sort keys resolve against (default `columns`; may include hidden ones). */
+  sortColumns?: readonly Column<Row>[] | undefined;
   holds?: readonly Hold[] | undefined;
   collapsed?: ReadonlySet<string> | undefined;
   isSection?: ((r: Row) => boolean) | undefined;
@@ -155,7 +171,7 @@ export function buildLayout<Row>(input: LayoutInput<Row>): FlatItem<Row>[] {
   const { columns, rowId, sort, holds = [], collapsed, isSection } = input;
   const byId = new Map<string, { row: Row }>();
   const sorted = (rows: readonly Row[]) =>
-    sort && sort.length > 0 ? sortRows(rows, sort, columns) : [...rows];
+    sort && sort.length > 0 ? sortRows(rows, sort, input.sortColumns ?? columns) : [...rows];
   const lists: OrderedList[] = [];
   const groups = input.groups;
   if (groups) {

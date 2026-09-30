@@ -3,7 +3,8 @@
 // link lists or the linked records change (the grid re-renders exactly those rows).
 
 import type { CueRow, SceneRow } from "../../../shared/tables";
-import type { Group, PickerItem } from "../../components/grid/types";
+import { sortRows } from "../../components/grid/ordering";
+import type { Column, Group, PickerItem, SortSpec } from "../../components/grid/types";
 import { groupByScene, sceneTitle, UNASSIGNED, type ViewCache } from "../../lib/show-selectors";
 import type { ShowData } from "../../lib/show-state";
 import { contentItem, personItem, sceneItem } from "../shared/pickers";
@@ -66,6 +67,18 @@ export function openNotesByScene(data: ShowData): Map<string, number> {
   return out;
 }
 
+/** Open (not Done) notes linked to each cue (the "Open notes" view field). */
+export function openNotesByCue(data: Pick<ShowData, "tables" | "joins">): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const note of data.tables.notes.values()) {
+    if (note.status === "Done") continue;
+    for (const cueId of data.joins.noteCues.get(note.id) ?? []) {
+      out.set(cueId, (out.get(cueId) ?? 0) + 1);
+    }
+  }
+  return out;
+}
+
 function groupSubtitle(scene: SceneRow, showAct: boolean, openNotes: number): string | undefined {
   const parts = [
     showAct ? scene.act : null,
@@ -97,4 +110,18 @@ export function cueGroups(
       rows: g.rows,
     };
   });
+}
+
+/**
+ * Every cue in the order number hints (ghost midpoint, duplicates) are computed over: all
+ * groups in show order, each sorted when a live sort is on. Never the filtered display.
+ */
+export function hintOrder<R>(
+  groups: readonly Group<R>[],
+  sort: readonly SortSpec[] | undefined,
+  columns: readonly Column<R>[],
+): R[] {
+  return groups.flatMap((g) =>
+    sort && sort.length > 0 ? sortRows(g.rows, sort, columns) : g.rows,
+  );
 }

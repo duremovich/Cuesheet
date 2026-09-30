@@ -3,13 +3,25 @@
 // Field names are the storage names (snake_case), as in docs/spec/data-model.md.
 // Adding a field: see "Adding a field to a core table" in CLAUDE.md.
 
-export const TABLE_NAMES = ["scenes", "cues", "content", "notes", "persons"] as const;
+export const TABLE_NAMES = ["scenes", "cues", "content", "notes", "persons", "views"] as const;
 export type TableName = (typeof TABLE_NAMES)[number];
+
+/**
+ * The show's data tables: every table but `views` (which holds saved view definitions for
+ * them). What import checks for emptiness and what a saved view can be for.
+ */
+export const DATA_TABLES = ["scenes", "cues", "content", "notes", "persons"] as const;
+export type DataTableName = (typeof DATA_TABLES)[number];
+
+export function isDataTable(t: unknown): t is DataTableName {
+  return typeof t === "string" && (DATA_TABLES as readonly string[]).includes(t);
+}
 
 export const ORDERED_TABLES = ["scenes", "cues", "content"] as const;
 export type OrderedTableName = (typeof ORDERED_TABLES)[number];
 
-export type FieldType = "text" | "number" | "bool" | "select" | "multiselect" | "ref";
+/** `json`: any JSON value stored as text, validated per field by the op engine. */
+export type FieldType = "text" | "number" | "bool" | "select" | "multiselect" | "ref" | "json";
 
 export interface FieldSpec {
   type: FieldType;
@@ -17,6 +29,8 @@ export interface FieldSpec {
   ref?: TableName;
   /** Maintained by the server; clients can't write it. */
   auto?: boolean;
+  /** Settable on create only (a view's table and owner). */
+  immutable?: boolean;
 }
 
 const text: FieldSpec = { type: "text" };
@@ -87,6 +101,19 @@ export const FIELDS = {
     phone: text,
     organization: text,
     user_id: text,
+  },
+  /** Saved views (R16): src/shared/views.ts, CLAUDE.md "Saved views". */
+  views: {
+    /** The data table the view is for (a DataTableName). */
+    table: { type: "text", immutable: true },
+    name: text,
+    /** null = shared with the show; else the owner's user id (a personal view). */
+    owner_user_id: { type: "text", immutable: true },
+    /** At most one shared view per table; setting it clears the others (server-side). */
+    is_default: bool,
+    position: number,
+    /** A ViewConfig (JSON). */
+    config: { type: "json" },
   },
 } as const satisfies Record<TableName, Record<string, FieldSpec>>;
 
@@ -200,12 +227,23 @@ export interface PersonRow extends CommonRow {
   user_id: string | null;
 }
 
+export interface ViewRow extends CommonRow {
+  table: DataTableName;
+  name: string | null;
+  owner_user_id: string | null;
+  is_default: boolean;
+  position: number | null;
+  /** A ViewConfig (src/shared/views.ts); read it through `normalizeViewConfig`. */
+  config: Json;
+}
+
 export interface RowTypes {
   scenes: SceneRow;
   cues: CueRow;
   content: ContentRow;
   notes: NoteRow;
   persons: PersonRow;
+  views: ViewRow;
 }
 
 export type Row<T extends TableName> = RowTypes[T];

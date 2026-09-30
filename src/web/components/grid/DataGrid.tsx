@@ -193,8 +193,19 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
   // --- Derived layout ---
   const holds = useMemo(() => (hold ? [hold] : []), [hold]);
   const items = useMemo(
-    () => buildLayout({ rows, groups, columns, rowId, sort, holds, collapsed, isSection }),
-    [rows, groups, columns, rowId, sort, holds, collapsed, isSection],
+    () =>
+      buildLayout({
+        rows,
+        groups,
+        columns,
+        sortColumns: props.sortColumns,
+        rowId,
+        sort,
+        holds,
+        collapsed,
+        isSection,
+      }),
+    [rows, groups, columns, props.sortColumns, rowId, sort, holds, collapsed, isSection],
   );
   const allRows = useMemo(() => {
     const m = new Map<string, { row: Row; groupId: string | undefined }>();
@@ -424,6 +435,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       rows: cur.props.rows,
       groups: cur.props.groups,
       columns: cur.props.columns,
+      sortColumns: cur.props.sortColumns,
       rowId,
       sort: cur.props.sort,
       collapsed: cur.collapsed,
@@ -448,6 +460,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       rows: cur.props.rows,
       groups: cur.props.groups,
       columns: cur.props.columns,
+      sortColumns: cur.props.sortColumns,
       rowId,
       sort: cur.props.sort,
       collapsed: cur.collapsed,

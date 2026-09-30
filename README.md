@@ -43,8 +43,15 @@ to try on the **Cues** tab:
   below with a faint **14.22** suggested; Tab accepts it. Leave a number empty and the row
   still stays exactly where you put it.
 - Duplicate numbers (e.g. the two **51.50**s) get an orange underline with a tooltip.
-- **Sort ▾ → Sort by cue number (live)**: edit a number and the row stays put until you
+- **Sort → Sort by cue number (live)**: edit a number and the row stays put until you
   click elsewhere, then slides to its place. **Sort now by cue number** rewrites show order.
+- **Views and colors**: the toolbar above each grid has a view switcher (**View: All cues
+  ▾** → *Duplicate as my view…*) and **Filter**, **Sort**, **Group**, **Fields**, **Row
+  height** and **Color** panels. Try *Filter → Status is Cued*, *Color → + Cues by status*,
+  hiding a column in *Fields*, or *Group → Assignees* on the Notes tab. Personal views save
+  as you go; changes to a shared view show **Unsaved changes** with Save / Discard
+  (editors, kept across reloads), and a viewer who changes one gets their own copy (column
+  widths and frozen columns just stay theirs). Personal views are visible only to you.
 - Drag a row by the handle on its row number into another scene: its scene changes.
 - In a **Content** cell type a new name and pick **Create "…"**: it's created in the cue's
   scene with the `SSS-NNN-` prefix and shows up on the Content tab.
@@ -68,8 +75,8 @@ to try on the **Cues** tab:
   jumps to a cue number. On a phone, **＋** opens quick add: pick a cue, type, Add note.
 
 Undo (⌘Z / ⌘⇧Z) covers cell edits made in that grid; inserts, moves, deletes and "Sort
-now" aren't undoable yet. Column widths, collapsed groups and the live sort are remembered
-per browser (saved views come in M2).
+now" aren't undoable yet. Column widths, order, filters, sorts, grouping, row height and
+color rules belong to the saved view; collapsed groups are remembered per browser.
 
 ## Running it
 

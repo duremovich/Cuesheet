@@ -2,9 +2,9 @@
 
 The project has left the spec-only phase: M0 (the application scaffold), M1a (the show
 data layer: core tables, ops, sync, history, members, Airtable import), M1b (the generic
-`DataGrid`), M1c (the show workspace: a grid tab per core table on the live store, ⌘K) and
-M2b (notes panel, editable row panel with history, tech mode, phone quick-add, the show's
-current session) are built. The stack
+`DataGrid`), M1c (the show workspace: a grid tab per core table on the live store, ⌘K),
+M2a (saved views and conditional formatting) and M2b (notes panel, editable row panel with
+history, tech mode, phone quick-add, the show's current session) are built. The stack
 is decided in `docs/decisions/0005-cloudflare-platform.md`; don't relitigate it without a
 new decision record. Build milestone by milestone; don't pull later-milestone features
 (e.g. the cue grid) into an earlier one.
@@ -40,7 +40,8 @@ Before finishing any task: `pnpm check && pnpm e2e`.
 
 - `src/shared/`: code used by both Worker and web: `api.ts` DTOs, `ws.ts` socket messages,
   `tables.ts` (core table field specs + row types), `ops.ts` (op/resolved-op/snapshot
-  types), `order.ts` (order keys), `ids.ts` (UUIDv7). No runtime dependencies except
+  types), `order.ts` (order keys), `ids.ts` (UUIDv7), `views.ts` (saved view config type,
+  validation, per-table defaults). No runtime dependencies except
   `fractional-indexing` in `order.ts`, which must run identically on both sides.
 - `src/worker/do/ops-engine.ts`: applies op batches to the ShowDO's SQLite.
   `src/worker/import/airtable.ts`: CSVs → ops.
@@ -151,7 +152,8 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   `ShowPage`) creates the store, loads the snapshot and feeds it from the show socket.
   Read with `useShowStore(selector)` (selectors must return values from the state, not
   new objects), `useRow(table, id)`, `useOrderedRows(table)`; write with `useMutate()`.
-  State: `version`, `status`, `tables` (Map by id per table), `order` (ids in show order for
+  State: `version`, `status`, `tables` (Map by id per table, including `views`; read a
+  table's saved views with `useViewsFor(table, userId)`), `order` (ids in show order for
   scenes/cues/content), `joins` (`cueContent`, `cueAssignees`, `noteCues`,
   `noteAssignees`: from-id → target ids), `fieldOptions` (`"cues.status"` → options).
   `mutate` is optimistic (applies at once, including order keys and delete cascades, via
@@ -173,8 +175,12 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   test). New *link* fields also need a join table and an entry in `LINKS`.
 - **Roles** (`memberships.role`): `owner` (the creator; manages members), `editor`
   (everything), `commenter` (read all; create notes, and update/delete/link only notes
-  they created), `viewer` (read only; `/mutate` is 403). Enforced per op in the DO from the
-  role the Worker read on that request. Members: `GET/POST /api/shows/:id/members`,
+  they created), `viewer` (read only). **Exception:** every member, viewers and
+  commenters included, may create/update/delete their own *personal* views
+  (`views.owner_user_id` = themselves); shared views are editors/owners only and nobody
+  touches someone else's personal view. Enforced per op in the DO (`checkRole` in
+  `ops-engine.ts`) from the role the Worker read on that request, so `/mutate` lets viewers
+  through and the engine answers 403 for anything but their own views. Members: `GET/POST /api/shows/:id/members`,
   `PATCH/DELETE .../members/:userId` (owner only; the user must already have an account;
   the owner can't be changed or removed). Removal and logout call
   `ShowDO.disconnectUser(userId)`, which sends `{type:"revoked"}` to that user's sockets
@@ -226,8 +232,10 @@ The show page (`/shows/:id`) is a workspace (`features/show/ShowWorkspace.tsx`):
 (title, presence, theme), tabs (`features/show/tabs.ts`: Cues, Scenes, Content, Notes,
 People → `/shows/:id/<tab>`; `/shows/:id` and unknown tabs redirect to `cues`), Show
 settings (import, members), the ⌘K palette (`features/search/`) and toasts. Tabs read
-`useWorkspace()` (role, `canEdit`/`canComment`, member names, `toast`/`reportError`, the
-cue live sort, `sortCuesNow`, `openImport`).
+`useWorkspace()` (role, `canEdit`/`canComment`, member names, `toast(message, kind,
+{action?, actions?, duration?})`/`reportError`, `sortCuesNow`, `openImport`). Everything about how a grid is
+shown (columns, filters, sort, grouping, colors) comes from its saved view (see "Saved
+views" below).
 
 - **One folder per table**: `features/<table>/columns.ts` (the `Column<View>[]` in display
   order, plus `<table>EditOps(view, key, value) → Op[]`) and the tab component. A tab
@@ -236,7 +244,7 @@ cue live sort, `sortCuesNow`, `openImport`).
   on the object). Scenes, Content, Notes and People use the generic
   `features/shared/TableGrid.tsx` (config: columns, rows or groups, `editOps`,
   `createOps`, `moveOps`, `deleteOps`, panel); the cue list (`features/cues/CueGrid.tsx`)
-  has its own component for number hints and the sort menu. Read-only: `editable: false`
+  has its own component for number hints and Sort now. Read-only: `editable: false`
   columns (or a per-row function, as notes do for commenters) and no
   `createOps`/`moveOps`/`deleteOps` (the grid then offers no insert/drag/delete).
 - **Grid callbacks → ops** (`features/shared/ops.ts`): `onEdit` → the table's edit ops
@@ -270,9 +278,9 @@ cue live sort, `sortCuesNow`, `openImport`).
 - **URL state**: the active row is `?<param>=<id>` (`cue`, `scene`, `content`, `note`,
   `person`; `tabs.ts`), written with `replace`. On load, or on a navigation carrying router
   state `{ focus: id }` (⌘K), the tab calls `grid.focusRow(id)` once the row exists
-  (`features/shared/useTableChrome.ts`). Per-browser prefs (`features/shared/prefs.ts`,
-  localStorage, until saved views): column widths per show+table, collapsed groups per
-  user+show+table, the cue live sort per show.
+  (`features/shared/useTableChrome.ts`); the open view is `?view=<id>`. Per-browser prefs
+  (`features/shared/prefs.ts`, localStorage): collapsed groups per user+show+view and the
+  last view opened per user+show+table.
 - **Row panel** (`features/shared/RowPanel.tsx`, R18): Space / expand icon; follows the
   active row. Props: `table`, `recordId`, the grid's `columns`, and `onEdit(key, value)`
   (the tab's own grid `onEdit` for that row, so the panel writes exactly the grid's ops;
@@ -373,6 +381,106 @@ cue live sort, `sortCuesNow`, `openImport`).
 - **E2E**: set up data through the API (`apiLogin`, `apiCreateShow`, `importExamples` in
   `e2e/helpers.ts`); the grid virtualizes rows, so open a far-down row with `?cue=<id>`
   instead of expecting it in the DOM.
+
+## Saved views (`src/web/features/views/`, R16/R17)
+
+- **Data.** The ShowDO table `views` (migration `0003_views`): `table` (a data table,
+  immutable), `name`, `owner_user_id` (null = shared; else that user's personal view,
+  immutable), `is_default` (shared only; setting it clears the table's other shared defaults
+  in the same batch, server-side, mirrored optimistically in `show-state.ts`), `position`,
+  `config` (JSON, field type `json`). It's a normal table in the op engine (`TABLE_NAMES`
+  includes `views`; `DATA_TABLES` is the five data tables, used for "show has data" and
+  what a view can be for). The engine refuses (400) deleting a table's **last shared view**
+  and more than **50 personal views** per user and table (`MAX_PERSONAL_VIEWS`).
+  **Personal views are private:** `GET /snapshot` (`snapshotJson(userId)`) and `/history`
+  return shared views plus the caller's own; the DO sends ops on a personal view only to
+  its owner's sockets (tagged by user id) and everyone else gets the same `ops` message
+  without them (possibly empty), so versions stay gap-free (`Batch.viewOwners`,
+  `ShowDO.broadcastBatch`). **Defaults:** `seedDefaultViews` runs when the DO starts and
+  gives a data table with no shared view (a show created before views existed) its shared
+  default ("All cues" grouped by scene, "All notes" by status, "All content" by scene,
+  scenes/people ungrouped), without logging a change or bumping the version. Since the last
+  shared view can't be deleted, that only happens once per table.
+- **Config** (`src/shared/views.ts`): `{filters, filterMode, sorts, sortMode: live|none,
+  group: {key, collapsedByDefault?}, fields: {key, width?, hidden?}[], rowHeight,
+  frozenCount, colorRules: {when: Filter[], mode, target: "row" | {cell}, color}[],
+  forkedFrom?}`. Keys are the grid's column keys (plus extra filter fields such as the cue
+  list's `open_notes`), declared per table in `VIEW_FIELDS` with their kind
+  (`viewFields.test.ts` checks it against each tab's `columns.ts`: update both when a
+  column changes). The server rebuilds every config it stores from known keys only
+  (`sanitizeViewConfig`: unknown keys are dropped; 400 for unknown fields, an operator the
+  field's kind doesn't take (`OPS_BY_KIND`), a value of the wrong shape for its operator,
+  grouping by a non-select/link field, duplicate sort keys, or frozenCount above the column
+  count). `fields` lists order/width/hidden; unlisted columns follow in default order,
+  shown, so new columns appear in old views. The client reads configs with
+  `normalizeViewConfig` (lenient; bad parts fall back to the table default).
+- **Where it runs.** All on the client, over the store rows the tab already builds:
+  `useViewConfig(setup)` (one hook per tab; `CueGrid` and `TableGrid` call it) picks the
+  view (`?view=<id>`, else the last one opened, else the shared default, else the built-in
+  default; a `?view=` you can't see is dropped with a toast), keeps the working config,
+  and returns what the grid needs (`columns` laid out, `rows`/`groups`, `sort` +
+  `sortColumns` (every column, so a view can sort by a hidden field), `rowHeight`,
+  `colorRules`, `collapsed`, `onColumnResize`) plus the `toolbar` (`ViewBar`: switcher +
+  Filter/Sort/Group/Fields/Row height/Color popovers). ⌘K lists "Switch view: <name>" for
+  the tab you're on. `evaluate.ts` compiles filters and color rules against
+  `Column.getValue` (typed: numbers; cue numbers by `compareNumericText` from the grid's
+  `ordering.ts`, the one comparator the grid's sort also uses: decimal first, then the
+  letter suffix, 14.25 < 14.3 < 14.3A; dates for `dateFields`; selects by value; links by
+  **record id** with `Filter.labels` caching the picked labels for display, so renames
+  don't break filters; `contains` on a link matches labels); incomplete filters are
+  skipped. Filters saved with labels (before ids) resolve to ids on read
+  (`migrateLinkFilters`) and are stored as ids on the next save. `grouping.ts` groups by
+  any select/multiselect/link/multilink (empty group first; multi-valued fields group by
+  combination, Airtable-style); the tab's own groups are used when the view groups by its
+  `nativeGroupKey` (`views/tableDefaults.ts`: cues/content → scene, notes → status). A
+  filter hides groups left empty. Inserting/dragging into a view-made group maps the
+  position to a neighbour (`mapPosition`) and sets the field with the tab's edit ops
+  (`groupOps`). Cue-number ghosts and duplicate warnings are computed over **all** cues
+  (`hintOrder`: show order, or each group fully sorted under a live sort), never the
+  filtered display.
+- **Saving.** Personal views save as you go (debounced 400 ms). The pending save is sent
+  with `fetch(…, {keepalive: true})` (`api.mutate(…, {keepalive})`) on `pagehide` and
+  when the page is hidden, and through the store when you leave the tab; a save that
+  can't reach the server keeps its draft in localStorage and is retried when the socket
+  reconnects (the store's optimistic change is rolled back meanwhile; the draft is shown).
+  A shared view changed by an editor is a draft (`drafts.ts`, localStorage
+  `cuesheet.viewdraft.<user>.<show>.<view>`, with the base config and the view's
+  `updated_at` it started from; drafts older than 7 days are dropped) until **Save view** /
+  **Discard**. If the view was saved by someone else since, the draft shows "This view
+  changed since your draft" with **Rebase** (`rebaseDraft`: each top-level config key you
+  changed, onto the new saved config) / **Discard**; Save never writes over it.
+  Viewers/commenters on a shared view: column widths and frozen count are their own
+  localStorage overlay (`cuesheet.viewlayout.<user>.<show>.<view>`,
+  `differsOnlyInLayout`), never a copy; any other change (filter, sort, group, hidden
+  fields, row height, color) goes to their personal copy of that view, made once ("<name>
+  (mine)", `config.forkedFrom` = the shared view's id; later changes reuse it). An
+  editor's overlay (from migrated M1c widths) gives way for columns they size in the view.
+- **Filter holds.** A row you insert or are editing stays visible while it's the active row
+  even if it no longer matches (including after a remote change); when you leave it
+  (another row, Enter moving down, or focus moving to another control outside the grid and
+  its pickers; focus merely dropping to `<body>` doesn't count) it's hidden and a toast
+  "Hidden by the current filter" offers **Keep shown** (shows it again and puts you in it,
+  until you leave it) / **Clear filters**. Opening a hidden row from the URL or ⌘K holds and
+  shows it with the same toast (`reveal`, asked by `useTableChrome` before focusing). Call
+  `hold(id)` before inserting and `trackActive(id)` from `onActiveRowChange`; wrap the grid
+  in `wrapProps`.
+- **Popovers** (`Popover.tsx`): focus starts on the first control that doesn't remove or
+  clear (`data-destructive` marks those), Tab/Shift+Tab wrap inside (one stop per radio
+  group), Escape always closes and refocuses the button; "+ Add filter" focuses the new
+  row's field. Below 600 px they're bottom sheets (the Fields sheet puts frozen columns
+  first).
+- **Adding a filter operator:** add it to `FILTER_OPS` (and `VALUELESS_OPS`/`LIST_OPS` if it
+  takes no value / a list) and to the kinds in `OPS_BY_KIND` in `src/shared/views.ts` (and
+  its value shape in `sanitizeViewConfig`), give it a label in `OP_LABELS` (`evaluate.ts`),
+  implement it in `matchesFilter`, and add cases to `evaluate.test.ts` and
+  `test/worker/views.test.ts`. The value editor is picked by field kind in
+  `FilterEditor.tsx`.
+- **Adding a color preset:** return it from `colorPresets(table, fields)` in `presets.ts`
+  (a label and the `ColorRule[]` it appends; `rowsBySelect(field)` colors rows by a select's
+  option colors). Every other select column already gets "Color rows by <field>".
+- **Migration of M1c prefs** (`legacy.ts`): on first open per table, old localStorage
+  column widths become your layout overlay on the shared view you're on, collapsed groups
+  move to the per-view key, the old live sort is dropped, and the old keys are removed.
 
 ## Theme and colors
 

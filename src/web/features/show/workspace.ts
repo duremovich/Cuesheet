@@ -2,7 +2,6 @@
 // may do, and the workspace-level actions (toasts, import, ⌘K commands).
 import { createContext, useContext } from "react";
 import type { Role } from "../../../shared/api";
-import type { SortSpec } from "../../components/grid/types";
 import type { ToastKind, ToastOptions } from "../shared/Toasts";
 
 export interface Workspace {
@@ -19,11 +18,11 @@ export interface Workspace {
   toast(message: string, kind?: ToastKind, opts?: ToastOptions): void;
   /** Toast a failed action ("Couldn't move the cue: …"). */
   reportError(error: unknown, what: string): void;
-  /** The cue list's live sort (per show, in localStorage until saved views). */
-  cueSort: SortSpec[] | undefined;
-  setCueSort(sort: SortSpec[] | undefined): void;
-  /** "Sort now by cue number" (asks first when unnumbered cues would go last). */
-  sortCuesNow(): Promise<void>;
+  /**
+   * "Sort now by cue number" (asks first when unnumbered cues would go last). Resolves true
+   * when show order now follows cue numbers (the cue view then drops its live sort).
+   */
+  sortCuesNow(): Promise<boolean>;
   /** Opens the Airtable import file chooser (editors). */
   openImport(): void;
 }

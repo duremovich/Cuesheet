@@ -3,7 +3,7 @@
 // exports to /import/airtable.
 import { type ChangeEvent, type Ref, useImperativeHandle, useRef, useState } from "react";
 import type { ImportResponse } from "../../shared/ops";
-import { TABLE_NAMES } from "../../shared/tables";
+import { DATA_TABLES } from "../../shared/tables";
 import { api } from "../lib/api";
 import { useApiErrorHandler } from "../lib/auth";
 import { useShowStoreInstance } from "../lib/show-store";
@@ -38,7 +38,7 @@ export function AirtableImport({
     if (files.length === 0) return;
     // The server refuses (409) to import into a show with data unless told to append.
     const state = store.getState();
-    const append = TABLE_NAMES.some((t) => state.tables[t].size > 0);
+    const append = DATA_TABLES.some((t) => state.tables[t].size > 0);
     if (append) {
       const n = state.order.cues.length;
       const ok = window.confirm(

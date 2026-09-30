@@ -181,6 +181,26 @@ export const note_assignees = sqliteTable(
   ],
 );
 
+/**
+ * Saved views (R16/R17). `config` is a JSON ViewConfig (src/shared/views.ts). Shared views
+ * have `owner_user_id` null; personal ones belong to that user. The DO gives a data table
+ * with no shared view (a show created before views existed) its default view when it
+ * starts; the op engine refuses to delete a table's last shared view.
+ */
+export const views = sqliteTable(
+  "views",
+  {
+    ...common(),
+    table: text("table").notNull(),
+    name: text("name"),
+    owner_user_id: text("owner_user_id"),
+    is_default: integer("is_default").notNull().default(0),
+    position: real("position"),
+    config: text("config").notNull().default("{}"),
+  },
+  (t) => [index("views_table_idx").on(t.table)],
+);
+
 /** Per-show select options (`table.field` → values). Seeded by migration 0002. */
 export const field_options = sqliteTable(
   "field_options",

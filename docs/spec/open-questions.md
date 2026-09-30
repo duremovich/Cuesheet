@@ -70,8 +70,8 @@ Things the first build had to decide; each is easy to change.
 - **Sort now.** Sorts the whole show by number; unnumbered cues go to the end (after a
   confirmation); section rows stay above the numbered cue that followed them. Not undoable
   yet. Should it sort within each scene instead, keeping scene order?
-- **Live sort scope.** Stored per show in the browser (like column widths and collapsed
-  groups) until saved views (M2). Viewers can use it too (it's only a view setting).
+- **Live sort scope.** Now part of the saved view (M2a). Viewers can use it too (it's a view
+  setting; changing a shared view gives them a personal copy).
 - **Content created from a picker** is named `SSS-NNN-<typed>` (scene number padded to 3
   digits, next free NNN in that scene) unless the typed name already has the prefix or
   the cue has no numeric scene.
@@ -83,6 +83,15 @@ Things the first build had to decide; each is easy to change.
 - **Deletes** from the grid are immediate for one row (multi-row asks first); deleting a
   scene with cues moves its cues to Unassigned (server cascade). Should scene deletes
   always confirm?
+
+## Saved views (M2a decisions to confirm)
+
+- **Filtered groups.** With a filter on, groups left empty are hidden (the Unassigned group
+  too). "Clear filters" in the "Hidden by the current filter" toast clears all the view's
+  filters, not just the last one.
+- **Rebase granularity.** Rebasing a draft onto a newer shared view takes your value for
+  each top-level config key you changed (all filters, all color rules, …), not a merge
+  within a key.
 
 ## Infrastructure
 
@@ -131,3 +140,12 @@ Things the first build had to decide; each is easy to change.
   typing `@` opens is the reliable way; unknown `@words` stay in the text.
 - **Also needed**: script view with cue placement and version re-anchoring (R20), shot
   lists (R14), calculations and unit conversion (R11, R12), images on surfaces (R13).
+- **Saved views (M2a)** → CLAUDE.md "Saved views": personal views are private (snapshot,
+  history and broadcasts are per user); an editor's unsaved changes to a shared view are a
+  draft kept in the browser until Save/Discard; viewers' column widths and frozen columns
+  are a per-browser overlay, other changes make a personal copy; link filters store record
+  ids (renames keep working); multi-valued grouping groups by combination (Airtable-style,
+  for now); sorting by a hidden column is allowed.
+- **A table always has a shared view** (M2a review): the server refuses to delete the last
+  one; drafts of shared views survive reloads and never overwrite a newer save (rebase or
+  discard); viewers' copies are reused; M1c widths migrate to a per-user overlay.
