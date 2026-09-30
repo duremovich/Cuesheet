@@ -15,7 +15,10 @@ export interface Draft {
   config: ViewConfig;
   /** The saved config the draft started from. */
   base: ViewConfig;
-  /** The view's `updated_at` when the draft started (null: no saved view yet). */
+  /**
+   * The view's `updated_at` (the server's stamp) when the draft started. Null: no saved
+   * view yet, or it had unconfirmed local changes; set once the server confirms it.
+   */
   baseUpdatedAt: number | null;
   /** When the draft was last written (ms). */
   savedAt: number;

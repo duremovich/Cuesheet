@@ -49,6 +49,8 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
   // The role can change while the show is open (the owner changes it): the server tells
   // this user's sockets and the store keeps it; editability follows without a reload.
   const role = useShowStore((s) => s.role) ?? data.role;
+  // "loading" until the first snapshot is in, then "ready" (or "error"); e2e waits on it.
+  const storeStatus = useShowStore((s) => s.status);
   const canEdit = role === "owner" || role === "editor";
   // Name and session can change while the show is open (`{type:"show"}`).
   const showName = useShowStore((s) => s.show?.name) ?? data.show.name;
@@ -226,7 +228,11 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
 
   return (
     <WorkspaceContext.Provider value={workspace}>
-      <div className={styles.workspace}>
+      <div
+        className={styles.workspace}
+        data-testid="show-workspace"
+        data-store-status={storeStatus}
+      >
         <AppHeader>
           <h1 className={pageStyles.showTitle} data-testid="show-name" title={showName}>
             {showName}

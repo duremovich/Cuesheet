@@ -86,6 +86,11 @@ export interface ShowStore {
   refresh(): Promise<void>;
   /** Replace the show-level fields (after a PATCH, before its broadcast arrives). */
   setShow(show: ShowMeta): void;
+  /**
+   * Whether a local batch touching this row hasn't reached the confirmed state yet, i.e.
+   * what you see of it is (partly) optimistic, stamps like `updated_at` included.
+   */
+  hasPending(table: TableName, id: string): boolean;
 }
 
 /** How the store talks to the server (injectable for tests). */
@@ -173,6 +178,12 @@ export class ShowStoreImpl implements ShowStore {
   }
   get status() {
     return this.visible.status;
+  }
+
+  hasPending(table: TableName, id: string): boolean {
+    return this.pending.some((p) =>
+      (p.acked?.ops ?? p.local).some((o) => o.op !== "meta" && o.table === table && o.id === id),
+    );
   }
 
   getState = (): ShowState => this.visible;

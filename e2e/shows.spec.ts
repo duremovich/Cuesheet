@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { ADMIN, createShow, login, uniqueName } from "./helpers";
+import { ADMIN, createShow, login, openShow, uniqueName, waitForShowReady } from "./helpers";
 
 test("sign in, create a show, and see live presence from two browsers", async ({ browser }) => {
   const alice = await browser.newContext();
@@ -19,13 +19,16 @@ test("sign in, create a show, and see live presence from two browsers", async ({
   await page.getByRole("link", { name: "Cuesheet" }).click();
   await expect(page.getByTestId("show-list")).toContainText(name);
   await page.getByRole("link", { name }).click();
+  await waitForShowReady(page);
+  // The count comes from the server's presence broadcast; the old socket's close may
+  // land after the new one's hello (briefly "2 clients"), so wait for the settled value.
   await expect(page.getByTestId("presence-count")).toHaveText("1 client");
 
   // A second browser context (separate cookies) on the same show.
   const bob = await browser.newContext();
   const page2 = await bob.newPage();
   await login(page2);
-  await page2.goto(`/shows/${showId}`);
+  await openShow(page2, showId);
   await expect(page2.getByTestId("presence-count")).toHaveText("2 clients");
   await expect(page.getByTestId("presence-count")).toHaveText("2 clients");
 
@@ -33,6 +36,26 @@ test("sign in, create a show, and see live presence from two browsers", async ({
   await bob.close();
   await expect(page.getByTestId("presence-count")).toHaveText("1 client");
   await alice.close();
+});
+
+test("signing out in one browser leaves the same user's other browsers live", async ({
+  browser,
+}) => {
+  const laptop = await (await browser.newContext()).newPage();
+  await login(laptop);
+  const showId = await createShow(laptop, uniqueName("Two devices"));
+  const phone = await (await browser.newContext()).newPage();
+  await login(phone);
+  await openShow(phone, showId);
+  await expect(laptop.getByTestId("presence-count")).toHaveText("2 clients");
+
+  // The phone signs out: only its own socket is revoked.
+  await phone.getByRole("button", { name: "Sign out" }).click();
+  await expect(phone).toHaveURL(/\/login/);
+  await expect(laptop.getByTestId("presence-count")).toHaveText("1 client");
+  await expect(laptop.getByTestId("presence")).toHaveAttribute("data-status", "connected");
+  await laptop.context().close();
+  await phone.context().close();
 });
 
 test("signed-out users are sent to /login and returned afterwards", async ({ page }) => {

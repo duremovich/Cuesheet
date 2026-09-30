@@ -22,11 +22,13 @@ export function uniqueName(prefix: string): string {
   return `${prefix} ${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
 
+/** Signs in through the login form and waits for the show list. */
 export async function login(page: Page, email = ADMIN.email, password = ADMIN.password) {
   await page.goto("/login");
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page).not.toHaveURL(/\/login/);
   await expect(page.getByRole("heading", { name: "Shows" })).toBeVisible();
 }
 
@@ -37,9 +39,26 @@ export function showIdFromUrl(url: string): string {
   return id;
 }
 
+/**
+ * Waits until the show workspace has loaded its store (the first snapshot is in), so
+ * what the test reads next is the show's data, not the loading state.
+ */
+export async function waitForShowReady(page: Page) {
+  await expect(page.getByTestId("show-workspace")).toHaveAttribute("data-store-status", "ready");
+}
+
+/** Opens a show (optionally a tab path and query, e.g. `/content?view=…`) and waits for it. */
+export async function openShow(page: Page, showId: string, path = "") {
+  await page.goto(`/shows/${showId}${path}`);
+  await waitForShowReady(page);
+}
+
+/** Creates a show from the show list (signed in, on `/`) and waits for its workspace. */
 export async function createShow(page: Page, name: string): Promise<string> {
   await page.getByLabel("Show name").fill(name);
   await page.getByRole("button", { name: "New show" }).click();
+  await page.waitForURL(/\/shows\/[^/]+/);
+  await waitForShowReady(page);
   await expect(page.getByTestId("show-name")).toHaveText(name);
   return showIdFromUrl(page.url());
 }

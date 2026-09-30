@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import type { MeResponse, SessionResponse } from "../../shared/api";
+import { sha256Hex } from "../auth/bytes";
 import { clearSessionCookie, readSessionToken, serializeSessionCookie } from "../auth/cookie";
 import { hashPassword, needsRehash, verifyPassword } from "../auth/password";
 import {
@@ -16,15 +17,17 @@ import { showStub } from "./shows";
 import { isHttps, readJsonObject, str } from "./util";
 
 /**
- * Close the user's open show sockets (all their devices: sockets aren't tied to a session).
- * Other devices whose session is still valid reconnect on their own.
+ * Close the show sockets this session opened (the browser that signed out). Sockets are
+ * tagged with their session, so the user's other browsers and devices stay connected:
+ * the client treats `revoked` as terminal, and their sessions are still valid.
  */
-async function disconnectEverywhere(env: Env, db: D1Db, userId: string): Promise<void> {
+async function disconnectSession(env: Env, db: D1Db, userId: string, token: string) {
+  const sessionId = await sha256Hex(token);
   const shows = await db
     .select({ showId: schema.memberships.showId })
     .from(schema.memberships)
     .where(eq(schema.memberships.userId, userId));
-  await Promise.all(shows.map((s) => showStub(env, s.showId).disconnectUser(userId)));
+  await Promise.all(shows.map((s) => showStub(env, s.showId).disconnectSession(sessionId)));
 }
 
 // Verifying against a throwaway hash when the email is unknown keeps response timing
@@ -70,7 +73,7 @@ export const authRoutes = new Hono<AppEnv>()
     if (token) {
       const user = await getSessionUser(c.var.db, token);
       await deleteSession(c.var.db, token);
-      if (user) await disconnectEverywhere(c.env, c.var.db, user.id);
+      if (user) await disconnectSession(c.env, c.var.db, user.id, token);
     }
     c.header("Set-Cookie", clearSessionCookie({ secure: isHttps(c) }));
     return c.json({ ok: true });

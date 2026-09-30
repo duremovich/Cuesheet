@@ -39,6 +39,11 @@ import {
 
 /** Header the Worker uses to tell the DO who opened a WebSocket. */
 export const USER_ID_HEADER = "X-Cuesheet-User";
+/** Header carrying the opener's session id (the SHA-256 of their cookie token). */
+export const SESSION_ID_HEADER = "X-Cuesheet-Session";
+
+/** WebSocket tag for the sockets one session (one signed-in browser) opened. */
+const sessionTag = (sessionId: string) => `session:${sessionId}`;
 
 /** Close code sent to sockets whose user lost access (logout, removed from the show). */
 export const ACCESS_REVOKED_CODE = 4003;
@@ -89,6 +94,7 @@ const UPLOAD_PREFIX = "upload:";
 
 interface SocketAttachment {
   userId: string;
+  sessionId?: string;
 }
 
 export class ShowDO extends DurableObject<Env> {
@@ -369,10 +375,6 @@ export class ShowDO extends DurableObject<Env> {
     );
   }
 
-  /**
-   * Close every socket belonging to a user (logout, removal from the show). Each gets a
-   * `revoked` message first so the client stops reconnecting instead of retrying.
-   */
   /** Tell a user's open sockets their role changed (`{type:"role"}`). Returns how many. */
   async notifyRole(userId: string, role: Role): Promise<number> {
     const sockets = this.ctx.getWebSockets(userId);
@@ -391,8 +393,24 @@ export class ShowDO extends DurableObject<Env> {
     return n;
   }
 
+  /**
+   * Close every socket belonging to a user (removal from the show). Each gets a
+   * `revoked` message first so the client stops reconnecting instead of retrying.
+   */
   async disconnectUser(userId: string): Promise<number> {
-    const sockets = this.ctx.getWebSockets(userId);
+    return this.revoke(this.ctx.getWebSockets(userId));
+  }
+
+  /**
+   * Close the sockets one session opened (that browser signed out), the same way. The
+   * user's other sessions (other browsers and devices) stay connected: their access
+   * hasn't changed, and `revoked` is terminal for a client.
+   */
+  async disconnectSession(sessionId: string): Promise<number> {
+    return this.revoke(this.ctx.getWebSockets(sessionTag(sessionId)));
+  }
+
+  private revoke(sockets: WebSocket[]): number {
     for (const ws of sockets) {
       this.send(ws, { type: "revoked" });
       try {
@@ -416,9 +434,10 @@ export class ShowDO extends DurableObject<Env> {
     const meta = await this.getMeta();
     if (!meta) return new Response("Show not initialised", { status: 404 });
 
+    const sessionId = request.headers.get(SESSION_ID_HEADER) ?? undefined;
     const { 0: client, 1: server } = new WebSocketPair();
-    this.ctx.acceptWebSocket(server, [userId]);
-    server.serializeAttachment({ userId } satisfies SocketAttachment);
+    this.ctx.acceptWebSocket(server, sessionId ? [userId, sessionTag(sessionId)] : [userId]);
+    server.serializeAttachment({ userId, sessionId } satisfies SocketAttachment);
 
     const clients = this.openSockets().length;
     this.send(server, { type: "hello", showId: meta.showId, clients });
