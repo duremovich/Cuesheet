@@ -10,6 +10,7 @@ import { cueColumns } from "../cues/columns";
 import { noteColumns } from "../notes/columns";
 import { personColumns } from "../people/columns";
 import { sceneColumns } from "../scenes/columns";
+import { shotColumns } from "../shots/columns";
 import { surfaceColumns } from "../surfaces/columns";
 import { fieldKind } from "./evaluate";
 import { DATE_FIELDS } from "./tableDefaults";
@@ -22,6 +23,7 @@ const columns: Record<DataTableName, Column<never>[]> = {
   scenes: sceneColumns({}, true, store) as Column<never>[],
   persons: personColumns({}, true) as Column<never>[],
   surfaces: surfaceColumns({ store, editable: true }) as Column<never>[],
+  shots: shotColumns({ store, fieldOptions: {}, editable: true, showId: "s" }) as Column<never>[],
 };
 
 describe("VIEW_FIELDS matches the tabs' columns", () => {

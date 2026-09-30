@@ -30,6 +30,8 @@ const GALLERY = {
 };
 const selectState = (s: ShowState) => s;
 
+const CUSTOM = { fieldTable: "content", rowOf: (v: ContentView) => v.content };
+
 export function ContentGrid() {
   const { canEdit, showId } = useWorkspace();
   const store = useShowStoreInstance();
@@ -106,6 +108,7 @@ export function ContentGrid() {
   return (
     <TableGrid<ContentView>
       tab="content"
+      custom={CUSTOM}
       title="Content"
       label="Content list"
       noun="content item"

@@ -58,6 +58,24 @@ export interface ShowSummaryDTO {
   name: string;
   role: Role;
   createdAt: number;
+  /** A show template (R27): listed separately; "New from template" copies it. */
+  isTemplate?: boolean;
+}
+
+/**
+ * POST /api/shows/:id/clone (owner/editor of the source): a new show with the source's
+ * surfaces, scenes (unless `includeScenes` is false), custom tables (definitions only),
+ * custom fields, shared views and default unit; never cues, notes, content, shots,
+ * attachments or the script. `asTemplate`: the copy is a template ("Save as template").
+ */
+export interface CloneShowRequest {
+  name: string;
+  includeScenes?: boolean;
+  asTemplate?: boolean;
+}
+
+export interface CloneShowResponse {
+  show: ShowSummaryDTO;
 }
 
 export interface ShowsResponse {

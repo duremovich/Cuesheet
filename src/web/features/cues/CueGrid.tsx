@@ -1,6 +1,6 @@
 // The Cues tab: the cue list on the live store (R1–R5a). Grouped by scene, show order by
 // default, optional live sort by number, "Sort now", ghost numbers and duplicate warnings.
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { newId } from "../../../shared/ids";
 import type { Op } from "../../../shared/ops";
@@ -9,6 +9,7 @@ import type { CellDecoration, Column, InsertPosition, MenuItem } from "../../com
 import { sceneIdForGroup, UNASSIGNED, ViewCache } from "../../lib/show-selectors";
 import type { ShowState } from "../../lib/show-store";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
+import { useCustomColumns } from "../custom/useCustomColumns";
 import { CUE_SHEET_COLUMNS } from "../print/cueSheet";
 import { usePrintMode } from "../print/PrintShell";
 import { PrintTable, PrintViewLink } from "../print/PrintTable";
@@ -16,6 +17,7 @@ import { scriptUrl } from "../script/links";
 import { anchorWarnings } from "../script/markers";
 import { scriptPanelTab } from "../script/ScriptTab";
 import { useScriptSnapshot, useScriptVersions } from "../script/source";
+import { BulkEditDialog, type BulkEditRequest, bulkOps, rowIdsOf } from "../shared/BulkEdit";
 import { groupOrder, placementFor } from "../shared/ops";
 import { RowPanel } from "../shared/RowPanel";
 import { TableFrame, ToolbarButton } from "../shared/TableFrame";
@@ -40,6 +42,8 @@ const SORT_PRESETS: SortPreset[] = [
 ];
 
 const selectState = (s: ShowState) => s;
+const cueRowOf = (v: CueView) => v.cue;
+const isSectionView = (v: CueView) => v.cue.is_section;
 const NO_RULES: never[] = [];
 
 export function CueGrid() {
@@ -86,9 +90,25 @@ export function CueGrid() {
   const groupsRef = useRef(groups);
   groupsRef.current = groups;
 
-  const baseColumns = useMemo(
+  const coreColumns = useMemo(
     () => cueColumns({ store, fieldOptions, editable }),
     [store, fieldOptions, editable],
+  );
+  // Custom fields (R9) after the cue's own columns.
+  const custom = useCustomColumns<CueView>({
+    fieldTable: "cues",
+    table: "cues",
+    rowOf: cueRowOf,
+    editable,
+    baseColumns: coreColumns,
+    rows: views,
+  });
+  const baseColumns = custom.columns;
+  const customEdit = custom.editOps;
+  const editOps = useCallback(
+    (v: CueView, key: string, value: unknown) =>
+      customEdit(v, key, value) ?? cueEditOps(v, key, value),
+    [customEdit],
   );
   // The saved view (below) decides whether a row is shown; the chrome asks it first.
   const revealRef = useRef<((id: string) => "shown" | "pending" | "missing") | null>(null);
@@ -127,9 +147,12 @@ export function CueGrid() {
     rows: views,
     groups,
     nativeGroupKey: "scene",
-    editOps: cueEditOps,
+    editOps,
     sortPresets: SORT_PRESETS,
     sortNow,
+    fieldTable: "cues",
+    exportTitle: "Cues",
+    isSection: isSectionView,
   });
   const vcRef = useRef(vc);
   vcRef.current = vc;
@@ -192,7 +215,7 @@ export function CueGrid() {
     (id: string, key: string, value: unknown) => {
       const view = viewsRef.current.get(id);
       if (!view) return;
-      const ops = cueEditOps(view, key, value);
+      const ops = editOps(view, key, value);
       if (key === "scene") {
         // A new scene also puts the cue at the end of that scene's group (one batch), so it
         // lands somewhere predictable when focus leaves it.
@@ -211,8 +234,61 @@ export function CueGrid() {
       // Rejections reach the grid's onError (toast below).
       return store.mutate(ops);
     },
-    [store],
+    [store, editOps],
   );
+
+  // --- Bulk edit (S8): "Set field for selection…" / "Move to scene…" ---
+  const [bulk, setBulk] = useState<BulkEditRequest | null>(null);
+  const applyBulk = (column: Column<CueView>, value: unknown) => {
+    const rows = (bulk?.rowIds ?? []).flatMap((id) => viewsRef.current.get(id) ?? []);
+    const { ops, undo } = bulkOps<CueView>({
+      rows,
+      rowId: (v) => v.id,
+      column,
+      value,
+      editOps,
+    });
+    if (column.key === "scene") {
+      // Like editing the Scene cell: the cues go to the end of that scene, in their order.
+      const sceneId = (value as { id: string } | null)?.id ?? null;
+      const groupId = sceneId ?? UNASSIGNED;
+      const groups = groupOrder(groupsRef.current);
+      let prev: string | null = null;
+      for (const v of rows) {
+        const placement: { after?: string | null; before?: string | null } =
+          prev !== null
+            ? { after: prev }
+            : groups.some((g) => g.id === groupId)
+              ? placementFor(
+                  { groupId },
+                  groups.map((g) => ({
+                    ...g,
+                    rowIds: g.rowIds.filter((r) => !bulk?.rowIds.includes(r)),
+                  })),
+                )
+              : {};
+        ops.push({ op: "move", table: "cues", id: v.id, ...placement });
+        prev = v.id;
+      }
+    }
+    if (ops.length === 0) return;
+    const n = rows.length;
+    store
+      .mutate(ops)
+      .then(() =>
+        ws.toast(`Set ${column.title} on ${n} ${n === 1 ? "cue" : "cues"}`, "info", {
+          action: {
+            label: "Undo",
+            run: () =>
+              void send(
+                undo((id) => viewsRef.current.get(id)),
+                "undo the change",
+              ).catch(() => undefined),
+          },
+        }),
+      )
+      .catch((e: unknown) => report(e, "change the cues"));
+  };
 
   const insert = useCallback(
     (at: InsertPosition, fields: Record<string, unknown> = {}) => {
@@ -296,12 +372,24 @@ export function CueGrid() {
   );
 
   const extraMenuItems = useCallback(
-    ({ rowId }: { rowId: string }): MenuItem[] => {
+    (ctx: { rowId: string; selectedRowIds: string[] }): MenuItem[] => {
+      const { rowId } = ctx;
       if (!viewsRef.current.has(rowId)) return [];
       const items: MenuItem[] = [
         { label: "Show in script", onSelect: () => navigate(scriptUrl(ws.showId, rowId)) },
       ];
       if (editable) {
+        items.push(
+          {
+            label: "Set field for selection…",
+            onSelect: () => setBulk({ rowIds: rowIdsOf(ctx) }),
+          },
+          {
+            label: "Move to scene…",
+            onSelect: () =>
+              setBulk({ rowIds: rowIdsOf(ctx), field: "scene", title: "Move to scene" }),
+          },
+        );
         items.push({
           label: "Insert section divider below",
           onSelect: () => {
@@ -423,6 +511,15 @@ export function CueGrid() {
           onError={(e, action) => report(e, GRID_ACTIONS[action])}
         />
       </div>
+      {bulk && (
+        <BulkEditDialog<CueView>
+          request={bulk}
+          columns={baseColumns}
+          rows={bulk.rowIds.flatMap((id) => viewsById.get(id) ?? [])}
+          onApply={applyBulk}
+          onClose={() => setBulk(null)}
+        />
+      )}
     </TableFrame>
   );
 }

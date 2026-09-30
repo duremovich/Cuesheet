@@ -61,10 +61,13 @@ export async function uploadUrl(c: C): Promise<Response> {
   const field = typeof body?.field === "string" ? body.field : "attachments";
   const filename = typeof body?.filename === "string" ? cleanFilename(body.filename) : "";
   const size = body?.size;
-  if (!isAttachmentField(table, field)) {
+  if (!isValidId(recordId)) return c.json({ error: "recordId must be an id" }, 400);
+  if (
+    !isAttachmentField(table, field) &&
+    !(await stub(c).isCustomAttachmentField(table, recordId, field))
+  ) {
     return c.json({ error: `${table}.${field} is not an attachment field` }, 400);
   }
-  if (!isValidId(recordId)) return c.json({ error: "recordId must be an id" }, 400);
   if (!filename) return c.json({ error: "filename is required" }, 400);
   if (typeof size !== "number" || !Number.isInteger(size) || size < 0) {
     return c.json({ error: "size must be a byte count" }, 400);

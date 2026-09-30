@@ -1,21 +1,26 @@
 // Global search (R5b, ⌘K): cues by number / description / SM call, content by name, scenes
-// by number + name, surfaces by name / channel, notes by body, people by name. Pure; the palette renders the result.
+// by number + name, surfaces by name / channel, notes by body, people by name, shots by
+// number / description, custom tables' rows by name; text custom fields count too (R9).
+// Pure; the palette renders the result.
 
+import { customTableRef } from "../../../shared/custom-fields";
+import type { CustomValues } from "../../../shared/tables";
 import { sceneTitle } from "../../lib/show-selectors";
 import type { ShowData } from "../../lib/show-state";
 import { cueNumberKey, parseCueNumber } from "../cues/cueNumbers";
+import { customRowLabel, customTablesInOrder, fieldsFor } from "../custom/model";
 import { matchScore, rankItems } from "../shared/search";
-import type { TabKey } from "../show/tabs";
+import { type AnyTabKey, customTabKey } from "../show/tabs";
 
 export interface SearchHit {
-  tab: TabKey;
+  tab: AnyTabKey;
   id: string;
   title: string;
   detail?: string;
 }
 
 export interface SearchGroup {
-  tab: TabKey;
+  tab: AnyTabKey;
   label: string;
   hits: SearchHit[];
 }
@@ -48,6 +53,18 @@ export function searchShow(data: ShowData, q: string, limit = 8): SearchGroup[] 
   const nameScore = (...names: (string | null | undefined)[]) =>
     Math.min(...names.map((n) => matchScore(q, [n]) ?? 3));
   const { tables, order } = data;
+  /** A row's text custom field values (not sensitive ones), for matching. */
+  const texts = (fieldTable: string) => {
+    const keys = fieldsFor(tables.custom_fields, fieldTable)
+      .filter(
+        (f) =>
+          (f.type === "text" || f.type === "longtext" || f.type === "url") && !f.options.sensitive,
+      )
+      .map((f) => f.key);
+    return (custom: CustomValues): string[] =>
+      keys.flatMap((k) => (typeof custom[k] === "string" ? [custom[k] as string] : []));
+  };
+  const cueTexts = texts("cues");
 
   // Cues: number matches first (exact, then prefix), then text matches, in show order.
   const cues = order.cues.map((id) => tables.cues.get(id)).filter((c) => !!c);
@@ -55,7 +72,9 @@ export function searchShow(data: ShowData, q: string, limit = 8): SearchGroup[] 
   const cueHits = cues
     .map((c, i) => {
       const ns = numberScore(q, c.number);
-      const ts = looksNumeric ? null : matchScore(q, [c.description, c.sm_call, c.trigger_value]);
+      const ts = looksNumeric
+        ? null
+        : matchScore(q, [c.description, c.sm_call, c.trigger_value, ...cueTexts(c.custom)]);
       const s = ns ?? (ts === null ? null : 2 + ts);
       return { c, s, i };
     })
@@ -76,7 +95,15 @@ export function searchShow(data: ShowData, q: string, limit = 8): SearchGroup[] 
   if (cueList.length) add({ tab: "cues", label: "Cues", hits: cueList }, cueBest);
 
   const scenes = order.scenes.map((id) => tables.scenes.get(id)).filter((s) => !!s);
-  const sceneRanked = rankItems(scenes, q, (s) => [sceneTitle(s), s.song], { limit });
+  const sceneTexts = texts("scenes");
+  const sceneRanked = rankItems(
+    scenes,
+    q,
+    (s) => [sceneTitle(s), s.song, ...sceneTexts(s.custom)],
+    {
+      limit,
+    },
+  );
   const sceneHits = sceneRanked.map((s) => ({
     tab: "scenes" as const,
     id: s.id,
@@ -92,7 +119,10 @@ export function searchShow(data: ShowData, q: string, limit = 8): SearchGroup[] 
   }
 
   const content = order.content.map((id) => tables.content.get(id)).filter((c) => !!c);
-  const contentRanked = rankItems(content, q, (c) => [c.name], { limit });
+  const contentTexts = texts("content");
+  const contentRanked = rankItems(content, q, (c) => [c.name, ...contentTexts(c.custom)], {
+    limit,
+  });
   const contentHits = contentRanked.map((c) => ({
     tab: "content" as const,
     id: c.id,
@@ -104,7 +134,13 @@ export function searchShow(data: ShowData, q: string, limit = 8): SearchGroup[] 
   }
 
   const surfaces = order.surfaces.map((id) => tables.surfaces.get(id)).filter((s) => !!s);
-  const surfaceRanked = rankItems(surfaces, q, (s) => [s.name, s.channel], { limit });
+  const surfaceTexts = texts("surfaces");
+  const surfaceRanked = rankItems(
+    surfaces,
+    q,
+    (s) => [s.name, s.channel, ...surfaceTexts(s.custom)],
+    { limit },
+  );
   const surfaceHits = surfaceRanked.map((s) => ({
     tab: "surfaces" as const,
     id: s.id,
@@ -129,7 +165,8 @@ export function searchShow(data: ShowData, q: string, limit = 8): SearchGroup[] 
   if (noteHits.length) add({ tab: "notes", label: "Notes", hits: noteHits }, null);
 
   const people = [...tables.persons.values()];
-  const peopleRanked = rankItems(people, q, (p) => [p.name], { limit });
+  const personTexts = texts("persons");
+  const peopleRanked = rankItems(people, q, (p) => [p.name, ...personTexts(p.custom)], { limit });
   const peopleHits = peopleRanked.map((p) => ({
     tab: "people" as const,
     id: p.id,
@@ -138,6 +175,59 @@ export function searchShow(data: ShowData, q: string, limit = 8): SearchGroup[] 
   }));
   if (peopleHits.length) {
     add({ tab: "people", label: "People", hits: peopleHits }, nameScore(peopleRanked[0]?.name));
+  }
+
+  const shots = order.shots.map((id) => tables.shots.get(id)).filter((s) => !!s);
+  const shotTexts = texts("shots");
+  const shotHits = shots
+    .map((s, i) => {
+      const ns = numberScore(q, s.number);
+      const ts = matchScore(q, [s.description, s.group, ...shotTexts(s.custom)]);
+      return { s, i, score: ns ?? (ts === null ? null : 2 + ts) };
+    })
+    .filter((x) => x.score !== null)
+    .sort((a, b) => (a.score as number) - (b.score as number) || a.i - b.i)
+    .slice(0, limit);
+  if (shotHits.length) {
+    add(
+      {
+        tab: "shots",
+        label: "Shots",
+        hits: shotHits.map(({ s }) => ({
+          tab: "shots" as const,
+          id: s.id,
+          title: s.number?.trim() ? `Shot ${s.number.trim()}` : "Shot (no number)",
+          detail: clip(
+            [tables.shot_lists.get(s.shot_list_id)?.name, s.description]
+              .filter(Boolean)
+              .join(" · "),
+          ),
+        })),
+      },
+      shotHits[0]?.score ?? null,
+    );
+  }
+
+  for (const t of customTablesInOrder(tables.custom_tables)) {
+    const rowTexts = texts(customTableRef(t.id));
+    const rows = order.custom_rows
+      .map((id) => tables.custom_rows.get(id))
+      .filter((r) => !!r && r.table_id === t.id) as NonNullable<
+      ReturnType<typeof tables.custom_rows.get>
+    >[];
+    const ranked = rankItems(rows, q, (r) => [customRowLabel(data, r), ...rowTexts(r.custom)], {
+      limit,
+    });
+    if (!ranked.length) continue;
+    const tab = customTabKey(t.id);
+    add(
+      {
+        tab,
+        label: t.label || "Custom table",
+        hits: ranked.map((r) => ({ tab, id: r.id, title: customRowLabel(data, r) })),
+      },
+      nameScore(customRowLabel(data, ranked[0] as (typeof ranked)[number])),
+    );
   }
 
   // Groups with an exact or prefix name match (or cue number) come before groups with only

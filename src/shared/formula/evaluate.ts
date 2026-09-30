@@ -18,7 +18,15 @@ export interface Quantity {
   unit: "m";
 }
 
-export type ErrorCode = "#UNIT" | "#DIV/0" | "#VALUE" | "#NAME" | "#ERROR" | "#DEPTH";
+export type ErrorCode =
+  | "#UNIT"
+  | "#DIV/0"
+  | "#VALUE"
+  | "#NAME"
+  | "#ERROR"
+  | "#DEPTH"
+  /** A sensitive custom field (formulas never read those, M5a). */
+  | "#HIDDEN";
 
 export interface FormulaError {
   error: string;

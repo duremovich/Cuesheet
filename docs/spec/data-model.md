@@ -79,8 +79,11 @@ One per production. All other records belong to a show.
 | `default_frame_rate` | number | for timecode fields |
 | `dates` | date range | first rehearsal, first preview, opening, closing (from Calendar) |
 
-Shows can be **cloned as a template**: scenes, surfaces, custom tables and view definitions
-copy; cues, notes and content don't.
+Shows can be **cloned as a template** (built in M5a: `POST /api/shows/:id/clone`): scenes
+(optional), surfaces, custom fields, custom tables (definitions only), shared view
+definitions and the default unit copy; cues, notes, content, shots, attachments, the script
+and personal views don't. A template is a show flagged `is_template` (D1), listed apart on
+the shows page.
 
 ### Scene
 
@@ -262,8 +265,8 @@ See [ux.md](ux.md#script-view).
 For video shoots. A shot list is a small ordered table with the same behaviors as the cue
 list (manual order, grouping, printing).
 
-**ShotList**: `name`, `shoot_date`, `location`, `content` (link → Content, many: what the
-shoot produces), `notes`.
+**ShotList**: `name`, `shoot_date` (`YYYY-MM-DD`), `location`, `notes`, `position`. (A
+list-level `content` link is not built: each shot links its content.)
 
 **Shot**:
 
@@ -279,8 +282,12 @@ shoot produces), `notes`.
 | `talent` | link → Person (many) | |
 | `duration` | duration | |
 | `status` | select | Planned / Shot / Selected / Cut |
-| `reference_image` | attachment | |
-| `order_key` | order | |
+| `content` | link → Content (many) | what the shot is for |
+| `reference` | attachment | reference images |
+| `order_key` | order | show order across all lists; a list shows its own shots in order |
+
+Built in M5a (R14): the **Shots** tab, grouped by `group` with the cue list's ordering,
+insert, drag and ghost-number behaviours, and a "Shot list" print preset.
 
 ### Person
 
@@ -312,9 +319,27 @@ These are created by the user with the field types below and use the same grid, 
 formatting as core tables. Show templates can carry a starter set (Calendar, Directory,
 Network are likely on every show). Password-type fields are masked in the grid.
 
+**Storage (M5a).** `custom_tables` (`key`, `label`, `icon`, `position`,
+`primary_field_key`) and one generic `custom_rows` table (`table_id`, `order_key`,
+`custom`). Every field of a custom table is a custom field on `custom:<tableId>`. Custom
+fields on core tables and custom tables alike are `custom_fields` rows (`table`, `key`
+(a slug, unique per table), `label`, `type`, `options` JSON, `position`, `width`); a row's
+values live in its `custom` JSON under the key, validated by the op engine against the
+definition. Link fields store an array of record ids of their target (a core table or
+`custom:<id>`); the reverse side is shown from the linked record. Attachment fields are
+`attachments` rows whose `field` is the key. Text fields can be **sensitive** (masked,
+revealed on request, kept out of history and exports). The Airtable importer turns the
+example's Calendar, Directory, Reference Links, Network and Millumin CSVs into custom
+tables with guessed field types (URL, checkbox, date, number, select, sensitive
+password…).
+
 ## Field types
 
-Available on core and custom tables.
+Available on core and custom tables. Custom fields (M5a) take: text, long text, number,
+checkbox, select, multi-select, date, datetime, duration, timecode, measurement, pixel
+size, URL, link, attachment and formula. Not built yet: percent, currency, date range,
+lookup and rollup as field types (formulas cover lookups: `LOOKUP`, `COUNT`, `SUM`,
+`JOIN`), created/updated by/at as columns, rich text and @mentions in long text.
 
 | Type | Notes |
 | --- | --- |
@@ -365,9 +390,12 @@ A small expression language, deliberately smaller than Airtable's:
   on hover.
 
 Formulas recompute live (on the client, per row) and can drive filters, sorting and
-conditional formatting. In M3b they're the built-in computed columns on Surfaces (`ppi`,
-`pixel_pitch`, `aspect_ratio`, `throw_width` = throw distance ÷ lens ratio); user-defined
-formula fields come with custom fields (M5). The engine is `src/shared/formula/`.
+conditional formatting. The built-in computed columns on Surfaces (`ppi`, `pixel_pitch`,
+`aspect_ratio`, `throw_width` = throw distance ÷ lens ratio) came in M3b; user-defined
+**formula custom fields** (M5a) name any column or custom field by label or key
+(`{PPI} * 2`, `{Gain factor} * {Width}`), may use other formula fields (a cycle is an
+error value), and read linked records through link fields. The engine is
+`src/shared/formula/`.
 
 ## Mapping from the Airtable base
 
@@ -417,7 +445,8 @@ Every column in the export, and where it goes.
 | Personnel | Name, Role, Email, Photo, Theatre | Person fields |
 | | Cast | Person.group = Cast |
 | | Scenes, Notes | custom / reverse links |
-| Calendar, Directory, Reference Links, Network, Millumin | all | custom tables |
+| Calendar, Directory, Reference Links, Network, Millumin | all | custom tables (one per CSV, typed fields guessed; editable in the import preview) |
+| any core CSV | a column not listed here | a new custom field when the import preview asks for one |
 
 ## Import
 

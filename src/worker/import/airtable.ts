@@ -2,12 +2,29 @@
 // ShowDO applies like any other batch (so history and broadcast work). Mapping follows
 // docs/spec/data-model.md §"Mapping from the Airtable base". Pure: no I/O.
 import Papa from "papaparse";
+import {
+  detectKind,
+  type ImportKind,
+  type ImportMapping,
+  tableLabelFromFile,
+} from "../../shared/airtable-columns";
+import {
+  type CustomFieldDef,
+  type CustomFieldOptions,
+  type CustomFieldType,
+  csvValue,
+  customTableRef,
+  guessFieldType,
+  isCustomFieldType,
+  slugify,
+  splitList,
+} from "../../shared/custom-fields";
 import { newId } from "../../shared/ids";
 import type { FieldValues, ImportResponse, Op } from "../../shared/ops";
 import type { FieldOptions, TableName } from "../../shared/tables";
 import { parseLength, type Unit } from "../../shared/units";
 
-export type ImportKind = "scenes" | "persons" | "content" | "cues" | "notes" | "surfaces";
+export { detectKind, type ImportKind };
 
 export interface CsvFile {
   name: string;
@@ -15,15 +32,6 @@ export interface CsvFile {
 }
 
 type CsvRow = Record<string, string>;
-
-const FILENAME_PREFIXES: [string, ImportKind][] = [
-  ["breakdown", "scenes"],
-  ["personnel", "persons"],
-  ["content", "content"],
-  ["cue list", "cues"],
-  ["notes", "notes"],
-  ["surfaces", "surfaces"],
-];
 
 export function parseCsv(text: string): { headers: string[]; rows: CsvRow[] } {
   const res = Papa.parse<CsvRow>(text.replace(/^﻿/, ""), {
@@ -34,22 +42,6 @@ export function parseCsv(text: string): { headers: string[]; rows: CsvRow[] } {
   // A trailing newline yields one [""] row; drop rows that have no cells at all.
   const rows = res.data.filter((r) => Object.keys(r).length > 1 || Object.values(r).some(Boolean));
   return { headers, rows };
-}
-
-/** Which table a CSV holds, from its file name (Airtable's `<Table>-<View>.csv`) or headers. */
-export function detectKind(fileName: string, headers: string[]): ImportKind | null {
-  const base = (fileName.split(/[\\/]/).at(-1) ?? "").toLowerCase();
-  for (const [prefix, kind] of FILENAME_PREFIXES) {
-    if (base.startsWith(`${prefix}-`) || base === `${prefix}.csv`) return kind;
-  }
-  const h = new Set(headers);
-  if (h.has("Cue Number")) return "cues";
-  if (h.has("Note") && h.has("Cue #")) return "notes";
-  if (h.has("Scene Name") && h.has("Location")) return "scenes";
-  if (h.has("Name") && (h.has("Creator") || h.has("LOOP IN"))) return "content";
-  if (h.has("Name") && h.has("Role")) return "persons";
-  if (h.has("Name") && h.has("Channel Name")) return "surfaces";
-  return null;
 }
 
 /** Split a multi-value link cell. Airtable quotes values that contain commas, CSV-style. */
@@ -129,27 +121,53 @@ export interface ImportPlan extends ImportResponse {
   ops: Op[];
 }
 
+export interface ImportOptions {
+  /** The preview's choices (custom fields for unmapped columns, custom table names/types). */
+  mapping?: ImportMapping;
+  /** Custom fields the show already has (keys are reused / kept unique). */
+  existingFields?: readonly CustomFieldDef[];
+  /** How many custom tables the show has (new ones go after them). */
+  customTableCount?: number;
+}
+
+/** The files that aren't a core table: each becomes a custom table (R9). */
+interface OtherCsv {
+  name: string;
+  headers: string[];
+  rows: CsvRow[];
+}
+
 /**
  * Build the ops for an import. Rows keep CSV order as show order (appended after anything
- * already in the show). Links resolve by primary text among the imported rows.
+ * already in the show). Links resolve by primary text among the imported rows. CSVs that
+ * aren't one of the core tables become custom tables with guessed field types; unmapped
+ * columns of core CSVs become custom fields when the mapping asks for them.
  */
-export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions): ImportPlan {
+export function buildAirtableImport(
+  files: CsvFile[],
+  fieldOptions: FieldOptions,
+  opts: ImportOptions = {},
+): ImportPlan {
   const warnings = new Warnings();
   const option = optionMatcher(fieldOptions, warnings);
+  const mapping = opts.mapping ?? {};
   let surfaceHeaders: string[] = [];
   const byKind = new Map<ImportKind, CsvRow[]>();
+  const kindFile = new Map<ImportKind, string>();
+  const others: OtherCsv[] = [];
   for (const f of files) {
     const { headers, rows } = parseCsv(f.text);
     const kind = detectKind(f.name, headers);
     if (!kind) {
-      warnings.add(
-        `${f.name}: not one of Breakdown, Personnel, Content, Cue List, Notes, Surfaces; skipped`,
-      );
+      const choice = mapping.tables?.find((t) => t.file === f.name);
+      if (choice?.skip) warnings.add(`${f.name}: skipped`);
+      else others.push({ name: f.name, headers, rows });
       continue;
     }
     if (byKind.has(kind)) warnings.add(`${f.name}: a second ${kind} file; skipped`);
     else {
       byKind.set(kind, rows);
+      kindFile.set(kind, f.name);
       if (kind === "surfaces") surfaceHeaders = headers;
     }
   }
@@ -163,7 +181,163 @@ export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions
     notes: 0,
     persons: 0,
     surfaces: 0,
+    custom_tables: 0,
+    custom_rows: 0,
+    custom_fields: 0,
   };
+
+  /**
+   * A CSV cell as a custom field value; a non-empty cell that doesn't read as the field's
+   * type (a bad date, "soon" as a duration) is left empty and counted in a warning.
+   */
+  const unreadable = new Map<string, number>();
+  const cellValue = (
+    where: string,
+    c: { column: string; type: CustomFieldType },
+    r: CsvRow,
+  ): unknown => {
+    const raw = r[c.column];
+    const v = csvValue(c.type, raw);
+    if ((v === null || v === undefined) && raw?.trim()) {
+      const k = `${where}: ${c.column}|${c.type}`;
+      unreadable.set(k, (unreadable.get(k) ?? 0) + 1);
+    }
+    return v;
+  };
+
+  // ---- custom fields for unmapped columns of core CSVs (created first) ----
+  const takenKeys = new Map<string, Set<string>>();
+  for (const f of opts.existingFields ?? []) {
+    const set = takenKeys.get(f.table) ?? new Set<string>();
+    set.add(f.key);
+    takenKeys.set(f.table, set);
+  }
+  const positions = new Map<string, number>();
+  for (const f of opts.existingFields ?? []) {
+    positions.set(f.table, Math.max(positions.get(f.table) ?? 0, f.position ?? 0));
+  }
+  const newField = (
+    table: string,
+    label: string,
+    type: CustomFieldType,
+    options: CustomFieldOptions,
+  ): string => {
+    const taken = takenKeys.get(table) ?? new Set<string>();
+    const key = slugify(label, taken);
+    taken.add(key);
+    takenKeys.set(table, taken);
+    const position = (positions.get(table) ?? 0) + 1;
+    positions.set(table, position);
+    ops.push({
+      op: "create",
+      table: "custom_fields",
+      id: newId(),
+      fields: { table, key, label, type, options, position },
+    });
+    created.custom_fields++;
+    return key;
+  };
+  /** Per core kind: CSV column → custom field (key, type). */
+  const extra = new Map<ImportKind, { column: string; key: string; type: CustomFieldType }[]>();
+  for (const [kind, file] of kindFile) {
+    const rows = byKind.get(kind) ?? [];
+    for (const m of mapping.columns ?? []) {
+      if (m.file !== file || !isCustomFieldType(m.type)) continue;
+      if (m.type === "attachment" || m.type === "formula" || m.type === "link") {
+        warnings.add(`${file}: ${m.column} can't be imported as ${m.type}; skipped`);
+        continue;
+      }
+      const guess = guessFieldType(
+        m.column,
+        rows.map((r) => r[m.column] ?? ""),
+      );
+      const options: CustomFieldOptions =
+        m.type === guess.type ? guess.options : selectChoices(m.type, rows, m.column);
+      const key = newField(kind, m.label?.trim() || m.column, m.type, options);
+      const list = extra.get(kind) ?? [];
+      list.push({ column: m.column, key, type: m.type });
+      extra.set(kind, list);
+    }
+  }
+  /** A core row's custom values from its mapped extra columns (undefined: none). */
+  const customOf = (kind: ImportKind, r: CsvRow): Record<string, unknown> | undefined => {
+    const cols = extra.get(kind);
+    if (!cols) return undefined;
+    const out: Record<string, unknown> = {};
+    for (const c of cols) {
+      const v = cellValue(`${kindFile.get(kind) ?? kind}`, c, r);
+      if (v !== null && v !== undefined) out[c.key] = v;
+    }
+    return Object.keys(out).length ? out : undefined;
+  };
+  const withCustom = (kind: ImportKind, r: CsvRow, fields: FieldValues): FieldValues => {
+    const c = customOf(kind, r);
+    if (!c) return fields;
+    const prev = (fields.custom as Record<string, unknown> | undefined) ?? {};
+    return { ...fields, custom: { ...prev, ...c } };
+  };
+
+  // ---- custom tables: every other CSV ----
+  let tablePosition = opts.customTableCount ?? 0;
+  for (const o of others) {
+    const choice = mapping.tables?.find((t) => t.file === o.name);
+    const label = choice?.label?.trim() || tableLabelFromFile(o.name);
+    const tableId = newId();
+    const ref = customTableRef(tableId);
+    const headers = o.headers.filter((h) => h.trim());
+    const rows = o.rows.filter((r) => Object.values(r).some((v) => v?.trim()));
+    ops.push({
+      op: "create",
+      table: "custom_tables",
+      id: tableId,
+      fields: { label, key: slugify(label), position: ++tablePosition },
+    });
+    ops.push({
+      op: "create",
+      table: "views",
+      id: newId(),
+      fields: { table: ref, name: "All rows", is_default: true, position: 0 },
+    });
+    created.custom_tables++;
+    const cols: { column: string; key: string; type: CustomFieldType }[] = [];
+    for (const h of headers) {
+      const guess = guessFieldType(
+        h,
+        rows.map((r) => r[h] ?? ""),
+      );
+      const wanted = choice?.types?.[h];
+      const type = wanted && isCustomFieldType(wanted) ? wanted : guess.type;
+      const options = type === guess.type ? guess.options : selectChoices(type, rows, h);
+      const key = newField(ref, h.trim(), type, options);
+      cols.push({ column: h, key, type });
+    }
+    const primary = cols.find((c) => c.type === "text" || c.type === "longtext") ?? cols[0];
+    if (primary) {
+      const op = ops.find((x) => x.op === "create" && x.id === tableId);
+      if (op?.op === "create") op.fields.primary_field_key = primary.key;
+    }
+    let files = 0;
+    for (const r of rows) {
+      const custom: Record<string, unknown> = {};
+      for (const c of cols) {
+        if (c.type === "attachment") {
+          if (r[c.column]?.trim()) files++;
+          continue;
+        }
+        const v = cellValue(label, c, r);
+        if (v === null || v === undefined) continue;
+        custom[c.key] = v;
+      }
+      ops.push({
+        op: "create",
+        table: "custom_rows",
+        id: newId(),
+        fields: { table_id: tableId, custom },
+      });
+      created.custom_rows++;
+    }
+    if (files) warnings.add(`${label}: ${files} attachments not imported (upload them in the app)`);
+  }
 
   // ---- surfaces (first: scenes link to them) ----
   // Name, Channel Name, Width/Height (<unit>); a region's parent comes from its channel
@@ -203,12 +377,12 @@ export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions
       op: "create",
       table: "surfaces",
       id,
-      fields: {
+      fields: withCustom("surfaces", r, {
         name,
         channel,
         width: length(r, widthHeader, name),
         height: length(r, heightHeader, name),
-      },
+      }),
     });
     created.surfaces++;
   }
@@ -250,13 +424,13 @@ export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions
       op: "create",
       table: "persons",
       id,
-      fields: {
+      fields: withCustom("persons", r, {
         name,
         role: clean(r.Role),
         email: clean(r.Email),
         organization: clean(r.Theatre),
         group: clean(r.Cast) ? option("persons", "group", "Cast") : null,
-      },
+      }),
     });
     created.persons++;
   }
@@ -288,7 +462,7 @@ export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions
       op: "create",
       table: "scenes",
       id,
-      fields: {
+      fields: withCustom("scenes", r, {
         number,
         name: name || null,
         location: clean(r.Location),
@@ -297,7 +471,7 @@ export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions
         stage_direction: clean(r["Top of Scene Stage Direction"]),
         description: clean(r["Scene Description"]),
         video_overview: clean(r["Video Overview"]),
-      },
+      }),
     });
     created.scenes++;
     for (const text of splitMulti(r.Surfaces)) {
@@ -334,13 +508,13 @@ export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions
       op: "create",
       table: "content",
       id,
-      fields: {
+      fields: withCustom("content", r, {
         name,
         scene_id: sceneId,
         creator_id: creator ? person(creator) : null,
         loop_in: clean(r["LOOP IN"]),
         loop_out: clean(r["LOOP OUT"]),
-      },
+      }),
     });
     created.content++;
     // Airtable's single Version ("2.0") becomes one current version record ("V02").
@@ -400,7 +574,7 @@ export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions
     // content when all of it agrees.
     const scenes = new Set(contentIds.map((c) => contentScene.get(c)).filter(Boolean));
     const sceneId = scenes.size === 1 ? ([...scenes][0] as string) : null;
-    const fields: FieldValues = {
+    const fields: FieldValues = withCustom("cues", r, {
       number,
       scene_id: sceneId,
       page: clean(r.PG),
@@ -412,7 +586,7 @@ export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions
       description: clean(r.Description),
       status: option("cues", "status", clean(r.STATUS)),
       is_section: !number,
-    };
+    });
     cueFields.push(fields); // scene_id may still be filled in by the pass below
     ops.push({ op: "create", table: "cues", id, fields });
     created.cues++;
@@ -477,7 +651,7 @@ export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions
       op: "create",
       table: "notes",
       id,
-      fields: {
+      fields: withCustom("notes", r, {
         body: clean(r.Note),
         scene_id: realScenes[0] ?? null,
         content_id: contents[0] ?? null,
@@ -486,7 +660,7 @@ export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions
         priority: option("notes", "priority", clean(r.Priority)),
         ...(createdAt !== null ? { created_at: createdAt } : {}),
         ...(createdBy ? { custom: { created_by_name: createdBy } } : {}),
-      },
+      }),
     });
     created.notes++;
     for (const number of splitMulti(r["Cue #"])) {
@@ -506,6 +680,12 @@ export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions
     }
   }
 
+  for (const [k, n] of unreadable) {
+    const [where, type] = k.split("|");
+    warnings.add(
+      `${where}: ${n} ${n === 1 ? "value" : "values"} couldn't be read as ${type}; left empty`,
+    );
+  }
   return { ops, created, warnings: warnings.list() };
 }
 
@@ -517,4 +697,18 @@ export function versionLabel(raw: string | null): string | null {
   const major = `V${(m[1] ?? "").replace(/^0+(?=\d)/, "").padStart(2, "0")}`;
   const minor = m[2] && !/^0+$/.test(m[2]) ? `.${m[2]}` : "";
   return major + minor;
+}
+
+/** Select choices for a column imported as a (multi)select the guess didn't pick. */
+function selectChoices(type: CustomFieldType, rows: CsvRow[], column: string): CustomFieldOptions {
+  if (type !== "select" && type !== "multiselect") return {};
+  const colors = ["blue", "green", "yellow", "purple", "orange", "teal", "pink", "red", "gray"];
+  const values = rows.flatMap((r) => {
+    const t = r[column]?.trim() ?? "";
+    return type === "multiselect" ? splitList(t) : t ? [t] : [];
+  });
+  const distinct = [...new Set(values)].slice(0, 200);
+  return {
+    choices: distinct.map((value, i) => ({ value, color: colors[i % colors.length] as string })),
+  };
 }

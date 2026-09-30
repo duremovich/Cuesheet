@@ -4,7 +4,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ShowState } from "../../lib/show-store";
 import { useShowStore } from "../../lib/show-store";
 import { matchScore } from "../shared/search";
-import { TABS, type TabKey } from "../show/tabs";
+import { type AnyTabKey, TABS, type TabKey } from "../show/tabs";
 import styles from "./CommandPalette.module.css";
 import { type SearchHit, searchShow } from "./searchShow";
 
@@ -30,7 +30,7 @@ export function CommandPalette({
   open: boolean;
   onClose: () => void;
   commands: PaletteCommand[];
-  onPick: (tab: TabKey, id: string) => void;
+  onPick: (tab: AnyTabKey, id: string) => void;
 }) {
   if (!open) return null;
   return <PaletteDialog onClose={onClose} commands={commands} onPick={onPick} />;
@@ -43,7 +43,7 @@ function PaletteDialog({
 }: {
   onClose: () => void;
   commands: PaletteCommand[];
-  onPick: (tab: TabKey, id: string) => void;
+  onPick: (tab: AnyTabKey, id: string) => void;
 }) {
   const state = useShowStore(selectState);
   const [q, setQ] = useState("");

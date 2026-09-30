@@ -22,6 +22,8 @@ import { setTheme } from "../../lib/theme";
 import pageStyles from "../../pages/pages.module.css";
 import { AttachmentsHost } from "../attachments/Attachments";
 import { planSortNow } from "../cues/sortNow";
+import { customTablesInOrder } from "../custom/model";
+import { runActiveExport } from "../export/activeExport";
 import { SessionControl } from "../notes/SessionControl";
 import { cueSheetUrl, printViewUrl } from "../print/PrintTable";
 import { scriptPrintUrl, scriptUrl } from "../script/links";
@@ -32,7 +34,7 @@ import type { FocusState } from "../shared/useTableChrome";
 import { TECH_SHORTCUT_LABEL, techUrl, useTechShortcut } from "../tech/useTechShortcut";
 import { ShowSettingsButton } from "./ShowSettings";
 import styles from "./ShowWorkspace.module.css";
-import { rowUrl, TABS, type TabKey } from "./tabs";
+import { type AnyTabKey, customTabKey, rowUrl, TABS, type TabKey, tabInfo } from "./tabs";
 import { errorMessage, type Workspace, WorkspaceContext } from "./workspace";
 
 /** The tab strip: the table tabs, with Script after Cues. */
@@ -173,9 +175,32 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
     (tab: TabKey) => navigate(`/shows/${encodeURIComponent(showId)}/${tab}`),
     [navigate, showId],
   );
+  // Custom tables (R9) are tabs after the core ones.
+  const customTableMap = useShowStore((s) => s.tables.custom_tables);
+  const customTables = useMemo(() => customTablesInOrder(customTableMap), [customTableMap]);
+  const nav = useMemo(
+    () => [
+      ...NAV,
+      ...customTables.map((t) => ({ key: customTabKey(t.id), label: t.label || "Untitled table" })),
+    ],
+    [customTables],
+  );
   // "Switch view: <name>" for the tab you're on (its shared views, then yours).
-  const pathTab = TABS.find((t) => pathname.split("/")[3] === t.key);
-  const tabViews = useViewsFor(pathTab?.table ?? "cues", user?.id ?? "");
+  const segments = pathname.split("/");
+  const pathTab:
+    | { key: AnyTabKey; label: string; viewTable: ReturnType<typeof tabInfo>["viewTable"] }
+    | undefined =
+    segments[3] === "tables" && segments[4] && customTableMap.has(segments[4])
+      ? {
+          key: customTabKey(segments[4]),
+          label: customTableMap.get(segments[4])?.label || "Table",
+          viewTable: tabInfo(customTabKey(segments[4])).viewTable,
+        }
+      : (() => {
+          const t = TABS.find((x) => segments[3] === x.key);
+          return t ? { key: t.key, label: t.label, viewTable: t.table } : undefined;
+        })();
+  const tabViews = useViewsFor(pathTab?.viewTable ?? "cues", user?.id ?? "");
   const viewCommands = useMemo<PaletteCommand[]>(
     () =>
       pathTab
@@ -213,15 +238,32 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
         label: "Print SM cue sheet",
         run: () => navigate(cueSheetUrl(showId)),
       },
-      ...(pathTab
+      ...(pathTab && !pathTab.key.startsWith("tables/")
         ? [
             {
               id: "print-view",
               label: `Print this view (${pathTab.label})`,
-              run: () => navigate(printViewUrl(showId, pathTab.key, searchParams.get("view"))),
+              run: () =>
+                navigate(printViewUrl(showId, pathTab.key as TabKey, searchParams.get("view"))),
             },
           ]
         : []),
+      ...(pathTab
+        ? [
+            {
+              id: "export-view",
+              label: `Export this view as CSV (${pathTab.label})`,
+              run: () => {
+                if (!runActiveExport()) toast("Open a table to export its view.");
+              },
+            },
+          ]
+        : []),
+      ...customTables.map((t) => ({
+        id: `go-table-${t.id}`,
+        label: `Go to ${t.label || "Untitled table"}`,
+        run: () => navigate(`/shows/${encodeURIComponent(showId)}/${customTabKey(t.id)}`),
+      })),
       ...(canEdit
         ? [
             {
@@ -255,10 +297,22 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
         ? [{ id: "import", label: IMPORT_LABEL, run: () => workspace.openImport() }]
         : []),
     ],
-    [canEdit, go, workspace, navigate, showId, currentCue, viewCommands, pathTab, searchParams],
+    [
+      canEdit,
+      go,
+      workspace,
+      navigate,
+      showId,
+      currentCue,
+      viewCommands,
+      pathTab,
+      searchParams,
+      customTables,
+      toast,
+    ],
   );
   const onPick = useCallback(
-    (tab: TabKey, id: string) => {
+    (tab: AnyTabKey, id: string) => {
       const state: FocusState = { focus: id };
       navigate(rowUrl(showId, tab, id), { state });
     },
@@ -295,7 +349,7 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
           </AppHeader>
           <nav className={styles.nav} aria-label="Show">
             <div className={styles.tabs} ref={tabStrip}>
-              {NAV.map((t) => (
+              {nav.map((t) => (
                 <NavLink
                   key={t.key}
                   to={t.key}

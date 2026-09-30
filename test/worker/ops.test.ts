@@ -300,6 +300,8 @@ describe("ops: links and deletes", () => {
       noteAssignees: {},
       sceneSurfaces: {},
       contentSurfaces: {},
+      shotTalent: {},
+      shotContent: {},
     });
 
     // Deleting a person nulls content.creator_id.

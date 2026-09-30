@@ -9,7 +9,9 @@ attachments in R2 with thumbnails, the gallery layout), M3b (surfaces, measureme
 pixel-size / formula fields with unit conversion, the surface calculator), M4a (the script
 data model, text extraction and the anchoring engine; see "Script") and M4b (the script
 reader UI, the calling-script print and the generic Print view; see "Script view" and
-"Print layouts") are built. The stack is decided in
+"Print layouts") and M5a (custom fields and custom tables, formula fields, shot lists,
+CSV export, show templates, bulk edit; see "Custom fields and custom tables", "Shots" and
+"Export, templates, bulk edit") are built. The stack is decided in
 `docs/decisions/0005-cloudflare-platform.md`; don't relitigate it without a
 new decision record. Build milestone by milestone; don't pull later-milestone features
 (e.g. the cue grid) into an earlier one.
@@ -202,10 +204,13 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   passes the session id, the SHA-256 of the cookie token, and the DO tags each socket
   `session:<id>`), so the user's other browsers and devices stay live.
 - **Airtable import** (`POST /api/shows/:id/import/airtable`, multipart CSV files; editors
-  and owners; 4 MB max). A show that already has rows in any core table gets 409
+  and owners; 4 MB max). A show that already has rows in any core or custom table gets 409
   `{error:"Show already has data"}` unless the request has `?append=1` (the UI asks for
-  confirmation first; appended rows are added, not merged). Files are recognised by Airtable's `<Table>-<View>.csv` name or by their
-  headers; the five core tables and Surfaces are imported, others skipped with a warning.
+  confirmation first; appended rows are added, not merged). Files are recognised by
+  Airtable's `<Table>-<View>.csv` name or by their
+  headers; the five core tables and Surfaces are imported, every other CSV becomes a
+  custom table (M5a; see "Custom fields and custom tables" for types, the preview and
+  `mapping`).
   Surfaces: Name, Channel Name, `Width (<unit>)`/`Height (<unit>)` (the header's unit;
   meters when none), blank rows skipped (the example has 16 rows → 15 surfaces); a
   region's parent comes from its channel (`CH02.1` → `CH02`), set in the create when the
@@ -287,7 +292,8 @@ the keyboard map and an integration example. The grid never fetches or persists;
 
 The show page (`/shows/:id`) is a workspace (`features/show/ShowWorkspace.tsx`): header
 (title, presence, theme), tabs (`features/show/tabs.ts`: Cues, Scenes, Content, Surfaces,
-Notes, People → `/shows/:id/<tab>`; `/shows/:id` and unknown tabs redirect to `cues`; the
+Shots, Notes, People → `/shows/:id/<tab>`, then one per custom table →
+`/shows/:id/tables/<id>`; `/shows/:id` and unknown tabs redirect to `cues`; the
 **Script** tab after Cues is not a table tab, see "Script view"), Show
 settings (import, members), the ⌘K palette (`features/search/`) and toasts. Tabs read
 `useWorkspace()` (role, `canEdit`/`canComment`, member names, `toast(message, kind,
@@ -474,7 +480,8 @@ views" below).
   group: {key, collapsedByDefault?}, fields: {key, width?, hidden?}[], rowHeight,
   frozenCount, colorRules: {when: Filter[], mode, target: "row" | {cell}, color}[],
   forkedFrom?}`. Keys are the grid's column keys (plus extra filter fields such as the cue
-  list's `open_notes`), declared per table in `VIEW_FIELDS` with their kind
+  list's `open_notes`, and `custom.<key>` for custom fields: `viewFieldsFor`, see "Custom
+  fields and custom tables"), declared per table in `VIEW_FIELDS` with their kind
   (`viewFields.test.ts` checks it against each tab's `columns.ts`: update both when a
   column changes). The server rebuilds every config it stores from known keys only
   (`sanitizeViewConfig`: unknown keys are dropped; 400 for unknown fields, an operator the
@@ -1043,6 +1050,199 @@ views" below).
   From the cue list's **Cue sheet** link, the print page's "SM cue sheet instead", or ⌘K
   "Print SM cue sheet". New built-in layouts (notes by person…) should reuse
   `PrintShell` + `PrintTable`.
+
+## Custom fields and custom tables (M5a: R9)
+
+- **Model** (`src/shared/custom-fields.ts`, DO migration `0007_custom_fields_shots`).
+  `custom_fields`: `table` (a core table: scenes, cues, content, notes, persons,
+  surfaces, shots; or `custom:<customTableId>`; immutable), `key` (a slug `[a-z][a-z0-9_]*`
+  ≤ 40, unique per table, immutable; `slugify(label, taken)`), `label`, `type` (text,
+  longtext, number, checkbox, select, multiselect, date, datetime, duration, timecode,
+  measurement, pixel_size, url, link, attachment, formula), `options` JSON
+  (`CustomFieldOptions`: `choices` `[{value, color}]`, `target` + `multiple` for links,
+  `formula`, `decimals`, `unit`, `sensitive`; the engine rebuilds it from known keys with
+  `checkFieldOptions`), `position`, `width`. **Values live in each row's `custom` JSON
+  under the key**; the grid / view column key is **`custom.<key>`** (`customColumnKey`,
+  `customKeyOf`). Select values are the choice text (no option ids). `custom_tables`:
+  `key`, `label`, `icon`, `position`, `primary_field_key` (the row's name in links,
+  pickers and ⌘K; else its first non-sensitive text value; a sensitive primary never
+  names a row). `custom_rows`: `table_id` (ref, cascade, immutable) + `order_key` (an
+  ordered table; keys are global, each table shows its own rows in order) + `custom`.
+  Editors and the owner manage fields and tables (the engine's default role check).
+  Commenters may write custom values on **their own notes** (the notes rule), and the
+  Notes tab's custom columns follow each note's `editable`.
+- **Validation** (`Batch.checkCustomValues`, `checkCustomValue`): a `custom` key that
+  names a defined field is checked by its type (select choices, `YYYY-MM-DD` dates,
+  `YYYY-MM-DDTHH:MM` datetimes, `h:mm:ss(.ms)` durations, `hh:mm:ss:ff` timecodes, meters
+  0–1 km, `{w,h}`, `http(s)://`/`mailto:` or `host.tld/…` URLs, links = arrays of ids
+  that must exist in the target: a core table or `custom:<id>`'s rows, ≤ 1 when
+  `multiple: false`); formula and attachment fields aren't stored (400); `null` clears.
+  **Keys without a definition stay free-form** (imported notes' `created_by_name`,
+  attachments' `caption`), capped at **16 KB of JSON per row** (`MAX_FREE_FORM_BYTES`;
+  over it the write fails and the DO logs a warning). Attachment custom fields are
+  `attachments` rows with `field` = the key (`isCustomAttachmentField`, also checked by
+  `upload-url` through `ShowDO.isCustomAttachmentField`).
+- **Definition changes rewrite data in the same batch** (engine `afterCustomFieldUpdate`
+  / `renameChoices` / `resanitizeViews`, mirrored in `show-state.ts` `refitOps` /
+  `renameOps`, so the optimistic state matches):
+  - `custom_fields.update` may carry **`renames: [{from, to}]`** (select / multiselect
+    only; stripped before the row is written): row values and the views' filter and
+    color-rule values move to the new text. The Fields manager sends it when a choice's
+    text is edited (`originals` track each choice's stored value).
+  - Type or options change: each value goes through `refitValue(before, after, v)`:
+    kept when both types share a shape (`keepsValues`: text/longtext/url, and select /
+    multiselect → text or long text, a multiselect joined with ", "), a removed choice is
+    cleared, a link pointed at **another target is cleared**, and **many → one keeps the
+    first** id; anything else is cleared.
+  - Every view on the table is re-sanitized: `sanitizeViewConfig(table, raw, known)` /
+    `dropDeletedCustomFields` **drop** `custom.*` filters, sorts, grouping and color
+    conditions that no longer fit (deleted field, operator the new kind lacks, grouping by
+    a non-groupable kind) instead of refusing the view; a color rule is dropped only when
+    this empties it.
+  - **Defining a field over a free-form key** (field create) refits the rows' existing
+    values under that key the same way; the Fields manager confirms with the count.
+  - The client asks first, with counts: type change that clears values, removing used
+    choices, a new link target, turning off "Allow more than one", a key that already
+    holds values.
+- **Cascades** (explicit ops, mirrored in `show-state.ts`): deleting a field removes its
+  value from every row (and deletes its files) and re-sanitizes views; deleting a record
+  removes its id from custom link values pointing at it (`targetNameOf`); deleting a
+  custom table deletes its rows (ref cascade), its fields, the link fields elsewhere that
+  target it (the confirm names them), and its views (even the last shared one).
+- **Sensitive** text fields (`options.sensitive`, e.g. imported passwords): masked in the
+  grid (`Column.masked`: dots) and the row panel (a **Reveal** button, `MaskedField`),
+  logged in history as `"(hidden)"` (`HIDDEN_VALUE`; create/delete rows are redacted
+  too). A value written while the field was sensitive **stays hidden** after the flag is
+  removed: the engine checks the record/field's last logged write (`wasHidden`) and logs
+  the next old value as `(hidden)`. Formulas never read them: a masked column resolves
+  to a `#HIDDEN` error value, and links expose only names (never a sensitive primary).
+  Left out of ⌘K, view exports and "Export all" unless an owner ticks **Include
+  sensitive fields**. The value itself is stored and synced (members can reveal it).
+- **Views** (`VIEW_FIELDS` is per table **plus** `custom.<key>` columns:
+  `viewFieldsFor(table, fields)`, kind from `customFieldKind`: date/datetime → `date`,
+  formulas → `text`, whose operators cover numbers and lengths; `groupable` marks text
+  fields a view may group by). `views.table` is a `ViewTable`: a data table or
+  `custom:<id>` (the custom table must exist). A custom table's default view is "All
+  rows" in show order (`defaultViewName`).
+- **Client** (`features/custom/`): `model.ts` (`fieldsFor` cached per `custom_fields`
+  map, `targetLabel` / `searchTarget` for link targets, `customRowLabel`,
+  `newCustomTableOps` (the table + a "Name" text field as primary + its shared default
+  view), `newFieldOps`, `valueCount`, `customRowsOf`, `reverseLinks`), `columns.tsx`
+  (`customColumns`: one grid column per field; date/datetime/duration/timecode/url are
+  `text` columns with a `parse` (`src/shared/custom-values.ts`, re-exported by
+  `values.ts`: lenient input like `9/30/26`, `7:30pm`, `90s`, `1h 5m`, `01001012`,
+  `example.com`) and dates carry `valueType: "date"` for before/after filters; links are
+  link/multilink columns searching the target; attachments reuse `attachmentColumn`;
+  `customEditOps` turns a grid value into `{custom: {key: stored}}`), `useCustomColumns`
+  (the tab's columns + custom ones; they rebuild when definitions change, and on any data
+  change when a field shows links or a formula). Tabs opt in with `TableGrid`'s `custom:
+  {fieldTable, rowOf, fallbackRecord?, editable?}` (Scenes, Content, Notes, People,
+  Surfaces, Shots, custom tables); `CueGrid` calls the hook itself. The row panel shows
+  them (attachment fields full width), ⌘K matches text custom fields (`searchShow`),
+  filters/sorts/groups/colors work unchanged.
+- **Formula fields** (`formula.ts`): evaluated per row with the shared engine over a
+  record whose names are the table's columns (title or key, case-insensitive, `{PPI}`,
+  `ppi`), custom fields (label or key) and a tab's `fallbackRecord` (Surfaces: the
+  storage fields `pixel_width`, `parent`…); links are record sets of names
+  (`{Venue}.Name`). Formulas may use other formulas; a cycle is an `#ERROR` value
+  ("Circular reference"); a sensitive field is `#HIDDEN`. Results are cached per row
+  object; `resultType` (number / measurement / text) is inferred from the first rows.
+  Errors show as values (red `#CODE`).
+- **Fields manager** (`FieldsManager.tsx`): the view bar's **Fields** popover → a
+  top-level **Fields…** entry above the column list (`ViewBar` `fieldTable`; "Custom
+  fields…" read-only for others), and **Show settings → Structure** (pick a table, same
+  manager). List, **+ Add field**, Edit (name, type, choices with colors, link target +
+  "Allow more than one", formula with a live parse check, decimals, Sensitive), delete
+  with a confirmation naming how many rows have values.
+- **Custom tables in the workspace**: tabs after the core ones (`tables/<id>` →
+  `/shows/:id/tables/<id>`, `CustomTableGrid`; `AnyTabKey` / `customTabKey` /
+  `tabInfo(key).viewTable` in `tabs.ts`), ⌘K "Go to <table>"; **Show settings →
+  Structure → Custom tables**: + New table, rename, ↑/↓ reorder (`position`), delete
+  (confirm with the row count and the link fields on other tables that go with it). The
+  row panel lists the records linking to a row (reverse links, per field). Custom tables
+  have no print route (`/print/<tab>` only knows core tabs).
+- **Import**: every CSV that isn't a core table becomes a custom table (name from the file,
+  `tableLabelFromFile`; `guessFieldType`: URLs → url, "checked" → checkbox, dates → date,
+  IP addresses → text, a password-like header → sensitive text, numbers → number, a few
+  repeated values in a status/type-like column → select, long/multi-line → longtext,
+  attachments → attachment (files not imported, warned); first text column is primary; a
+  default view). Unmapped columns of core CSVs (`unmappedColumns`: not in
+  `MAPPED_COLUMNS` / `DERIVED_COLUMNS`, `src/shared/airtable-columns.ts`) become custom
+  fields when the **import preview** (`AirtableImport.tsx`, parsed in the browser with
+  papaparse; skipped when there's nothing to decide) ticks "Create custom field" (type
+  pre-guessed); the preview also renames, retypes or skips each custom table. The
+  request's `mapping` form field is an `ImportMapping`; keys stay unique against the
+  show's fields. Cells are read with `csvValue` (the same parsers as the grid:
+  multiselect comma-split, date, datetime, duration, timecode, measurement, pixel size);
+  unreadable cells are left empty and counted in one warning per column ("Gear: Length: 1
+  value couldn't be read as measurement; left empty"). **Custom rows count as data**
+  (`ShowDO.hasData`): a second import without `?append=1` is a 409, as for core tables.
+
+## Shots (M5a: R14)
+
+- **Data**: `shot_lists` (`name`, `shoot_date`, `location`, `notes`, `position`) and
+  `shots` (`shot_list_id` ref cascade, immutable; `number` text, `group` text, `description`,
+  `framing` select WS/MS/CU/ECU/OTS/Insert, `camera`, `lens`, `resolution` pixel size,
+  `frame_rate` 0–1000, `duration` text, `status` select Planned/Shot/Selected/Cut (seeded
+  by migration 0007), `order_key`); links `shots.talent` → persons (`shot_talent`) and
+  `shots.content` → content (`shot_content`); attachment field `shots.reference`. Shots
+  is a data table (a default "All shots" view grouped by `group`).
+- **Tab** (`features/shots/`): the list bar has a **"Current shot list"** `MenuButton`
+  (the lists as checkable items, then + New list… / Rename… / Delete list… (confirm;
+  deletes its shots); remembered per user and show; a plain **+ New list** button when
+  there's none) and a details panel (`ListDetails`: shoot date, location, notes, saved on
+  Enter / blur). Below, a `TableGrid` of the list's shots grouped natively by `group`
+  (`shotGroups`: "No group" first, then groups by first appearance;
+  `VIEW_FIELDS.shots.group` is `groupable`); the view bar's group button reads "Grouped
+  by <label>" (all tables). Insert / drag like cues (dragging into another group sets
+  `group`); ghost numbers and duplicate warnings from `cueNumberHints(…, "shot")`.
+  **Print**: the toolbar's Print link (`/print/shots?view=`), and **+ Shot list** under My
+  views is the print layout preset (`SHOT_LIST_PRESET`: number, description, framing,
+  lens, talent, duration, status).
+
+## Export, templates, bulk edit (M5a: R26, R27, S8)
+
+- **View export** (`features/export/`): the view bar's **Export** popover (Excel BOM and
+  **Excel-safe** on by default; **Include sensitive fields** for owners) and ⌘K "Export
+  this view as CSV" (the mounted view registers itself: `activeExport.ts`). `exportRows`:
+  the view's visible columns in order, its filtered / sorted rows, a leading group column
+  when grouped (**not** when the grouped field is already a visible column: `groupKey`),
+  values as the grid formats them (`exportCell`: links joined by ", ", formulas as
+  displayed, checkboxes true/false), section rows left out. **Measurements are plain
+  numbers in the active unit with the unit in the header** (`exportHeader`: "Width (m)";
+  feet-inches exports decimal feet). `toCsv` quotes only what needs it (comma, quote,
+  CR/LF, edge spaces), doubles quotes, ends rows with CRLF; `excelSafe` prefixes a `'` to
+  cells starting with `=`, `+`, `-`, `@` (plain numbers excepted). File: `<Table> -
+  <View>.csv`.
+- **Export all tables** (Show settings → Export): `exportAll.ts` zips (JSZip,
+  lazy) one CSV per table (scenes, cues, content, content versions, surfaces, notes,
+  people, shot lists, shots, each custom table): `id`, the stored fields (refs and links
+  as labels, measurements in meters with `(m)` in the header), custom fields, plus
+  `manifest.json` (show, time, version, per-table file/rows/columns).
+- **Templates** (`POST /api/shows/:id/clone {name, includeScenes?, asTemplate?}`,
+  `routes/clone.ts`, owner/editor of the source): a new show (the caller owns it;
+  `shows.is_template`, **D1 migration `0004_show_template`**) whose DO gets, one batch per
+  table through the op engine (`cloneOps`): the default unit, surfaces (regions' parents
+  remapped), scenes + their surface links (unless `includeScenes: false`), custom tables
+  (definitions only), custom fields (tables and link targets remapped), shared views
+  (record ids in configs remapped; filters on scenes that weren't copied are dropped; the
+  seeded defaults of tables that get copies are deleted). **Scenes and surfaces keep
+  their custom values**, minus link and attachment keys (their targets aren't copied).
+  Never cues, notes, content, shots, attachments, the script or personal views. The D1
+  rows are inserted **only after every DO batch succeeded**; a failed copy is a 500 and
+  leaves an unreachable object, never a half show in the list. Seeded select options are
+  the same in every show, so nothing else is copied. UI: Show settings → Template →
+  **Save as template** (name, include scenes); the shows page lists templates apart and
+  offers **New from template**.
+- **Bulk edit** (S8, `shared/BulkEdit.tsx`): the row menu's **Set field for selection…**
+  (every table) and **Move to scene…** (cues; moves them to the end of that scene in
+  their order) open a dialog: a field (editable on all the rows; no files or formulas) and
+  a value (the row panel's editors); Apply sends one batch of the tab's own edit ops; the
+  toast's **Undo** writes each row's previous value back. (The grid's own undo covers
+  cell edits only.)
+- **DataGrid API additions** (backwards compatible): `Column.href(value)` renders a text
+  cell as a link (URL fields); `Column.masked` shows dots (sensitive fields).
+  `cueNumberHints` takes an optional noun for its messages.
 
 ## Theme and colors
 

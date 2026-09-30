@@ -107,6 +107,24 @@ to try on the **Cues** tab:
   rows with *PPI < 30*. Link surfaces to scenes from the Scenes tab's **Surfaces** column.
   **Show settings** has the show's default unit and your own. Drop set photos onto a
   surface's **Images** cell.
+- **Custom fields**: in any table's view bar, **Fields → + Add field**: e.g. *Camera* as
+  a single select with two options on the Cues tab; the column appears, filters / colors
+  / groups by it, and the row panel shows it. On Surfaces add a **Formula** field
+  `{PPI} * 2`. Edit or delete fields there too.
+- **Custom tables**: `pnpm seed:example` also imports Calendar, Directory, Reference
+  Links, Network and Millumin as custom tabs after People (Network's passwords are masked;
+  **Space → Reveal**). **Show settings → + New table** makes one; importing any other CSV
+  shows a preview first (types per column, "Create custom field" for columns Cuesheet
+  doesn't map).
+- **Shots** tab: **+ New list**, **+ Add shot** (the number is suggested; Tab accepts),
+  set a **Group** to group shots, drag between groups; *View ▾ → + Shot list* then
+  **Print** for a shoot-day sheet.
+- **Export**: **Export → Download CSV** in any view bar (or ⌘K "Export this view as
+  CSV") saves what the view shows; **Show settings → Export all tables (zip)** saves
+  every table. **Show settings → Save as template**, then on the shows page **New from
+  template** starts a show with the same scenes, surfaces, fields and views (no cues).
+- **Bulk edit**: select rows (click a row number, Shift+click another), right-click →
+  **Set field for selection…** (or **Move to scene…** on cues); the toast offers Undo.
 
 Undo (⌘Z / ⌘⇧Z) covers cell edits made in that grid; inserts, moves, deletes and "Sort
 now" aren't undoable yet. Column widths, order, filters, sorts, grouping, row height and

@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
+import type { ImportMapping } from "../../shared/airtable-columns";
 import {
   type CreateShowRequest,
   GRANTABLE_ROLES,
@@ -29,6 +30,7 @@ import { SESSION_ID_HEADER, USER_ID_HEADER } from "../do/ShowDO";
 import { buildAirtableImport, type CsvFile } from "../import/airtable";
 import type { AppEnv } from "../types";
 import * as attachments from "./attachments";
+import * as clone from "./clone";
 import * as script from "./script";
 import {
   declaredTooLarge,
@@ -121,6 +123,7 @@ export const showRoutes = new Hono<ShowEnv>()
         name: schema.shows.name,
         createdAt: schema.shows.createdAt,
         role: schema.memberships.role,
+        isTemplate: schema.shows.isTemplate,
       })
       .from(schema.memberships)
       .innerJoin(schema.shows, eq(schema.shows.id, schema.memberships.showId))
@@ -306,8 +309,27 @@ export const showRoutes = new Hono<ShowEnv>()
     if (files.length === 0) return c.json({ error: "Attach one or more CSV files" }, 400);
     const clientId = typeof form.clientId === "string" ? form.clientId.slice(0, 64) : "";
 
-    const fieldOptions = await stub.fieldOptions();
-    const plan = buildAirtableImport(files, fieldOptions);
+    let mapping: ImportMapping | undefined;
+    if (typeof form.mapping === "string" && form.mapping) {
+      try {
+        mapping = JSON.parse(form.mapping) as ImportMapping;
+      } catch {
+        return c.json({ error: "mapping must be JSON" }, 400);
+      }
+      if (typeof mapping !== "object" || mapping === null) {
+        return c.json({ error: "mapping must be an object" }, 400);
+      }
+    }
+    const [fieldOptions, existingFields, customTableCount] = await Promise.all([
+      stub.fieldOptions(),
+      stub.customFields(),
+      stub.customTableCount(),
+    ]);
+    const plan = buildAirtableImport(files, fieldOptions, {
+      ...(mapping ? { mapping } : {}),
+      existingFields,
+      customTableCount,
+    });
     const res = await stub.mutate(
       { userId: c.var.user.id, role: c.var.role, clientId: clientId || null, allowCreatedAt: true },
       plan.ops,
@@ -318,6 +340,9 @@ export const showRoutes = new Hono<ShowEnv>()
     }
     return c.json({ created: plan.created, warnings: plan.warnings } satisfies ImportResponse);
   })
+
+  // ---- templates (routes/clone.ts) ----
+  .post("/shows/:id/clone", requireMembership, clone.cloneShow)
 
   // ---- attachments (routes/attachments.ts) ----
   .post("/shows/:id/attachments/upload-url", requireMembership, attachments.uploadUrl)

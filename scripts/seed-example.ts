@@ -13,6 +13,12 @@ const FILES = [
   "Cue List-Video Cue List View.csv",
   "Notes-NOTES.csv",
   "Surfaces-Gallery.csv",
+  // The rest of the binder become custom tables (M5a).
+  "Calendar-Grid view.csv",
+  "Directory-Grid view.csv",
+  "Reference Links-Grid view.csv",
+  "Network-Grid view.csv",
+  "Millumin-Grid view.csv",
 ];
 
 function devVars(): Record<string, string> {

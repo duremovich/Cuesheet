@@ -307,7 +307,7 @@ export function RowPanel<Row>({
                       <AttachmentsField
                         table={table}
                         recordId={recordId}
-                        field={c.key}
+                        field={c.key.startsWith("custom.") ? c.key.slice(7) : c.key}
                         label={c.title}
                       />
                     </dd>

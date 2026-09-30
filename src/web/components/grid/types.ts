@@ -106,6 +106,16 @@ export interface Column<Row> {
   parse?: (text: string) => { value: unknown } | { error: string };
   /** formula: what the result is, for filters and sorting (default text). */
   resultType?: "number" | "text" | "measurement";
+  /**
+   * text: the cell shows its text as a link to this URL (opens in a new tab), e.g. a URL
+   * custom field. null: plain text.
+   */
+  href?: (value: unknown) => string | null;
+  /**
+   * text: a secret (a password field): the cell shows dots; the editor, the row panel's
+   * Reveal button and copy give the real value.
+   */
+  masked?: boolean;
 }
 
 export interface Group<Row> {

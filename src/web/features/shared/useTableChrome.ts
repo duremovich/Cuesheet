@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "react-router";
 import type { Column, DataGridHandle, GridAction } from "../../components/grid/types";
 import { useShowStoreInstance } from "../../lib/show-store";
-import { type TabKey, tabInfo } from "../show/tabs";
+import { type AnyTabKey, tabInfo } from "../show/tabs";
 import { useWorkspace } from "../show/workspace";
 
 /** "Couldn't <this>: <reason>" for each grid action (the grid's onError). */
@@ -24,7 +24,7 @@ export interface FocusState {
 }
 
 export function useTableChrome<Row>(opts: {
-  tab: TabKey;
+  tab: AnyTabKey;
   /** Every column (the row panel shows all fields, whatever the view hides). */
   columns: Column<Row>[];
   /** Data has loaded (a URL/⌘K focus waits for it). */
