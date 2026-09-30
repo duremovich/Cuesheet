@@ -7,7 +7,7 @@ import type { Op } from "../../../shared/ops";
 import { DataGrid } from "../../components/grid";
 import type { Column, Group, InsertPosition } from "../../components/grid/types";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
-import type { TabKey } from "../show/tabs";
+import { type TabKey, tabInfo } from "../show/tabs";
 import { useWorkspace } from "../show/workspace";
 import { type PanelSection, RowPanel } from "./RowPanel";
 import { TableFrame, ToolbarButton } from "./TableFrame";
@@ -146,6 +146,9 @@ export function TableGrid<V>(config: TableConfig<V>) {
             title={config.panelTitle(panelView)}
             row={panelView}
             columns={chrome.columns}
+            table={tabInfo(config.tab).table}
+            recordId={config.rowId(panelView)}
+            onEdit={(key, value) => onEdit(config.rowId(panelView), key, value)}
             sections={config.panelSections?.(panelView) ?? []}
             onClose={chrome.closePanel}
             onStep={chrome.stepPanel}

@@ -55,7 +55,18 @@ export interface RoleMessage {
   role: Role;
 }
 
+/**
+ * Show-level fields changed (PATCH /api/shows/:id): the name and the current session label
+ * new notes default to. Broadcast to every socket of the show.
+ */
+export interface ShowMessage {
+  type: "show";
+  name: string;
+  currentSession: string | null;
+}
+
 export type ServerMessage =
+  | ShowMessage
   | RevokedMessage
   | RoleMessage
   | HelloMessage

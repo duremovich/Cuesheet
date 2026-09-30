@@ -1,0 +1,408 @@
+/* The row panel (R18): a side panel beside the grid; a bottom sheet on phones. */
+
+.panel {
+  width: var(--panel-width, 380px);
+  flex-shrink: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.panel:focus {
+  outline: none;
+}
+
+.panel:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: -2px;
+}
+
+/* Drag the left edge to resize (desktop). */
+.resizer {
+  position: absolute;
+  left: -5px;
+  top: 0;
+  bottom: 0;
+  width: 9px;
+  cursor: col-resize;
+  z-index: 2;
+  touch-action: none;
+}
+
+.resizer:hover,
+.resizer:focus-visible {
+  outline: none;
+  background: linear-gradient(
+    to right,
+    transparent 3px,
+    var(--color-accent) 3px,
+    var(--color-accent) 5px,
+    transparent 5px
+  );
+}
+
+.sheetHandle {
+  display: none;
+}
+
+/* Phones and narrow windows: a bottom sheet over the grid at 60%, draggable to full. */
+@media (max-width: 760px) {
+  .panel {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    height: 60%;
+    box-shadow: var(--shadow-raised);
+    z-index: 5;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    transition: height 0.18s ease-out;
+  }
+
+  .panel[data-expanded] {
+    height: 100%;
+  }
+
+  .resizer {
+    display: none;
+  }
+
+  .sheetHandle {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 22px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: grab;
+    touch-action: none;
+    flex-shrink: 0;
+  }
+
+  .sheetHandle::before {
+    content: "";
+    width: 44px;
+    height: 5px;
+    border-radius: 3px;
+    background: var(--color-border-strong);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel {
+    transition: none;
+  }
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) 0 var(--space-4);
+}
+
+.title {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.close {
+  border: none;
+  background: transparent;
+  font-size: 20px;
+  line-height: 24px;
+  padding: 0 var(--space-2);
+}
+
+.tabs {
+  display: flex;
+  gap: var(--space-1);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex-shrink: 0;
+}
+
+.tab {
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  padding: var(--space-2) var(--space-2);
+  font-size: 13px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.tab[aria-selected="true"] {
+  color: var(--color-text);
+  border-bottom-color: var(--color-accent);
+}
+
+.count {
+  margin-left: var(--space-1);
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* The Notes tab manages its own scrolling (list above, compose pinned below). */
+.body[data-fill] {
+  overflow: hidden;
+  padding: 0;
+}
+
+/* --- Fields --- */
+
+.fields {
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(84px, auto) 1fr;
+  gap: var(--space-2) var(--space-3);
+  font-size: 13px;
+  align-items: start;
+}
+
+.field {
+  display: contents;
+}
+
+.field dt {
+  color: var(--color-text-muted);
+  padding-top: 5px;
+}
+
+.field dd {
+  margin: 0;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 28px;
+}
+
+.input,
+.textarea {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  font-size: 13px;
+  padding: 4px var(--space-2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+}
+
+.textarea {
+  resize: none;
+  line-height: 1.4;
+  overflow: hidden;
+}
+
+.input:hover,
+.textarea:hover {
+  border-color: var(--color-border);
+}
+
+.input:focus,
+.textarea:focus {
+  outline: none;
+  background: var(--color-bg-sunken);
+  border-color: var(--color-focus-ring);
+}
+
+.input[aria-invalid="true"] {
+  border-color: var(--color-danger);
+}
+
+.checkbox {
+  margin: 6px var(--space-2);
+  accent-color: var(--color-accent);
+}
+
+.value {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 4px 0;
+}
+
+.readonly,
+.empty {
+  color: var(--color-text-muted);
+  padding: 4px 0;
+  overflow-wrap: anywhere;
+}
+
+.chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.pickerField {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.pickButton {
+  padding: 1px var(--space-2);
+  font-size: 12px;
+  color: var(--color-text-muted);
+  border: 1px dashed var(--color-border-strong);
+  background: transparent;
+}
+
+.pickButton:hover {
+  color: var(--color-text);
+}
+
+.section h3 {
+  font-size: 13px;
+  margin-bottom: var(--space-2);
+}
+
+.section ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
+.section li {
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-sunken);
+  border-radius: var(--radius-sm);
+  overflow-wrap: anywhere;
+}
+
+.section p {
+  margin: 0;
+  font-size: 13px;
+}
+
+/* --- Content cards (cue panel) --- */
+
+.cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-sunken);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+}
+
+.cardMain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.cardName {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.cardMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.iconButton {
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  padding: 0 var(--space-1);
+  font-size: 16px;
+  line-height: 20px;
+}
+
+.iconButton:hover {
+  color: var(--color-text);
+}
+
+.addButton {
+  align-self: flex-start;
+  font-size: 13px;
+  padding: var(--space-1) var(--space-3);
+}
+
+/* --- History --- */
+
+.history {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
+.history li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.historyWhat {
+  overflow-wrap: anywhere;
+}
+
+.historyFrom {
+  color: var(--color-text-muted);
+  text-decoration: line-through;
+}
+
+.historyWhen {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
