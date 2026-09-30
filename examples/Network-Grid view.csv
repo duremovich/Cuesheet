@@ -1,6 +1,6 @@
 ﻿Name,IP,Subnet,Username,Password,Type
 Novastar LED Processor,192.168.11.163,255.255.255.0,,,Projector
-Mac pro,192.168.11.162,255.255.252.0,mediaserver,REDACTED,Media Server
+Mac pro,192.168.11.162,255.255.252.0,user,REDACTED,Media Server
 ,,255.255.255.0,,,Camera
 Morgan Laptop,DHCP,255.255.252.0,,,Designer Computer
 Casey Laptop,DHCP,255.255.252.0,,,Designer Computer
