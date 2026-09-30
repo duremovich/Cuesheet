@@ -8,6 +8,7 @@ import type {
   ShowSummaryDTO,
   ShowsResponse,
 } from "../../src/shared/api";
+import { DEFAULT_ITERATIONS, hashPassword } from "../../src/worker/auth/password";
 
 const ADMIN = { email: "admin@test.local", password: "test-password-123" };
 
@@ -101,6 +102,20 @@ describe("API", () => {
       show: { showId: show.id, name: "Some Like It Hot" },
       role: "editor",
     });
+  });
+
+  it("re-hashes a password stored with old parameters on successful login", async () => {
+    await loginAdmin(); // ensure the admin is seeded
+    const old = await hashPassword(ADMIN.password, 1_000);
+    await env.DB.prepare("UPDATE users SET password_hash = ? WHERE email = ?")
+      .bind(old, ADMIN.email)
+      .run();
+    await loginAdmin();
+    const row = await env.DB.prepare("SELECT password_hash AS h FROM users WHERE email = ?")
+      .bind(ADMIN.email)
+      .first<{ h: string }>();
+    expect(row?.h.startsWith(`pbkdf2$${DEFAULT_ITERATIONS}$`)).toBe(true);
+    await loginAdmin(); // still works with the new hash
   });
 
   it("treats D1 shows.name as the source of truth and refreshes the DO cache", async () => {

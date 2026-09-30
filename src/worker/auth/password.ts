@@ -4,8 +4,12 @@
 // the next successful login.
 import { base64ToBytes, bytesToBase64, timingSafeEqual } from "./bytes";
 
-/** OWASP 2023 minimum for PBKDF2-HMAC-SHA256. */
-export const DEFAULT_ITERATIONS = 210_000;
+/**
+ * Hosted Cloudflare Workers cap WebCrypto PBKDF2 at 100,000 iterations (below OWASP's
+ * 210,000 for SHA-256). If the cap is lifted, raise this; `needsRehash` upgrades existing
+ * hashes on each user's next successful login.
+ */
+export const DEFAULT_ITERATIONS = 100_000;
 const SALT_BYTES = 16;
 const KEY_BITS = 256;
 /** Refuse absurd counts from a corrupted/hostile stored string (CPU exhaustion). */
@@ -55,4 +59,10 @@ export async function verifyPassword(password: string, stored: string): Promise<
   if (salt.length === 0 || expected.length === 0) return false;
   const actual = await derive(password, salt, iterations, expected.length * 8);
   return timingSafeEqual(actual, expected);
+}
+
+/** True if a stored hash uses other parameters than today's and should be re-hashed. */
+export function needsRehash(stored: string): boolean {
+  const [scheme, iter] = stored.split("$");
+  return scheme !== "pbkdf2" || Number(iter) !== DEFAULT_ITERATIONS;
 }

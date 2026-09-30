@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import type { MeResponse } from "../../shared/api";
 import { clearSessionCookie, readSessionToken, serializeSessionCookie } from "../auth/cookie";
 import { requireAuth } from "../auth/middleware";
-import { hashPassword, verifyPassword } from "../auth/password";
+import { hashPassword, needsRehash, verifyPassword } from "../auth/password";
 import { createSession, deleteSession, normalizeEmail, toUserDTO } from "../auth/session";
 import { schema } from "../db/d1/client";
 import type { AppEnv } from "../types";
@@ -34,6 +34,13 @@ export const authRoutes = new Hono<AppEnv>()
     }
     if (!(await verifyPassword(password, user.passwordHash))) {
       return c.json({ error: "Wrong email or password" }, 401);
+    }
+    if (needsRehash(user.passwordHash)) {
+      // Upgrade to the current hashing parameters while we have the plaintext.
+      await c.var.db
+        .update(schema.users)
+        .set({ passwordHash: await hashPassword(password) })
+        .where(eq(schema.users.id, user.id));
     }
     const token = await createSession(c.var.db, user.id);
     c.header("Set-Cookie", serializeSessionCookie(token, { secure: isHttps(c) }));

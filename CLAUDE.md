@@ -54,9 +54,13 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   created and every time it's opened (`GET /api/shows/:id`), and the DO refreshes its copy.
   A future rename endpoint writes D1 only. Apply the same pattern to any other show-level
   fields that must be listable across shows.
-- **Passwords.** PBKDF2-HMAC-SHA256 via WebCrypto, 210,000 iterations, 16-byte salt, stored
-  as `pbkdf2$<iterations>$<salt b64>$<hash b64>` (`src/worker/auth/password.ts`). Verify reads
-  the parameters from the stored string, so the cost can be raised later with rehash-on-login.
+- **Passwords.** PBKDF2-HMAC-SHA256 via WebCrypto, 100,000 iterations, 16-byte salt, stored
+  as `pbkdf2$<iterations>$<salt b64>$<hash b64>` (`src/worker/auth/password.ts`).
+  **Hosted Cloudflare Workers cap WebCrypto PBKDF2 at 100,000 iterations** (below OWASP's
+  210,000); local workerd does not enforce the cap, so tests won't catch exceeding it. Don't
+  raise `DEFAULT_ITERATIONS` unless Cloudflare lifts the cap. Verify reads the parameters from
+  the stored string, and login re-hashes any hash where `needsRehash()` is true, so raising
+  the default later upgrades users as they sign in.
 - **Rate limiting** of login is deferred to M5 (TODO in `routes/auth.ts`).
 - **DO code.** `src/worker/do/ShowDO.ts`. Expose operations as RPC methods on the class
   (the Worker calls `env.SHOW.get(env.SHOW.idFromName(showId)).method()`); only WebSockets

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_ITERATIONS, hashPassword, verifyPassword } from "./password";
+import { DEFAULT_ITERATIONS, hashPassword, needsRehash, verifyPassword } from "./password";
 
 // A low iteration count keeps most tests fast; the format and code path are the same.
 const FAST = 1_000;
@@ -22,16 +22,19 @@ describe("password hashing (PBKDF2-SHA256)", () => {
     expect(await verifyPassword("same password", b)).toBe(true);
   });
 
-  it("defaults to at least 210,000 iterations", async () => {
-    expect(DEFAULT_ITERATIONS).toBeGreaterThanOrEqual(210_000);
+  it("defaults to 100,000 iterations (the hosted Workers PBKDF2 cap)", async () => {
+    expect(DEFAULT_ITERATIONS).toBe(100_000);
     const stored = await hashPassword("pw-with-defaults");
-    expect(stored.startsWith(`pbkdf2$${DEFAULT_ITERATIONS}$`)).toBe(true);
+    expect(stored.startsWith("pbkdf2$100000$")).toBe(true);
     expect(await verifyPassword("pw-with-defaults", stored)).toBe(true);
+    expect(needsRehash(stored)).toBe(false);
   });
 
-  it("verifies using the iteration count stored with the hash", async () => {
+  it("verifies older parameters and flags them for rehash", async () => {
     const older = await hashPassword("rehash me later", 5_000);
     expect(await verifyPassword("rehash me later", older)).toBe(true);
+    expect(needsRehash(older)).toBe(true);
+    expect(needsRehash("scrypt$16384$8$1$AAAA$AAAA")).toBe(true);
   });
 
   it("normalises Unicode so visually identical passwords match", async () => {
