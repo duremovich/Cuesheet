@@ -79,6 +79,9 @@ underlined; an unnumbered cue suggests the midpoint number). Source: `src/web/pa
 | `onFiles(row, files)` | attachment: files dropped or pasted onto the cell, when it's `editable` (the cell shows a drop outline while dragging) |
 | `unit` | measurement (and length formulas): display/input unit (`m cm mm ft-in ft in`, default m). The view layer sets it from the active unit |
 | `resultType` | formula: `number`, `text` or `measurement`, for filtering and sorting |
+| `href(value)` | text: show the text as a link to this URL (new tab; `null` = plain text), e.g. URL custom fields (M5a) |
+| `masked` | text: a secret (a sensitive custom field): the cell shows dots; editing, copy and the row panel's Reveal give the value (M5a) |
+| `parse(text)` | text-like: custom parsing of typed/pasted text → `{value}` or `{error}` (dates, durations, timecodes, URLs in custom fields; a lens ratio) |
 
 **Value shapes** (what `getValue` returns and `onEdit` receives):
 
