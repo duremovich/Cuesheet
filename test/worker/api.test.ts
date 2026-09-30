@@ -42,7 +42,7 @@ describe("API", () => {
   it("GET /api/health", async () => {
     const res = await api("/api/health");
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
+    expect(await res.json()).toEqual({ ok: true, d1: true, do: true });
   });
 
   it("rejects cross-site form posts (CSRF)", async () => {
@@ -175,7 +175,7 @@ describe("API", () => {
       ws.addEventListener("message", (e) => resolve(JSON.parse(e.data as string)), { once: true }),
     );
     ws.accept();
-    expect(await first).toEqual({ type: "hello", showId: show.id, clients: 1 });
+    expect(await first).toEqual({ type: "hello", showId: show.id, clients: 1, readOnly: 0 });
     ws.close(1000, "done");
   });
 
@@ -208,6 +208,8 @@ describe("API", () => {
 
     expect(await (await api(`/api/invites/${token}`)).json()).toEqual({
       email: "new.person@test.local",
+      showName: null,
+      role: null,
     });
     expect(
       (await post(`/api/invites/${token}/accept`, { name: "New", password: "short" })).status,

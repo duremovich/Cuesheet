@@ -1,0 +1,3 @@
+# Cuesheet is an internal tool: nothing here is for search engines.
+User-agent: *
+Disallow: /

@@ -1,18 +1,34 @@
 import { count } from "drizzle-orm";
+import type { Context } from "hono";
 import { createMiddleware } from "hono/factory";
 import { schema } from "../db/d1/client";
+import { isHttps } from "../routes/util";
 import type { AppEnv } from "../types";
-import { readSessionToken } from "./cookie";
+import { readSessionToken, serializeSessionCookie } from "./cookie";
 import { hashPassword } from "./password";
-import { getSessionUser, normalizeEmail } from "./session";
+import { getSession, maybeExtendSession, normalizeEmail, type SessionInfo } from "./session";
+
+/**
+ * The request's session, if its cookie is valid; slides the session's expiry (30 days
+ * from now, at most once a day) and re-sends the cookie when it does.
+ */
+export async function sessionOf(c: Context<AppEnv>): Promise<SessionInfo | null> {
+  const token = readSessionToken(c.req.header("Cookie"));
+  const session = token ? await getSession(c.var.db, token) : null;
+  if (!token || !session) return null;
+  c.set("user", session.user);
+  c.set("sessionToken", token);
+  if (await maybeExtendSession(c.var.db, session)) {
+    c.header("Set-Cookie", serializeSessionCookie(token, { secure: isHttps(c) }), {
+      append: true,
+    });
+  }
+  return session;
+}
 
 /** 401 unless the request carries a valid session cookie. Sets `user` and `sessionToken`. */
 export const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
-  const token = readSessionToken(c.req.header("Cookie"));
-  const user = token ? await getSessionUser(c.var.db, token) : null;
-  if (!token || !user) return c.json({ error: "Not signed in" }, 401);
-  c.set("user", user);
-  c.set("sessionToken", token);
+  if (!(await sessionOf(c))) return c.json({ error: "Not signed in" }, 401);
   await next();
 });
 

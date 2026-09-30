@@ -82,11 +82,16 @@ describe("ShowDO", () => {
       type: "hello",
       showId: "show-ws",
       clients: 1,
+      readOnly: 0,
     });
 
     const b = await connect(stub, "bob");
     expect(await b.next((m) => m.type === "hello")).toMatchObject({ clients: 2 });
-    expect(await a.next((m) => m.type === "presence")).toEqual({ type: "presence", clients: 2 });
+    expect(await a.next((m) => m.type === "presence")).toEqual({
+      type: "presence",
+      clients: 2,
+      readOnly: 0,
+    });
     expect(await stub.clientCount()).toBe(2);
 
     b.ws.send(PING_FRAME);
@@ -96,6 +101,7 @@ describe("ShowDO", () => {
     expect(await a.next((m) => m.type === "presence" && m.clients === 1)).toEqual({
       type: "presence",
       clients: 1,
+      readOnly: 0,
     });
     a.ws.close(1000, "bye");
   });

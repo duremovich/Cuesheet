@@ -101,8 +101,15 @@ export interface UpdateShowResponse {
 
 export const MAX_SESSION_LENGTH = 100;
 
+/**
+ * POST /api/invites. Admins invite anyone; a show's owner may invite to that show
+ * (`showId` required then). On accept the new account joins `showId` with `role`
+ * (default editor).
+ */
 export interface CreateInviteRequest {
   email: string;
+  showId?: string;
+  role?: Role;
 }
 
 export interface CreateInviteResponse {
@@ -114,6 +121,9 @@ export interface CreateInviteResponse {
 
 export interface InviteInfoResponse {
   email: string;
+  /** The show the account joins on accept, if any. */
+  showName?: string | null;
+  role?: Role | null;
 }
 
 export interface AcceptInviteRequest {

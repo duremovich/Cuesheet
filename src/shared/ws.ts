@@ -26,12 +26,16 @@ export interface HelloMessage {
   type: "hello";
   showId: string;
   clients: number;
+  /** How many of `clients` are read-only (viewers and share links). */
+  readOnly?: number;
 }
 
-/** Broadcast to every client whenever someone joins or leaves. */
+/** Broadcast to every client whenever someone joins or leaves (or a role changes). */
 export interface PresenceMessage {
   type: "presence";
   clients: number;
+  /** How many of `clients` are read-only (viewers and share links). */
+  readOnly?: number;
 }
 
 export interface PongMessage {

@@ -70,4 +70,64 @@ export const invites = sqliteTable("invites", {
   createdAt: integer("created_at").notNull().default(now),
   expiresAt: integer("expires_at").notNull(),
   acceptedAt: integer("accepted_at"),
+  /**
+   * `signup`: a new account (the invite link). `reset`: an admin's one-time password
+   * reset link for `userId` (the same page shape; `/reset/<token>`).
+   */
+  kind: text("kind", { enum: ["signup", "reset"] })
+    .notNull()
+    .default("signup"),
+  /** reset: the account whose password the link sets. */
+  userId: text("user_id"),
+  /** signup: the show the new account joins on accept (null: none), with `role`. */
+  showId: text("show_id"),
+  role: text("role", { enum: ["editor", "commenter", "viewer"] }),
 });
+
+/**
+ * Read-only links to one table/view or print layout of a show (R23), opened without
+ * signing in at `/s/<token>`. Only the token's SHA-256 is stored.
+ */
+export const shareLinks = sqliteTable(
+  "share_links",
+  {
+    id: text("id").primaryKey(),
+    showId: text("show_id")
+      .notNull()
+      .references(() => shows.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull().unique(),
+    /** `view`: the live grid rendering; `print`: a print layout. */
+    kind: text("kind", { enum: ["view", "print"] }).notNull(),
+    /** The data table (`cues`, `notes`, …) the link shows. */
+    table: text("table").notNull(),
+    /** The shared view shown (null: the table's default view, or a preset). */
+    viewId: text("view_id"),
+    /** A built-in layout instead of a view: calling-script, cuesheet, by-person, … */
+    preset: text("preset"),
+    /** JSON of preset options ({session, orient, …}). */
+    options: text("options"),
+    label: text("label"),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: integer("created_at").notNull().default(now),
+    expiresAt: integer("expires_at"),
+    revokedAt: integer("revoked_at"),
+    lastUsedAt: integer("last_used_at"),
+  },
+  (t) => [index("share_links_show_idx").on(t.showId)],
+);
+
+/**
+ * Sliding-window rate limiting (R24): one row per counted event (a failed login, a bad
+ * invite or share token) under a key like `login:email:<email>`. Rows older than the
+ * longest window are pruned when their key is checked, and by the scheduled handler.
+ */
+export const rateLimitEvents = sqliteTable(
+  "rate_limit_events",
+  {
+    key: text("key").notNull(),
+    at: integer("at").notNull(),
+  },
+  (t) => [index("rate_limit_events_key_at_idx").on(t.key, t.at)],
+);

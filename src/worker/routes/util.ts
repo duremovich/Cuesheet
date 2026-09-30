@@ -16,7 +16,12 @@ export function str(v: unknown): string {
   return typeof v === "string" ? v : "";
 }
 
+/**
+ * Whether cookies get `Secure`: https requests, and always in production (ENVIRONMENT is
+ * "production" there, so a request that reaches the Worker as http can't downgrade them).
+ */
 export function isHttps(c: Context): boolean {
+  if ((c.env as Partial<Env> | undefined)?.ENVIRONMENT === "production") return true;
   return new URL(c.req.url).protocol === "https:";
 }
 

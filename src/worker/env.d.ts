@@ -6,3 +6,8 @@ declare module "*.sql" {
   const sql: string;
   export default sql;
 }
+
+/** Vite replaces this in the Worker bundle (`DEV` is true under `vite dev`). */
+interface ImportMeta {
+  readonly env?: { readonly DEV?: boolean };
+}

@@ -1,16 +1,19 @@
-// Cloudflare Worker configuration. See docs/decisions/0005-cloudflare-platform.md.
-// Local dev and tests run entirely under workerd/miniflare; nothing here is deployed
-// from the sandbox. Real IDs for D1/R2 get filled in when we first deploy.
+// Cloudflare Worker configuration. See docs/decisions/0005-cloudflare-platform.md and
+// docs/deploy.md. Local dev and tests run entirely under workerd/miniflare and use the
+// top-level settings; nothing is deployed from the sandbox. Production is `env.production`
+// (`wrangler deploy --env production`, from .github/workflows/deploy.yml).
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "cuesheet",
   "main": "./src/worker/index.ts",
-  "compatibility_date": "2026-08-15",
+  "compatibility_date": "2026-08-22",
   "compatibility_flags": ["nodejs_compat"],
   "assets": {
+    // The Worker serves pages through this binding so it can add security headers
+    // (src/worker/security.ts); hashed build files under /assets/ skip the Worker.
+    "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    // API routes always hit the Worker, even when a request looks like a navigation.
-    "run_worker_first": ["/api/*"]
+    "run_worker_first": ["/*", "!/assets/*"]
   },
   "durable_objects": {
     "bindings": [{ "name": "SHOW", "class_name": "ShowDO" }]
@@ -25,7 +28,38 @@
     }
   ],
   "r2_buckets": [{ "binding": "FILES", "bucket_name": "cuesheet-files" }],
+  "vars": { "ENVIRONMENT": "development" },
+  // Weekly D1 backup to R2 (Mondays 03:17 UTC; src/worker/backup.ts).
+  "triggers": { "crons": ["17 3 * * 1"] },
   "observability": { "enabled": true },
   // Outbound to *.cloudflare.com is blocked in the sandbox; never phone home.
-  "send_metrics": false
+  "send_metrics": false,
+
+  "env": {
+    // `wrangler deploy --env production` (the Worker is named cuesheet-production).
+    // Bindings aren't inherited by environments: everything is repeated here.
+    // Secrets (not in this file): ADMIN_EMAIL, ADMIN_PASSWORD
+    //   wrangler secret put ADMIN_EMAIL --env production
+    "production": {
+      "vars": { "ENVIRONMENT": "production" },
+      "durable_objects": {
+        "bindings": [{ "name": "SHOW", "class_name": "ShowDO" }]
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "cuesheet",
+          // Replace with the id printed by `wrangler d1 create cuesheet` (docs/deploy.md).
+          "database_id": "00000000-0000-0000-0000-000000000000",
+          "migrations_dir": "src/worker/db/d1/migrations"
+        }
+      ],
+      "r2_buckets": [{ "binding": "FILES", "bucket_name": "cuesheet-files" }],
+      "triggers": { "crons": ["17 3 * * 1"] },
+      "observability": { "enabled": true, "head_sampling_rate": 1 }
+      // A custom domain (docs/deploy.md, "Custom domain"); the zone must be on the account:
+      // "routes": [{ "pattern": "cuesheet.example.com", "custom_domain": true }],
+      // "workers_dev": false
+    }
+  }
 }
