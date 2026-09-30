@@ -8,6 +8,7 @@ import { linkDiffOps, textField } from "../shared/ops";
 import {
   createContent,
   createPerson,
+  createScene,
   searchContent,
   searchPersons,
   searchScenes,
@@ -113,6 +114,7 @@ export function cueColumns(opts: {
       width: 220,
       getValue: (v) => v.scene,
       search: (q) => searchScenes(store.getState(), q),
+      create: (name) => createScene(store, name),
     },
   ];
   return editable ? cols : cols.map((c) => ({ ...c, editable: false }));

@@ -2,12 +2,18 @@
 import type { TableName } from "../../../shared/tables";
 
 export const TABS = [
-  { key: "cues", label: "Cues", table: "cues", param: "cue" },
-  { key: "scenes", label: "Scenes", table: "scenes", param: "scene" },
-  { key: "content", label: "Content", table: "content", param: "content" },
-  { key: "notes", label: "Notes", table: "notes", param: "note" },
-  { key: "people", label: "People", table: "persons", param: "person" },
-] as const satisfies readonly { key: string; label: string; table: TableName; param: string }[];
+  { key: "cues", label: "Cues", table: "cues", param: "cue", noun: "cue" },
+  { key: "scenes", label: "Scenes", table: "scenes", param: "scene", noun: "scene" },
+  { key: "content", label: "Content", table: "content", param: "content", noun: "content item" },
+  { key: "notes", label: "Notes", table: "notes", param: "note", noun: "note" },
+  { key: "people", label: "People", table: "persons", param: "person", noun: "person" },
+] as const satisfies readonly {
+  key: string;
+  label: string;
+  table: TableName;
+  param: string;
+  noun: string;
+}[];
 
 export type TabKey = (typeof TABS)[number]["key"];
 

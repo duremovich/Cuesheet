@@ -148,6 +148,7 @@ export function TableGrid<V>(config: TableConfig<V>) {
             columns={chrome.columns}
             sections={config.panelSections?.(panelView) ?? []}
             onClose={chrome.closePanel}
+            onStep={chrome.stepPanel}
           />
         ) : null
       }
@@ -163,6 +164,8 @@ export function TableGrid<V>(config: TableConfig<V>) {
         onColumnResize={chrome.onColumnResize}
         onActiveRowChange={chrome.onActiveRowChange}
         onOpenRow={chrome.onOpenRow}
+        {...(chrome.onEscape ? { onEscape: chrome.onEscape } : {})}
+        addRowLabel={`Add ${config.noun}`}
         onEdit={onEdit}
         {...(canInsert ? { onInsert: insert } : {})}
         {...(config.moveOps ? { onMove } : {})}

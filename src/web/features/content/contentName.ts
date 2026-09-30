@@ -30,3 +30,8 @@ export function prefixedContentName(
   }
   return `${sss}-${String(max + 1).padStart(3, "0")}-${name}`;
 }
+
+/** The name without its `SSS-NNN-` prefix ("105-001-VAMP" → "VAMP"). */
+export function contentBaseName(name: string | null | undefined): string {
+  return (name ?? "").trim().replace(PREFIX, "");
+}

@@ -46,7 +46,9 @@ describe("buildCueViews + cueGroups", () => {
     const data = base();
     const views = buildCueViews(data, new ViewCache<CueView>());
     const c1 = views.find((v) => v.id === "c1");
-    expect(c1?.content).toEqual([{ id: "k1", label: "101-001-OPEN", secondary: "101 Scene One" }]);
+    expect(c1?.content).toEqual([
+      { id: "k1", label: "101-001-OPEN", secondary: "101 Scene One", aliases: ["OPEN"] },
+    ]);
     expect(c1?.assignees).toEqual([{ id: "p1", label: "Casey" }]);
     expect(c1?.scene?.label).toBe("101 Scene One");
 

@@ -6,6 +6,8 @@ import {
   apiCreateShow,
   apiLogin,
   importExamples,
+  ORIGIN,
+  recordId,
   snapshot,
   trackErrors,
   uniqueName,
@@ -316,6 +318,16 @@ test("⌘K finds a cue by number and focuses it, expanding its group", async ({ 
   await expect(page).toHaveURL(/\/people\?person=/);
   const people = page.getByRole("grid", { name: "People" });
   await expect(people.locator('[data-active="true"]')).toContainText("Casey");
+
+  // A query naming a command lists commands first; Tab stays inside the palette.
+  await page.keyboard.press("ControlOrMeta+k");
+  await palette.getByRole("combobox").fill("sort");
+  await expect(palette.getByRole("option").first()).toHaveText("Sort now by cue number");
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Tab");
+  await expect(palette.getByRole("combobox")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(palette).toHaveCount(0);
 });
 
 test("a viewer gets a read-only cue list with no insert", async ({ browser }) => {
@@ -328,7 +340,7 @@ test("a viewer gets a read-only cue list with no insert", async ({ browser }) =>
   trackErrors(viewer, errors);
   await openCues(viewer, showId);
   await expect(viewer.getByRole("button", { name: "+ Add cue" })).toHaveCount(0);
-  await expect(grid(viewer).getByRole("button", { name: /^Add row to/ })).toHaveCount(0);
+  await expect(grid(viewer).getByRole("button", { name: /^Add cue to/ })).toHaveCount(0);
   await expect(viewer.getByLabel("Import Airtable CSVs…")).toHaveCount(0);
   const cell = cellOf(rowByCue(viewer, "0.10"), "description");
   await expect(cell).toHaveAttribute("aria-readonly", "true");
@@ -343,6 +355,122 @@ test("a viewer gets a read-only cue list with no insert", async ({ browser }) =>
   // "Sort now" isn't offered either (live sort is a personal view setting, so it is).
   await viewer.getByRole("button", { name: "Sort" }).click();
   await expect(viewer.getByRole("menuitem", { name: "Sort now by cue number" })).toHaveCount(0);
+});
+
+test("the Scene cell creates a new scene; the cue moves to the end of it", async ({ browser }) => {
+  const { page, showId } = await exampleShow(browser, [
+    "Breakdown-Grid view.csv",
+    "Content-Grid view.csv",
+    "Cue List-Video Cue List View.csv",
+  ]);
+  await goToCue(page, showId, "14.30");
+  const scene = cellOf(rowByCue(page, "14.30"), "scene");
+  await scene.click();
+  await page.keyboard.type("116 Encore");
+  const picker = page.getByTestId("record-picker");
+  await picker.getByRole("option", { name: "Create “116 Encore”" }).click();
+  await expect(scene).toHaveText("116 Encore");
+  // Leaving the row lets it settle into its new group (the last one).
+  await cellOf(rowByCue(page, "14.25"), "description").click();
+  await expect(rowByCue(page, "14.30")).toHaveCount(0); // gone from scene 105's view
+  await goToCue(page, showId, "14.30");
+  await expect(groupHeader(page, "116 Encore")).toHaveCount(1);
+  await expect
+    .poll(async () => {
+      const snap = await snapshot(page, showId);
+      const cue = snap.tables.cues.find((c) => c.number === "14.30");
+      const s = snap.tables.scenes.find((x) => x.id === cue?.scene_id);
+      return [
+        s?.number,
+        s?.name,
+        snap.tables.scenes.at(-1)?.id === s?.id,
+        // Show order: right after the last cue of the last scene that had cues (207).
+        snap.tables.cues[snap.tables.cues.findIndex((c) => c.number === "14.30") - 1]?.number,
+      ];
+    })
+    .toEqual(["116", "Encore", true, "56.00"]);
+});
+
+test("the row panel: Space opens, Escape closes; ↑/↓ inside it move through rows", async ({
+  browser,
+}) => {
+  const { page } = await exampleShow(browser, [
+    "Breakdown-Grid view.csv",
+    "Cue List-Video Cue List View.csv",
+  ]);
+  const panel = page.getByTestId("row-panel");
+  const number = cellOf(rowByCue(page, "0.30"), "number");
+  await number.click();
+  await page.keyboard.press("Space");
+  await expect(panel).toContainText("Cue 0.30");
+  await page.keyboard.press("Escape");
+  await expect(panel).toHaveCount(0);
+  await expect(number).toBeFocused();
+
+  await page.keyboard.press("Space");
+  await panel.getByText("SM call").click(); // focus stays in the panel
+  await page.keyboard.press("ArrowDown");
+  await expect(panel.getByRole("heading", { level: 2 })).toHaveText("Cue 0.80");
+  await expect(cellOf(rowByCue(page, "0.80"), "number")).toHaveAttribute("data-active", "true");
+  await page.keyboard.press("ArrowUp");
+  await expect(panel.getByRole("heading", { level: 2 })).toHaveText("Cue 0.30");
+  await page.keyboard.press("Escape");
+  await expect(panel).toHaveCount(0);
+  await expect(number).toBeFocused();
+});
+
+test("a link to a cue that no longer exists says so and drops it from the URL", async ({
+  browser,
+}) => {
+  const { page, showId } = await exampleShow(browser, [
+    "Breakdown-Grid view.csv",
+    "Cue List-Video Cue List View.csv",
+  ]);
+  await page.goto(`/shows/${showId}/cues?cue=${recordId()}`);
+  await expect(page.getByTestId("toast")).toContainText("That cue no longer exists.");
+  await expect(page).not.toHaveURL(/cue=/);
+});
+
+test("the content picker doesn't offer to create an existing item typed without its prefix", async ({
+  browser,
+}) => {
+  const { page, showId } = await exampleShow(browser, [
+    "Breakdown-Grid view.csv",
+    "Content-Grid view.csv",
+    "Cue List-Video Cue List View.csv",
+  ]);
+  await goToCue(page, showId, "14.30");
+  await cellOf(rowByCue(page, "14.30"), "content").click();
+  await page.keyboard.type("vamp");
+  const picker = page.getByTestId("record-picker");
+  await expect(picker.getByRole("option", { name: /105-001-VAMP/ })).toBeVisible();
+  await expect(picker.getByRole("option", { name: /^Create/ })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+});
+
+test("a role change applies live: editor → viewer loses editing without a reload", async ({
+  browser,
+}) => {
+  const { page: admin, showId } = await exampleShow(browser, [
+    "Breakdown-Grid view.csv",
+    "Cue List-Video Cue List View.csv",
+  ]);
+  const { page: member, userId } = await addMember(browser, admin, showId, "editor");
+  pages.push(member);
+  trackErrors(member, errors);
+  await openCues(member, showId);
+  await expect(member.getByRole("button", { name: "+ Add cue" })).toBeVisible();
+  const cell = cellOf(rowByCue(member, "0.10"), "description");
+  await expect(cell).not.toHaveAttribute("aria-readonly", "true");
+
+  const res = await admin.request.patch(`/api/shows/${showId}/members/${userId}`, {
+    data: { role: "viewer" },
+    headers: { Origin: ORIGIN },
+  });
+  expect(res.status()).toBe(200);
+  await expect(member.getByTestId("toast")).toContainText("Your role in this show is now viewer.");
+  await expect(member.getByRole("button", { name: "+ Add cue" })).toHaveCount(0);
+  await expect(cell).toHaveAttribute("aria-readonly", "true");
 });
 
 test.describe("at phone width", () => {
@@ -366,7 +494,14 @@ test.describe("at phone width", () => {
     const box = await grid(page).boundingBox();
     expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(390);
     await expect(page.getByRole("link", { name: "Cues", exact: true })).toBeVisible();
-    await expect(page.getByRole("link", { name: "People", exact: true })).toBeVisible();
+    // All five tabs fit (or the strip scrolls the active one into view).
+    const people = page.getByRole("link", { name: "People", exact: true });
+    await people.click();
+    await expect(page).toHaveURL(/\/people$/);
+    const pb0 = await people.boundingBox();
+    expect((pb0?.x ?? 0) + (pb0?.width ?? 0)).toBeLessThanOrEqual(390);
+    await page.getByRole("link", { name: "Cues", exact: true }).click();
+    await expect(grid(page)).toBeVisible();
     // The row panel opens over the grid, not off-screen.
     await cellOf(rowByCue(page, "0.10"), "number").click();
     await page.keyboard.press("Space");

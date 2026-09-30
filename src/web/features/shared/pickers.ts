@@ -7,7 +7,7 @@ import type { PickerItem } from "../../components/grid/types";
 import { sceneTitle } from "../../lib/show-selectors";
 import type { ShowData } from "../../lib/show-state";
 import type { ShowStore } from "../../lib/show-store";
-import { prefixedContentName } from "../content/contentName";
+import { contentBaseName, prefixedContentName } from "../content/contentName";
 import { rankItems } from "./search";
 
 const LIMIT = 50;
@@ -18,10 +18,13 @@ export function sceneItem(s: SceneRow): PickerItem {
 
 export function contentItem(c: ContentRow, scenes: ShowData["tables"]["scenes"]): PickerItem {
   const scene = c.scene_id ? scenes.get(c.scene_id) : undefined;
+  const bare = contentBaseName(c.name);
   return {
     id: c.id,
     label: c.name?.trim() || "(unnamed content)",
     ...(scene ? { secondary: sceneTitle(scene) } : {}),
+    // Typing "VAMP" finds 105-001-VAMP without offering to create a second one.
+    ...(bare && bare !== c.name?.trim() ? { aliases: [bare] } : {}),
   };
 }
 
@@ -112,4 +115,23 @@ export async function createPerson(store: ShowStore, typed: string): Promise<Pic
   const id = newId();
   await store.mutate([{ op: "create", table: "persons", id, fields: { name: typed.trim() } }]);
   return { id, label: typed.trim() };
+}
+
+/**
+ * "106A Train Platform" → number "106A", name "Train Platform"; "106" → number only; text
+ * without a leading number → name only.
+ */
+export function parseSceneName(typed: string): { number: string | null; name: string | null } {
+  const t = typed.trim();
+  const m = /^(\d+[A-Za-z]?)(?:\s*[-:–.]?\s+|$)(.*)$/.exec(t);
+  if (!m) return { number: null, name: t || null };
+  return { number: m[1] ?? null, name: m[2]?.trim() || null };
+}
+
+/** New scene from a picker, at the end of show order. */
+export async function createScene(store: ShowStore, typed: string): Promise<PickerItem> {
+  const id = newId();
+  await store.mutate([{ op: "create", table: "scenes", id, fields: parseSceneName(typed) }]);
+  const row = store.getState().tables.scenes.get(id);
+  return row ? sceneItem(row) : { id, label: typed.trim() };
 }

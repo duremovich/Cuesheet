@@ -76,7 +76,7 @@ export function NotesGrid() {
   }, [views, statusOptions]);
 
   const columns = useMemo(
-    () => noteColumns({ store, fieldOptions, canCreatePeople: ws.canEdit }),
+    () => noteColumns({ store, fieldOptions, canCreateRecords: ws.canEdit }),
     [store, fieldOptions, ws.canEdit],
   );
 

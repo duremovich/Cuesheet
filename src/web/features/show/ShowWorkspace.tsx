@@ -1,7 +1,7 @@
 // The show workspace (/shows/:id/<tab>): header with presence + theme, the tab bar
 // (Cues, Scenes, Content, Notes, People), Show settings, ⌘K, toasts, and the active tab.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import type { MemberDTO, ShowResponse } from "../../../shared/api";
 import {
   AirtableImport,
@@ -13,7 +13,7 @@ import type { SortSpec } from "../../components/grid/types";
 import { PresenceIndicator } from "../../components/PresenceIndicator";
 import { ApiError, api } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
-import { useShowSocketState, useShowStoreInstance } from "../../lib/show-store";
+import { useShowSocketState, useShowStore, useShowStoreInstance } from "../../lib/show-store";
 import { setTheme } from "../../lib/theme";
 import pageStyles from "../../pages/pages.module.css";
 import { planSortNow } from "../cues/sortNow";
@@ -50,7 +50,10 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
   const showId = data.show.showId;
   const { items: toasts, toast, dismiss } = useToasts();
   const importer = useRef<AirtableImportHandle>(null);
-  const canEdit = data.role === "owner" || data.role === "editor";
+  // The role can change while the show is open (the owner changes it): the server tells
+  // this user's sockets and the store keeps it; editability follows without a reload.
+  const role = useShowStore((s) => s.role) ?? data.role;
+  const canEdit = role === "owner" || role === "editor";
 
   // Members (for note authors, and Show settings).
   const [members, setMembers] = useState<MemberDTO[] | null>(null);
@@ -122,10 +125,10 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
     () => ({
       showId,
       showName: data.show.name,
-      role: data.role,
+      role,
       userId: user?.id ?? "",
       canEdit,
-      canComment: canEdit || data.role === "commenter",
+      canComment: canEdit || role === "commenter",
       memberNames,
       toast,
       reportError,
@@ -137,6 +140,7 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
     [
       showId,
       data,
+      role,
       user,
       canEdit,
       memberNames,
@@ -147,6 +151,27 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
       sortCuesNow,
     ],
   );
+
+  // Keep the active tab visible when the tab strip scrolls (phones).
+  const tabStrip = useRef<HTMLDivElement>(null);
+  const { pathname } = useLocation();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the tab (path) changes
+  useEffect(() => {
+    const strip = tabStrip.current;
+    const tab = strip?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (!strip || !tab) return;
+    const left =
+      tab.getBoundingClientRect().left - strip.getBoundingClientRect().left + strip.scrollLeft;
+    if (left < strip.scrollLeft) strip.scrollLeft = left;
+    else if (left + tab.offsetWidth > strip.scrollLeft + strip.clientWidth)
+      strip.scrollLeft = left + tab.offsetWidth - strip.clientWidth;
+  }, [pathname]);
+
+  const firstRole = useRef(role);
+  useEffect(() => {
+    if (role !== firstRole.current) toast(`Your role in this show is now ${role}.`);
+    firstRole.current = role;
+  }, [role, toast]);
 
   // ⌘K / Ctrl+K anywhere in the show.
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -206,7 +231,7 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
           <PresenceIndicator {...socket} />
         </AppHeader>
         <nav className={styles.nav} aria-label="Show">
-          <div className={styles.tabs}>
+          <div className={styles.tabs} ref={tabStrip}>
             {TABS.map((t) => (
               <NavLink
                 key={t.key}
@@ -226,6 +251,7 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
               onClick={() => setPaletteOpen(true)}
               aria-keyshortcuts="Control+K Meta+K"
               title="Search (⌘K / Ctrl+K)"
+              aria-label="Search"
             >
               <span aria-hidden="true">⌕</span> <span className={styles.navButtonText}>Search</span>{" "}
               <kbd className={styles.kbd}>{SHORTCUT}</kbd>

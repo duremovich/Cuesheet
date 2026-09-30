@@ -170,9 +170,13 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
   const mru = useRef(new Map<string, PickerItem[]>());
   const focusPending = useRef(false);
   /** A row to activate once it appears (inserted rows, `focusRow`). */
-  const pendingFocus = useRef<{ id: string; key?: string | undefined; focus: boolean } | null>(
-    null,
-  );
+  const pendingFocus = useRef<{
+    id: string;
+    key?: string | undefined;
+    focus: boolean;
+    /** Scroll it to the vertical middle (focusRow), not just into view. */
+    center?: boolean;
+  } | null>(null);
   const pendingScroll = useRef<string | null>(null);
   const scrollActive = useRef(false);
   const afterDelete = useRef<string | null>(null);
@@ -435,6 +439,24 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     return settled;
   };
 
+  /** Would releasing the current hold move the row (live sort / changed group)? */
+  const holdWouldMove = (): boolean => {
+    const cur = ref.current;
+    const h = cur.hold;
+    if (!h) return false;
+    const settled = buildLayout({
+      rows: cur.props.rows,
+      groups: cur.props.groups,
+      columns: cur.props.columns,
+      rowId,
+      sort: cur.props.sort,
+      collapsed: cur.collapsed,
+      isSection,
+    });
+    const after = settled.findIndex((it) => it.kind === "row" && it.id === h.id);
+    return after >= 0 && after !== cur.indexById.get(h.id);
+  };
+
   /** A hold for `id` at its slot within its group in `layout`. */
   const holdFor = (id: string, layout: FlatItem<Row>[]): Hold | null => {
     const i = layout.findIndex((it) => it.kind === "row" && it.id === id);
@@ -468,7 +490,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     return Number.POSITIVE_INFINITY;
   };
 
-  const ensureVisible = (flatIndex: number, key?: string) => {
+  const ensureVisible = (flatIndex: number, key?: string, center = false) => {
     const el = scrollRef.current;
     const o = ref.current.offsets;
     if (!el || flatIndex < 0) return;
@@ -476,7 +498,12 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     const top = (o[flatIndex] ?? 0) + HEADER_HEIGHT;
     const bottom = (o[flatIndex + 1] ?? top) + HEADER_HEIGHT;
     const viewTop = el.scrollTop + HEADER_HEIGHT + stickyRoom;
-    if (top < viewTop) el.scrollTop = Math.max(0, top - HEADER_HEIGHT - stickyRoom);
+    const outside = top < viewTop || bottom > el.scrollTop + el.clientHeight;
+    if (center && outside) {
+      // Jumps (⌘K, a link) land mid-view, with context above and below.
+      const room = el.clientHeight - HEADER_HEIGHT - stickyRoom;
+      el.scrollTop = Math.max(0, top - HEADER_HEIGHT - stickyRoom - (room - (bottom - top)) / 2);
+    } else if (top < viewTop) el.scrollTop = Math.max(0, top - HEADER_HEIGHT - stickyRoom);
     else if (bottom > el.scrollTop + el.clientHeight) el.scrollTop = bottom - el.clientHeight;
     const c = key === undefined ? undefined : ref.current.cols[ref.current.colIndex.get(key) ?? -1];
     if (c && !c.frozen) {
@@ -490,7 +517,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
   /** Makes a cell (or group header) active. Leaving a row releases its hold. */
   const activate = (
     target: CellRef,
-    opts: { scroll?: boolean; keepRange?: boolean; focus?: boolean } = {},
+    opts: { scroll?: boolean | "center"; keepRange?: boolean; focus?: boolean } = {},
   ) => {
     const cur = ref.current;
     if (target.group) {
@@ -512,7 +539,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       const i = target.group
         ? ref.current.groupIndexById.get(target.rowId)
         : ref.current.indexById.get(target.rowId);
-      ensureVisible(i ?? -1, target.group ? undefined : target.key);
+      ensureVisible(i ?? -1, target.group ? undefined : target.key, opts.scroll === "center");
     }
   };
 
@@ -812,10 +839,16 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
   };
   const runInsert = (pos: InsertPosition) => guard("insert", () => insert(pos));
 
+  /** A row can be duplicated when you could edit it (some editable column). */
+  const canDuplicate = (id: string): boolean => {
+    const entry = ref.current.allRows.get(id);
+    return !!entry && ref.current.cols.some((c) => isEditable(c.col, entry.row));
+  };
+
   const duplicate = async (id: string) => {
     const entry = ref.current.allRows.get(id);
     const fn = ref.current.props.onInsert;
-    if (!fn || !entry) return;
+    if (!fn || !entry || !canDuplicate(id)) return;
     commitAny();
     const pos = positionFor({ rowId: id, key: "" }, "below");
     const newId = await fn(pos);
@@ -867,7 +900,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
         pendingFocus.current = null;
         const it = items[i];
         const key = pf.key ?? firstEditableKey(it?.kind === "row" ? it.row : undefined);
-        activate({ rowId: pf.id, key }, { scroll: true, focus: pf.focus });
+        activate({ rowId: pf.id, key }, { scroll: pf.center ? "center" : true, focus: pf.focus });
       }
     }
     const ps = pendingScroll.current;
@@ -994,6 +1027,8 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
   // --- Imperative handle ---
   const expandGroupRef = useRef(expandGroup);
   expandGroupRef.current = expandGroup;
+  const activateRef = useRef(activate);
+  activateRef.current = activate;
   useImperativeHandle(
     props.ref,
     () => ({
@@ -1001,8 +1036,21 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
         const entry = ref.current.allRows.get(id);
         if (!entry) return;
         expandGroupRef.current(entry.groupId);
-        pendingFocus.current = { id, key: columnKey, focus: true };
+        pendingFocus.current = { id, key: columnKey, focus: true, center: true };
         bump();
+      },
+      stepRow(delta: number) {
+        const cur = ref.current;
+        const a = cur.active;
+        const flat = a && !a.group ? cur.indexById.get(a.rowId) : undefined;
+        let n = flat === undefined ? -1 : cur.navRows.indexOf(flat);
+        n = n < 0 ? 0 : Math.max(0, Math.min(cur.navRows.length - 1, n + delta));
+        const it = cur.items[cur.navRows[n] ?? -1];
+        if (it?.kind !== "row") return null;
+        const key = a && !a.group ? a.key : (cur.cols[0]?.key ?? "");
+        activateRef.current({ rowId: it.id, key }, { scroll: true, focus: false });
+        bump();
+        return it.id;
       },
       scrollToRow(id: string) {
         const entry = ref.current.allRows.get(id);
@@ -1147,7 +1195,10 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
         e.preventDefault();
         if (a && !a.group) cur.props.onOpenRow?.(a.rowId);
         return;
-      case "Escape":
+      case "Escape": {
+        // Nothing to cancel (no range, no row selection, no held row that would move):
+        // let the page handle it (e.g. close a detail panel).
+        const idle = !cur.range && cur.selected.length === 0 && !holdWouldMove();
         setRange(null);
         setSelected([]);
         if (cur.hold) {
@@ -1155,7 +1206,9 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
           scrollActive.current = true;
           focusPending.current = true;
         }
+        if (idle) cur.props.onEscape?.();
         return;
+      }
       case "Delete":
       case "Backspace": {
         e.preventDefault();
@@ -1653,8 +1706,10 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
           shortcut: "⌘⇧↵",
           onSelect: () => runInsert(positionFor(at, "below")),
         },
-        { label: "Duplicate row", shortcut: "⌘D", onSelect: () => runDuplicate(id) },
       );
+      if (canDuplicate(id)) {
+        list.push({ label: "Duplicate row", shortcut: "⌘D", onSelect: () => runDuplicate(id) });
+      }
     }
     if (onOpenRow) list.push({ label: "Open", shortcut: "Space", onSelect: () => onOpenRow(id) });
     list.push(...(props.extraMenuItems?.({ rowId: id, selectedRowIds: selected }) ?? []));
@@ -1747,10 +1802,11 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
                   tabIndex={-1}
                   onMouseDown={(e) => e.preventDefault()}
                   className={styles.addRow}
-                  aria-label={`Add row to ${g.title}`}
+                  aria-label={`${props.addRowLabel ?? "Add row"} to ${g.title}`}
                   onClick={() => runInsert({ groupId: g.id })}
                 >
-                  <PlusIcon /> <span className={styles.addRowText}>Add row</span>
+                  <PlusIcon />{" "}
+                  <span className={styles.addRowText}>{props.addRowLabel ?? "Add row"}</span>
                 </button>
               )}
             </div>

@@ -9,6 +9,7 @@ import { selectOptions } from "../cues/columns";
 import { linkDiffOps, textField } from "../shared/ops";
 import {
   createPerson,
+  createScene,
   searchContent,
   searchCues,
   searchPersons,
@@ -50,7 +51,7 @@ export function noteColumns(opts: {
   store: ShowStore;
   fieldOptions: FieldOptions;
   /** Editors may create people from the assignee picker. */
-  canCreatePeople: boolean;
+  canCreateRecords: boolean;
 }): Column<NoteView>[] {
   const { store } = opts;
   const editable = (v: NoteView) => v.editable;
@@ -99,7 +100,7 @@ export function noteColumns(opts: {
       editable,
       getValue: (v) => v.assignees,
       search: (q) => searchPersons(store.getState(), q),
-      ...(opts.canCreatePeople ? { create: (name: string) => createPerson(store, name) } : {}),
+      ...(opts.canCreateRecords ? { create: (name: string) => createPerson(store, name) } : {}),
     },
     {
       key: "cues",
@@ -127,6 +128,7 @@ export function noteColumns(opts: {
       editable,
       getValue: (v) => v.scene,
       search: (q) => searchScenes(store.getState(), q),
+      ...(opts.canCreateRecords ? { create: (name: string) => createScene(store, name) } : {}),
     },
     {
       key: "created_by",

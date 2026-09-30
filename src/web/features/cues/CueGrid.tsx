@@ -5,7 +5,7 @@ import { newId } from "../../../shared/ids";
 import type { Op } from "../../../shared/ops";
 import { DataGrid, sortRows } from "../../components/grid";
 import type { CellDecoration, InsertPosition, MenuItem } from "../../components/grid/types";
-import { sceneIdForGroup, ViewCache } from "../../lib/show-selectors";
+import { sceneIdForGroup, UNASSIGNED, ViewCache } from "../../lib/show-selectors";
 import type { ShowState } from "../../lib/show-store";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
 import { MenuButton } from "../shared/MenuButton";
@@ -113,8 +113,24 @@ export function CueGrid() {
     (id: string, key: string, value: unknown) => {
       const view = viewsRef.current.get(id);
       if (!view) return;
+      const ops = cueEditOps(view, key, value);
+      if (key === "scene") {
+        // A new scene also puts the cue at the end of that scene's group (one batch), so it
+        // lands somewhere predictable when focus leaves it.
+        const sceneId = (value as { id: string } | null)?.id ?? null;
+        if (sceneId !== (view.cue.scene_id ?? null)) {
+          const groups = groupOrder(groupsRef.current);
+          const groupId = sceneId ?? UNASSIGNED;
+          // A scene the groups don't know yet was just created (last in scene order): the
+          // end of the show is the end of its group.
+          const placement = groups.some((g) => g.id === groupId)
+            ? placementFor({ groupId }, groups, id)
+            : {};
+          ops.push({ op: "move", table: "cues", id, ...placement });
+        }
+      }
       // Rejections reach the grid's onError (toast below).
-      return store.mutate(cueEditOps(view, key, value));
+      return store.mutate(ops);
     },
     [store],
   );
@@ -260,7 +276,12 @@ export function CueGrid() {
       }
       panel={
         panelView ? (
-          <CuePanel view={panelView} columns={chrome.columns} onClose={chrome.closePanel} />
+          <CuePanel
+            view={panelView}
+            columns={chrome.columns}
+            onClose={chrome.closePanel}
+            onStep={chrome.stepPanel}
+          />
         ) : null
       }
     >
@@ -279,6 +300,8 @@ export function CueGrid() {
         onColumnResize={chrome.onColumnResize}
         onActiveRowChange={onActive}
         onOpenRow={chrome.onOpenRow}
+        {...(chrome.onEscape ? { onEscape: chrome.onEscape } : {})}
+        addRowLabel="Add cue"
         onEdit={onEdit}
         {...(editable ? { onInsert, onMove, onDelete, extraMenuItems } : {})}
         onError={(e, action) => report(e, GRID_ACTIONS[action])}
@@ -291,10 +314,12 @@ function CuePanel({
   view,
   columns,
   onClose,
+  onStep,
 }: {
   view: CueView;
   columns: import("../../components/grid/types").Column<CueView>[];
   onClose: () => void;
+  onStep: (delta: number) => void;
 }) {
   const notes = useShowStore((s) => s.tables.notes);
   const noteCues = useShowStore((s) => s.joins.noteCues);
@@ -316,6 +341,7 @@ function CuePanel({
       row={view}
       columns={columns}
       onClose={onClose}
+      onStep={onStep}
       sections={[
         {
           title: "Content",

@@ -17,6 +17,7 @@ import styles from "../shared/TableFrame.module.css";
 import { TableGrid } from "../shared/TableGrid";
 import { useWorkspace } from "../show/workspace";
 import { type ContentView, contentColumns, contentEditOps } from "./columns";
+import { prefixedContentName, scenePrefix } from "./contentName";
 
 const NONE: string[] = [];
 const selectState = (s: ShowState) => s;
@@ -106,12 +107,22 @@ export function ContentGrid() {
                   .tables.content.get(pos.afterRowId ?? pos.beforeRowId ?? "");
                 sceneId = n?.scene_id ?? null;
               }
+              // Same naming convention as the picker: "105-003-" (type the rest).
+              const state = store.getState();
+              const scene = sceneId ? state.tables.scenes.get(sceneId) : undefined;
+              const prefix = scenePrefix(scene?.number)
+                ? prefixedContentName(
+                    "",
+                    scene?.number,
+                    [...state.tables.content.values()].map((c) => c.name),
+                  )
+                : null;
               return [
                 {
                   op: "create",
                   table: "content",
                   id,
-                  fields: { scene_id: sceneId },
+                  fields: { scene_id: sceneId, name: prefix },
                   ...placementFor(pos, groupOrder(groupsRef.current)),
                 },
               ];

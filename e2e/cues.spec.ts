@@ -94,6 +94,25 @@ test("the other tabs show their tables", async ({ page }) => {
       return `${last?.number} ${last?.name}`;
     })
     .toBe("300 Curtain Call");
+
+  // Deleting a scene asks first and says what happens to its cues.
+  const overture = scenes
+    .getByTestId("grid-row")
+    .filter({ has: page.locator('[data-col="number"]').getByText("100", { exact: true }) });
+  await page.getByTestId("grid-scroll").evaluate((el) => {
+    el.scrollTop = 0;
+  });
+  let message = "";
+  page.once("dialog", (d) => {
+    message = d.message();
+    void d.dismiss();
+  });
+  await overture.locator('[data-col="name"]').click({ button: "right" });
+  await page.getByRole("menuitem", { name: /Delete row/ }).click();
+  await expect
+    .poll(() => message)
+    .toBe("Delete scene 100 Overture? Its 11 cues move to Unassigned.");
+  await expect(overture).toBeVisible(); // declined: nothing deleted
 });
 
 test("a commenter can add notes and edit only their own", async ({ browser }) => {

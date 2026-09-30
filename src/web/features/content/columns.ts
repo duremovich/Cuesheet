@@ -6,7 +6,7 @@ import type { Column, PickerItem } from "../../components/grid/types";
 import type { ShowStore } from "../../lib/show-store";
 import { selectOptions } from "../cues/columns";
 import { textField } from "../shared/ops";
-import { createPerson, searchPersons, searchScenes } from "../shared/pickers";
+import { createPerson, createScene, searchPersons, searchScenes } from "../shared/pickers";
 
 export interface ContentView {
   id: string;
@@ -35,6 +35,7 @@ export function contentColumns(opts: {
       width: 220,
       getValue: (v) => v.scene,
       search: (q) => searchScenes(store.getState(), q),
+      create: (name) => createScene(store, name),
     },
     {
       key: "status",

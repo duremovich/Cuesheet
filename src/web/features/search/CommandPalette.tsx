@@ -77,8 +77,10 @@ function PaletteDialog({
         hit,
       })),
     );
-    // Records first when searching; commands first when the box is empty.
-    return q.trim() ? [...hits, ...cmds] : cmds;
+    // Commands first when the box is empty or the query names one ("sort", "go to"),
+    // records first otherwise.
+    const namesCommand = cmds.some((e) => (matchScore(q, [e.command.label]) ?? 3) <= 2);
+    return !q.trim() ? cmds : namesCommand ? [...cmds, ...hits] : [...hits, ...cmds];
   }, [state, q, commands]);
 
   const active = entries[Math.min(index, entries.length - 1)];
@@ -107,6 +109,12 @@ function PaletteDialog({
       e.preventDefault();
       e.stopPropagation();
       close(true);
+    } else if (e.key === "Tab") {
+      // Focus stays in the palette (it's modal); Tab moves through results like ↓.
+      e.preventDefault();
+      setIndex((i) =>
+        e.shiftKey ? Math.max(i - 1, 0) : Math.min(i + 1, Math.max(entries.length - 1, 0)),
+      );
     } else if (e.key === "ArrowDown") {
       e.preventDefault();
       setIndex((i) => Math.min(i + 1, entries.length - 1));

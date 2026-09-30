@@ -423,6 +423,20 @@ describe("ops: history, versions, broadcast", () => {
     expect(await b.next((m): m is never => m.type === "presence" && m.clients === 1)).toBeTruthy();
     b.ws.close(1000);
   });
+
+  it("notifyRole tells only that user's sockets their new role, and keeps them open", async () => {
+    const stub = await freshShow();
+    const a = await connectDO(stub, "alice");
+    const b = await connectDO(stub, "bob");
+    expect(await b.next(isType("hello"))).toMatchObject({ clients: 2 });
+    expect(await stub.notifyRole("alice", "viewer")).toBe(1);
+    expect(await a.next(isType("role"))).toEqual({ type: "role", role: "viewer" });
+    // Bob hears nothing about it; Alice is still connected (a presence update reaches her).
+    const c = await connectDO(stub, "carol");
+    expect(await a.next((m): m is never => m.type === "presence" && m.clients === 3)).toBeTruthy();
+    expect(b.received.some((m) => m.type === "role")).toBe(false);
+    for (const x of [a, b, c]) x.ws.close(1000);
+  });
 });
 
 describe("ops: review hardening", () => {

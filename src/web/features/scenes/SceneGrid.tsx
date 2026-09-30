@@ -58,7 +58,23 @@ export function SceneGrid() {
             moveOps: (v, pos) => [
               { op: "move", table: "scenes", id: v.id, ...placementFor(pos, undefined, v.id) },
             ],
-            deleteOps: (views) => views.map((v) => ({ op: "delete", table: "scenes", id: v.id })),
+            deleteOps: (views) => {
+              // Always ask for one scene (the grid asks for several); say what happens to
+              // its cues.
+              const cues = views.reduce((n, v) => n + v.cueCount, 0);
+              const what =
+                views.length === 1
+                  ? `Delete scene ${sceneTitle(views[0]?.scene)}?`
+                  : `Delete ${views.length} scenes?`;
+              const effect =
+                cues > 0
+                  ? ` ${views.length === 1 ? "Its" : "Their"} ${cues} ${cues === 1 ? "cue moves" : "cues move"} to Unassigned.`
+                  : "";
+              if ((views.length === 1 || cues > 0) && !window.confirm(`${what}${effect}`)) {
+                return [];
+              }
+              return views.map((v) => ({ op: "delete", table: "scenes", id: v.id }));
+            },
           }
         : {})}
       panelTitle={(v) => sceneTitle(v.scene)}

@@ -19,25 +19,35 @@ export function RowPanel<Row>({
   columns,
   sections = [],
   onClose,
+  onStep,
 }: {
   title: string;
   row: Row;
   columns: Column<Row>[];
   sections?: PanelSection[];
   onClose: () => void;
+  /** ↑/↓ inside the panel: move the grid's active row (the panel follows it). */
+  onStep?: (delta: number) => void;
 }) {
-  const closeRef = useRef<HTMLButtonElement>(null);
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-  // Escape closes the panel when focus is inside it.
+  const handlers = useRef({ onClose, onStep });
+  handlers.current = { onClose, onStep };
+  // Keys inside the panel (it's focusable, so clicks in it keep focus here): Escape closes
+  // it and returns to the grid; ↑/↓ step through the rows.
   const rootRef = useRef<HTMLElement>(null);
   useEffect(() => {
     const el = rootRef.current;
     if (!el) return;
     const onKey = (e: KeyboardEvent) => {
+      if (e.isComposing) return;
+      const t = e.target as HTMLElement;
+      const typing = t.matches("input, textarea, select, [contenteditable]");
       if (e.key === "Escape") {
         e.stopPropagation();
-        onCloseRef.current();
+        e.preventDefault();
+        handlers.current.onClose();
+      } else if (!typing && (e.key === "ArrowDown" || e.key === "ArrowUp") && !e.altKey) {
+        e.preventDefault();
+        handlers.current.onStep?.(e.key === "ArrowDown" ? 1 : -1);
       }
     };
     el.addEventListener("keydown", onKey);
@@ -45,12 +55,17 @@ export function RowPanel<Row>({
   }, []);
 
   return (
-    <aside className={styles.panel} aria-label={title} data-testid="row-panel" ref={rootRef}>
+    <aside
+      className={styles.panel}
+      aria-label={title}
+      data-testid="row-panel"
+      ref={rootRef}
+      tabIndex={-1}
+    >
       <div className={styles.panelHeader}>
         <h2 className={styles.panelTitle}>{title}</h2>
         <button
           type="button"
-          ref={closeRef}
           className={styles.panelClose}
           aria-label="Close panel"
           onClick={onClose}

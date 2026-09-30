@@ -52,7 +52,9 @@ underlined; an unnumbered cue suggests the midpoint number). Source: `src/web/pa
 | `extraMenuItems` | `({rowId, selectedRowIds}) => MenuItem[]` | Extra context-menu entries ("Show in script", "Move to scene…"), inserted before Delete |
 | `onColumnResize` | `(key, width) => void` | Persist widths per view; pass them back as `column.width` |
 | `onError` | `(error, action) => void` | A callback threw or rejected (`action`: edit / insert / duplicate / move / delete). The grid also shows a short inline message. Default: `console.error` |
-| `ref` | `Ref<DataGridHandle>` | `focusRow(id, columnKey?)` activates and focuses a row (expanding its group); `scrollToRow(id)` scrolls to it without moving focus |
+| `onEscape` | `() => void` | Escape with nothing left to cancel in the grid (not editing; no range, row selection, or held row that would move). E.g. close a detail panel |
+| `addRowLabel` | `string` | The group header's add button ("Add cue"; default "Add row"); its accessible name is "<label> to <group>" |
+| `ref` | `Ref<DataGridHandle>` | `focusRow(id, columnKey?)` activates and focuses a row (expanding its group; a row outside the view is scrolled to the vertical middle); `stepRow(±1)` makes the next/previous row active without moving DOM focus (↑/↓ in a panel); `scrollToRow(id)` scrolls to it without moving focus |
 | `aria-label` | `string` | Name of the grid (e.g. "Cue list") |
 | `className` | `string` | On the root. The root is `height: 100%`: **give its parent a height** |
 
@@ -118,7 +120,7 @@ Link values carry labels so the grid can render and undo without lookups. The co
 | Shift+arrows | Extend a cell range | |
 | Enter | Start editing (checkbox: toggle) | Commit, move down |
 | Tab / Shift+Tab | Move right / left (wraps rows; leaves the grid at the ends). Tab accepts a ghost | Commit, move right / left (Tab on an empty editor commits the ghost) |
-| Escape | Clear range + selection; end the row hold (the row settles, grid scrolls to it) | Cancel |
+| Escape | Clear range + selection; end the row hold (the row settles, grid scrolls to it). If there was nothing to cancel: `onEscape` | Cancel |
 | F2, double-click | Start editing | |
 | Any character | Start editing with it (select/link: open the picker with it as the query) | |
 | Space | `onOpenRow` | |
@@ -127,7 +129,7 @@ Link values carry labels so the grid can render and undo without lookups. The co
 | ⌘/Ctrl+Enter | | New line (long text). Shift+Enter also works |
 | ⌘/Ctrl+Shift+Enter | Insert row below | Commit, insert below |
 | ⌘/Ctrl+Shift+↑ | Insert row above | Commit, insert above |
-| ⌘/Ctrl+D | Duplicate row (insert below + `onEdit` per editable, non-empty column) | |
+| ⌘/Ctrl+D | Duplicate row (insert below + `onEdit` per editable, non-empty column); only rows with an editable cell (also hidden from the row menu otherwise) | |
 | ⌘/Ctrl+Z, ⌘/Ctrl+Shift+Z (or ⌘/Ctrl+Y) | Undo / redo edits made through this grid | |
 | ⌘/Ctrl+A | Select all rows | |
 | ⌘/Ctrl+C / V | Copy TSV (row selection, range or cell) / paste TSV from the active cell | |
@@ -141,7 +143,8 @@ pickers.
 (stays on the cell); Tab picks and moves right; Escape closes. Multi pickers stay open
 after a pick, toggle already-picked items off, and Backspace in an empty search removes
 the last chip. Link pickers list recently picked records first (per column, in memory) and
-end with **Create "…"** when `create` is set and no label matches exactly; Enter on it
+end with **Create "…"** when `create` is set and no label (or `PickerItem.aliases` entry,
+e.g. content "VAMP" for "105-001-VAMP") matches exactly; Enter on it
 calls `create` once (repeated Enter/clicks while it's running are ignored) and links the
 result. Enter before the debounce fires searches first, so fast typing picks the right
 record.

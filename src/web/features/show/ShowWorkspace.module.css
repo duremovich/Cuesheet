@@ -79,6 +79,14 @@
   .kbd {
     display: none;
   }
+
+  .tab {
+    padding: var(--space-2) var(--space-2);
+  }
+
+  .tabs {
+    gap: 0;
+  }
 }
 
 .importRow {

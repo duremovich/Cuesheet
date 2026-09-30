@@ -254,15 +254,27 @@ cue live sort, `sortCuesNow`, `openImport`).
   The hints map is value-compared so `cellDecoration` keeps its identity.
 - **Pickers** (`features/shared/pickers.ts`): searches read `store.getState()` at call time
   (so columns don't depend on data); `createContent` names new content with the
-  `SSS-NNN-` prefix (`features/content/contentName.ts`); `createPerson`.
+  `SSS-NNN-` prefix (`features/content/contentName.ts`; content items carry their name
+  without the prefix as a picker `alias`, so typing "VAMP" doesn't offer to create
+  another), and so does "+ Add content item" (the name starts as `SSS-NNN-`);
+  `createPerson`; `createScene` ("106A Train" → number 106A, name Train; at the end).
+  Changing a cue's scene in its Scene cell also moves it to the end of that scene's group
+  (one batch). A missing `?<param>=<id>` row toasts and drops the param; a row deleted by
+  someone else while you edit it toasts that the edit was discarded.
+- **Live role changes**: `PATCH /members/:userId` calls `ShowDO.notifyRole`, which sends
+  `{type:"role", role}` to that user's sockets; the store keeps it in `state.role` and the
+  workspace uses it over the role the show was opened with, so editability flips live.
 - **URL state**: the active row is `?<param>=<id>` (`cue`, `scene`, `content`, `note`,
   `person`; `tabs.ts`), written with `replace`. On load, or on a navigation carrying router
   state `{ focus: id }` (⌘K), the tab calls `grid.focusRow(id)` once the row exists
   (`features/shared/useTableChrome.ts`). Per-browser prefs (`features/shared/prefs.ts`,
   localStorage, until saved views): column widths per show+table, collapsed groups per
   user+show+table, the cue live sort per show.
-- **Row panel** (`RowPanel`): Space / expand icon; read-only; follows the active row;
-  Escape or × closes it and refocuses the row. Grid undo covers cell edits only; inserts,
+- **Row panel** (`RowPanel`): Space / expand icon; read-only; follows the active row.
+  The panel is focusable (`tabIndex=-1`, so clicks inside keep focus there): ↑/↓ in it
+  move the grid's active row (`grid.stepRow`), Escape or × closes it and refocuses the
+  active cell. Escape in the grid closes it too when the grid has nothing else to cancel
+  (the grid's `onEscape`: not editing, no range/selection, no held row that would move). Grid undo covers cell edits only; inserts,
   moves, deletes and Sort now aren't undoable yet.
 - **E2E**: set up data through the API (`apiLogin`, `apiCreateShow`, `importExamples` in
   `e2e/helpers.ts`); the grid virtualizes rows, so open a far-down row with `?cue=<id>`

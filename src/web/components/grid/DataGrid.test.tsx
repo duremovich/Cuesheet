@@ -527,6 +527,77 @@ describe("DataGrid review fixes", () => {
     expect(focused()).toBe("r3:qty");
   });
 
+  it("stepRow moves the active row without taking focus; onEscape fires only when idle", () => {
+    const s = spies();
+    const handle: { current: DataGridHandle | null } = { current: null };
+    const onActiveRowChange = vi.fn();
+    const onEscape = vi.fn();
+    render(<Harness initial={THREE} s={s} extra={{ ref: handle, onActiveRowChange, onEscape }} />);
+    act(() => handle.current?.focusRow("r1", "qty"));
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    outside.focus();
+    let id: string | null = null;
+    act(() => {
+      id = handle.current?.stepRow(1) ?? null;
+    });
+    expect(id).toBe("r2");
+    expect(onActiveRowChange).toHaveBeenLastCalledWith("r2");
+    expect(document.activeElement).toBe(outside);
+    outside.remove();
+
+    act(() => handle.current?.focusRow("r2", "qty"));
+    // A range is cancellable: the first Escape clears it, the second reaches onEscape.
+    press("ArrowDown", { shift: true });
+    press("Escape");
+    expect(onEscape).not.toHaveBeenCalled();
+    press("Escape");
+    expect(onEscape).toHaveBeenCalledTimes(1);
+    // While editing, Escape cancels the edit only.
+    press("Enter");
+    press("Escape");
+    expect(onEscape).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers Duplicate only on rows you can edit", () => {
+    const s = spies();
+    const cols = makeColumns({}).map((c) => ({
+      ...c,
+      editable: (r: R) => r.id !== "r2",
+    }));
+    render(<Harness initial={THREE} s={s} columns={cols} />);
+    const menuFor = (id: string) => {
+      act(() => {
+        document.querySelector(`[data-row-id="${id}"]`)?.dispatchEvent(
+          new MouseEvent("contextmenu", {
+            bubbles: true,
+            cancelable: true,
+            clientX: 5,
+            clientY: 5,
+          }),
+        );
+      });
+      const labels = [...document.querySelectorAll('[role="menuitem"]')].map(
+        (m) => m.firstChild?.textContent,
+      );
+      press("Escape");
+      return labels;
+    };
+    expect(menuFor("r1")).toContain("Duplicate row");
+    expect(menuFor("r2")).not.toContain("Duplicate row");
+    click(cell("r2", "name"));
+    press("d", { mod: true });
+    expect(s.onInsert).not.toHaveBeenCalled();
+  });
+
+  it("labels the group add button", () => {
+    const s = spies();
+    render(<Harness initial={THREE} s={s} grouped extra={{ addRowLabel: "Add cue" }} />);
+    expect(document.querySelector('[aria-label="Add cue to Scene One"]')?.textContent).toContain(
+      "Add cue",
+    );
+  });
+
   it("adds extra menu items and reports callback errors inline", async () => {
     const s = spies();
     const onError = vi.fn();

@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "react-router";
 import type { Column, DataGridHandle, GridAction } from "../../components/grid/types";
+import { useShowStoreInstance } from "../../lib/show-store";
 import { type TabKey, tabInfo } from "../show/tabs";
 import { useWorkspace } from "../show/workspace";
 import { isStringArray, isWidthMap, prefKey, usePref } from "./prefs";
@@ -35,8 +36,8 @@ export function useTableChrome<Row>(opts: {
   defaultCollapsed?: string[];
 }) {
   const { tab, ready } = opts;
-  const { showId, userId } = useWorkspace();
-  const { table, param } = tabInfo(tab);
+  const { showId, userId, toast } = useWorkspace();
+  const { table, param, noun } = tabInfo(tab);
 
   const [widths, setWidths] = usePref(prefKey.widths(showId, table), NO_WIDTHS, isWidthMap);
   const columns = useMemo(
@@ -77,7 +78,20 @@ export function useTableChrome<Row>(opts: {
     const id = pendingFocus.current;
     if (!ready || !id) return;
     if (!hasRow(id)) {
-      pendingFocus.current = null; // deleted meanwhile, or a stale link
+      // Deleted meanwhile, or a stale link: say so and drop it from the URL.
+      pendingFocus.current = null;
+      toast(`That ${noun} no longer exists.`);
+      if (searchParams.get(param) === id) {
+        lastWritten.current = null;
+        setSearchParams(
+          (prev) => {
+            const next = new URLSearchParams(prev);
+            next.delete(param);
+            return next;
+          },
+          { replace: true, preventScrollReset: true },
+        );
+      }
       return;
     }
     pendingFocus.current = null;
@@ -85,6 +99,24 @@ export function useTableChrome<Row>(opts: {
   });
 
   const [activeRow, setActiveRow] = useState<string | null>(urlRow);
+  const activeRowRef = useRef(activeRow);
+  activeRowRef.current = activeRow;
+
+  // Someone deleted the row you're typing in: the grid drops the edit; tell the user.
+  // (Runs in the store listener, before React re-renders, while the editor still has focus.)
+  const store = useShowStoreInstance();
+  useEffect(
+    () =>
+      store.subscribe(() => {
+        const id = activeRowRef.current;
+        if (!id || store.getState().tables[table].has(id)) return;
+        const el = document.activeElement as HTMLElement | null;
+        if (el?.dataset.editor !== "true") return;
+        activeRowRef.current = null;
+        toast(`This ${noun} was deleted by someone else; your edit was discarded.`, "error");
+      }),
+    [store, table, noun, toast],
+  );
   const onActiveRowChange = useCallback(
     (id: string | null) => {
       setActiveRow(id);
@@ -116,6 +148,11 @@ export function useTableChrome<Row>(opts: {
     if (id) grid.current?.focusRow(id); // never lose your place
   }, [activeRow, panelRow]);
   const shownRow = panelOpen ? (activeRow ?? panelRow) : null;
+  const stepPanel = useCallback((delta: number) => {
+    grid.current?.stepRow(delta);
+  }, []);
+  /** The grid's `onEscape`: closes the panel when the grid had nothing else to cancel. */
+  const onEscape = panelOpen ? closePanel : undefined;
 
   return {
     grid,
@@ -127,6 +164,8 @@ export function useTableChrome<Row>(opts: {
     activeRow,
     onOpenRow,
     closePanel,
+    stepPanel,
+    onEscape,
     panelRow: shownRow && hasRow(shownRow) ? shownRow : null,
   };
 }

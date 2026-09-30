@@ -37,6 +37,7 @@ export function ShowSettingsButton({
         ref={button}
         className={styles.navButton}
         aria-haspopup="dialog"
+        aria-label="Show settings"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
