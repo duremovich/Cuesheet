@@ -239,7 +239,7 @@ export function ShotGrid() {
       <label className={styles.listPicker}>
         <span className="muted">Shot list</span>
         <select
-          aria-label="Shot list"
+          aria-label="Current shot list"
           value={listId ?? ""}
           disabled={sorted.length === 0}
           onChange={(e) => setPicked(e.target.value || null)}

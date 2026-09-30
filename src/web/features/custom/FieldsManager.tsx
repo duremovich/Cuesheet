@@ -1,7 +1,7 @@
 // The Fields manager (R9), in the view bar's Fields popover: the table's custom fields with
 // "+ Add field", edit (name, type, options) and delete (with a confirmation that says how
 // many rows have values). Editors and owners; everyone else sees the list only.
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   CUSTOM_FIELD_TYPE_LABELS,
   CUSTOM_FIELD_TYPES,
@@ -85,6 +85,14 @@ export function FieldsManager({ fieldTable, canEdit }: { fieldTable: string; can
   const fields = useShowStore((s) => fieldsFor(s.tables.custom_fields, fieldTable));
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // When the form closes (saved or cancelled), focus goes back to "+ Add field" (it stays in
+  // the popover, so Escape still closes it).
+  const addButton = useRef<HTMLButtonElement>(null);
+  const hadDraft = useRef(false);
+  useEffect(() => {
+    if (hadDraft.current && !draft) addButton.current?.focus();
+    hadDraft.current = !!draft;
+  }, [draft]);
 
   const countOf = (f: CustomFieldRow) => {
     const data = store.getState();
@@ -215,6 +223,7 @@ export function FieldsManager({ fieldTable, canEdit }: { fieldTable: string; can
       {canEdit && !draft && (
         <button
           type="button"
+          ref={addButton}
           className={styles.linkButton}
           onClick={() => {
             setError(null);
@@ -394,9 +403,10 @@ function FieldForm({
         </>
       )}
       {draft.type === "formula" && (
-        <label className={styles.field}>
-          <span>Formula</span>
+        <div className={styles.field}>
+          <label htmlFor={`${id}-formula`}>Formula</label>
           <textarea
+            id={`${id}-formula`}
             className={styles.input}
             rows={3}
             value={draft.formula}
@@ -405,11 +415,11 @@ function FieldForm({
             placeholder="{PPI} * 2"
             onChange={(e) => set({ formula: e.target.value })}
           />
-          <span id={`${id}-help`} className={styles.muted}>
+          <span id={`${id}-help`} className={styles.muted} role={formulaError ? "alert" : undefined}>
             {formulaError ??
               'Name fields in braces: {Width} / 2, IF({Status} = "Done", 1, 0), {Venue}.Name'}
           </span>
-        </label>
+        </div>
       )}
       {draft.type === "number" && (
         <label className={styles.inline}>

@@ -305,6 +305,7 @@ export function TableGrid<V>(config: TableConfig<V>) {
     return (
       <PrintTable<V>
         tab={printTab}
+        title={config.title}
         columns={view.columns}
         rows={view.rows}
         groups={view.groups}
