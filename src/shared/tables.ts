@@ -3,6 +3,12 @@
 // Field names are the storage names (snake_case), as in docs/spec/data-model.md.
 // Adding a field: see "Adding a field to a core table" in CLAUDE.md.
 
+import {
+  type CustomFieldOptions,
+  type CustomFieldType,
+  type CustomTableRef,
+  customTableId,
+} from "./custom-fields";
 import type { AnchorState, AnchorStats, PageMapEntry, ScriptSource } from "./script";
 import { MAX_LENGTH_M, MAX_LENS_RATIO, MAX_PIXELS } from "./units";
 
@@ -19,6 +25,11 @@ export const TABLE_NAMES = [
   "scripts",
   "script_versions",
   "cue_anchors",
+  "custom_fields",
+  "custom_tables",
+  "custom_rows",
+  "shot_lists",
+  "shots",
 ] as const;
 export type TableName = (typeof TABLE_NAMES)[number];
 
@@ -26,14 +37,39 @@ export type TableName = (typeof TABLE_NAMES)[number];
  * The show's data tables: every table but `views` (which holds saved view definitions for
  * them). What import checks for emptiness and what a saved view can be for.
  */
-export const DATA_TABLES = ["scenes", "cues", "content", "notes", "persons", "surfaces"] as const;
+export const DATA_TABLES = [
+  "scenes",
+  "cues",
+  "content",
+  "notes",
+  "persons",
+  "surfaces",
+  "shots",
+] as const;
 export type DataTableName = (typeof DATA_TABLES)[number];
 
 export function isDataTable(t: unknown): t is DataTableName {
   return typeof t === "string" && (DATA_TABLES as readonly string[]).includes(t);
 }
 
-export const ORDERED_TABLES = ["scenes", "cues", "content", "surfaces"] as const;
+/**
+ * What a saved view (and a custom field) can be for: a data table, or a custom table as
+ * `custom:<customTableId>` (src/shared/custom-fields.ts).
+ */
+export type ViewTable = DataTableName | CustomTableRef;
+
+export function isViewTable(t: unknown): t is ViewTable {
+  return isDataTable(t) || (typeof t === "string" && customTableId(t) !== null);
+}
+
+export const ORDERED_TABLES = [
+  "scenes",
+  "cues",
+  "content",
+  "surfaces",
+  "shots",
+  "custom_rows",
+] as const;
 export type OrderedTableName = (typeof ORDERED_TABLES)[number];
 
 /**
@@ -256,6 +292,60 @@ export const FIELDS = {
     state: select,
     confidence: { type: "number", min: 0, max: 1 },
   },
+  /**
+   * Custom field definitions (R9; src/shared/custom-fields.ts). `table` is a core table
+   * name or `custom:<customTableId>`; `key` (a slug, unique per table) names the value in
+   * each row's `custom` JSON. Deleting one clears its values (explicit updates).
+   */
+  custom_fields: {
+    table: { type: "text", immutable: true },
+    key: { type: "text", immutable: true },
+    label: text,
+    type: text,
+    /** CustomFieldOptions (JSON). */
+    options: { type: "json" },
+    position: number,
+    width: { type: "number", min: 40, max: 2000 },
+  },
+  /** User-made tables (R9). Rows are `custom_rows`; fields are custom fields on `custom:<id>`. */
+  custom_tables: {
+    key: text,
+    label: text,
+    icon: text,
+    position: number,
+    /** The custom field key shown as each row's name (links, pickers, ⌘K). */
+    primary_field_key: text,
+  },
+  /** Rows of every custom table, in show order per table (`order_key`). */
+  custom_rows: {
+    table_id: { type: "ref", ref: "custom_tables", cascade: true, immutable: true },
+  },
+  /** Shot lists for video shoots (R14). */
+  shot_lists: {
+    name: text,
+    /** `YYYY-MM-DD`. */
+    shoot_date: text,
+    location: text,
+    notes: text,
+    position: number,
+  },
+  /** Shots of a shot list, in show order (`order_key`), grouped by `group` (R14). */
+  shots: {
+    shot_list_id: { type: "ref", ref: "shot_lists", cascade: true, immutable: true },
+    /** Text like cue numbers: "12", "12A". */
+    number: text,
+    /** Scene or setup, for grouping. */
+    group: text,
+    description: text,
+    framing: select,
+    camera: text,
+    lens: text,
+    resolution: { type: "pixel_size" },
+    frame_rate: { type: "number", min: 0, max: 1000 },
+    /** `h:mm:ss(.ms)`. */
+    duration: text,
+    status: select,
+  },
 } as const satisfies Record<TableName, Record<string, FieldSpec>>;
 
 export type FieldName<T extends TableName> = keyof (typeof FIELDS)[T] & string;
@@ -386,7 +476,7 @@ export interface SurfaceRow extends CommonRow, Ordered {
 }
 
 export interface ViewRow extends CommonRow {
-  table: DataTableName;
+  table: ViewTable;
   name: string | null;
   owner_user_id: string | null;
   is_default: boolean;
@@ -460,6 +550,50 @@ export interface CueAnchorRow extends CommonRow {
   confidence: number | null;
 }
 
+export interface CustomFieldRow extends CommonRow {
+  table: string;
+  key: string;
+  label: string | null;
+  type: CustomFieldType;
+  options: CustomFieldOptions;
+  position: number | null;
+  width: number | null;
+}
+
+export interface CustomTableRow extends CommonRow {
+  key: string | null;
+  label: string | null;
+  icon: string | null;
+  position: number | null;
+  primary_field_key: string | null;
+}
+
+export interface CustomRowRow extends CommonRow, Ordered {
+  table_id: string;
+}
+
+export interface ShotListRow extends CommonRow {
+  name: string | null;
+  shoot_date: string | null;
+  location: string | null;
+  notes: string | null;
+  position: number | null;
+}
+
+export interface ShotRow extends CommonRow, Ordered {
+  shot_list_id: string;
+  number: string | null;
+  group: string | null;
+  description: string | null;
+  framing: string | null;
+  camera: string | null;
+  lens: string | null;
+  resolution: { w: number; h: number } | null;
+  frame_rate: number | null;
+  duration: string | null;
+  status: string | null;
+}
+
 export interface RowTypes {
   scenes: SceneRow;
   cues: CueRow;
@@ -473,6 +607,11 @@ export interface RowTypes {
   scripts: ScriptRow;
   script_versions: ScriptVersionRow;
   cue_anchors: CueAnchorRow;
+  custom_fields: CustomFieldRow;
+  custom_tables: CustomTableRow;
+  custom_rows: CustomRowRow;
+  shot_lists: ShotListRow;
+  shots: ShotRow;
 }
 
 /**
@@ -486,6 +625,8 @@ export const ATTACHMENT_FIELDS: Partial<Record<TableName, Record<string, FieldSp
   surfaces: { images: { type: "attachment" } },
   /** The script file as received (PDF / DOCX / text), kept for reference and print. */
   script_versions: { source_file: { type: "attachment" } },
+  /** A shot's reference image(s) (R14). */
+  shots: { reference: { type: "attachment" } },
 };
 
 export function isAttachmentField(table: string, field: string): boolean {
@@ -547,6 +688,22 @@ export const LINKS = {
     to: "surfaces",
     toCol: "surface_id",
     key: "contentSurfaces",
+  },
+  "shots.talent": {
+    join: "shot_talent",
+    from: "shots",
+    fromCol: "shot_id",
+    to: "persons",
+    toCol: "person_id",
+    key: "shotTalent",
+  },
+  "shots.content": {
+    join: "shot_content",
+    from: "shots",
+    fromCol: "shot_id",
+    to: "content",
+    toCol: "content_id",
+    key: "shotContent",
   },
 } as const satisfies Record<
   string,

@@ -40,6 +40,8 @@ export const shows = sqliteTable("shows", {
   currentSession: text("current_session"),
   /** Bytes of attachments in R2 (thumbnails not counted); kept by the Worker, max 2 GB. */
   storageBytes: integer("storage_bytes").notNull().default(0),
+  /** A show template (R27): listed separately; "New from template" clones it. */
+  isTemplate: integer("is_template", { mode: "boolean" }).notNull().default(false),
 });
 
 export const memberships = sqliteTable(

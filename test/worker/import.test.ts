@@ -68,6 +68,9 @@ describe("Airtable import", () => {
       notes: 319,
       persons: 31,
       surfaces: 0,
+      custom_tables: 0,
+      custom_rows: 0,
+      custom_fields: 0,
     });
     expect(body.warnings).toEqual(
       expect.arrayContaining([
@@ -180,10 +183,14 @@ describe("Airtable import", () => {
     const u = await newUser(admin);
     await post(`/api/shows/${show.id}/members`, { email: u.email, role: "commenter" }, admin);
     expect((await importCsv(show.id, u.cookie)).status).toBe(403);
-    // Unrecognised files are skipped with a warning; no files at all is a 400.
+    // Other files become custom tables (M5a); no files at all is a 400.
     const res = await importCsv(show.id, admin, importForm([["random.csv", "a,b\n1,2\n"]]));
     expect(res.status).toBe(200);
-    expect(((await res.json()) as ImportResponse).warnings[0]).toMatch(/random.csv: not one of/);
+    expect(((await res.json()) as ImportResponse).created).toMatchObject({
+      custom_tables: 1,
+      custom_rows: 1,
+      custom_fields: 2,
+    });
     expect((await importCsv(show.id, admin, new FormData())).status).toBe(400);
   });
 

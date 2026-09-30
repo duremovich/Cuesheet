@@ -1,0 +1,1 @@
+ALTER TABLE `shows` ADD `is_template` integer DEFAULT false NOT NULL;

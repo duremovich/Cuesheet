@@ -404,6 +404,119 @@ export const cue_anchors = sqliteTable(
 );
 
 /**
+ * Custom field definitions (R9; src/shared/custom-fields.ts). `table` is a core table name
+ * or `custom:<customTableId>`; `key` is unique per table and names the value in each row's
+ * `custom` JSON. `options` is JSON (select choices, link target, formula, sensitive…).
+ */
+export const custom_fields = sqliteTable(
+  "custom_fields",
+  {
+    ...common(),
+    table: text("table").notNull(),
+    key: text("key").notNull(),
+    label: text("label"),
+    type: text("type").notNull(),
+    options: text("options").notNull().default("{}"),
+    position: real("position"),
+    width: real("width"),
+  },
+  (t) => [uniqueIndex("custom_fields_table_key_idx").on(t.table, t.key)],
+);
+
+/** User-made tables (R9); their rows are `custom_rows`, their fields custom fields. */
+export const custom_tables = sqliteTable("custom_tables", {
+  ...common(),
+  key: text("key"),
+  label: text("label"),
+  icon: text("icon"),
+  position: real("position"),
+  primary_field_key: text("primary_field_key"),
+});
+
+/** Rows of all custom tables; values in `custom`. Show order per table by `order_key`. */
+export const custom_rows = sqliteTable(
+  "custom_rows",
+  {
+    ...common(),
+    order_key: text("order_key").notNull(),
+    table_id: text("table_id")
+      .notNull()
+      .references(() => custom_tables.id, { onDelete: "cascade" }),
+  },
+  (t) => [
+    index("custom_rows_order_idx").on(t.order_key),
+    index("custom_rows_table_idx").on(t.table_id),
+  ],
+);
+
+/** Shot lists for video shoots (R14). */
+export const shot_lists = sqliteTable("shot_lists", {
+  ...common(),
+  name: text("name"),
+  shoot_date: text("shoot_date"),
+  location: text("location"),
+  notes: text("notes"),
+  position: real("position"),
+});
+
+/** Shots (R14): ordered like cues, grouped by `group` text; `resolution` is `{w, h}` JSON. */
+export const shots = sqliteTable(
+  "shots",
+  {
+    ...common(),
+    order_key: text("order_key").notNull(),
+    shot_list_id: text("shot_list_id")
+      .notNull()
+      .references(() => shot_lists.id, { onDelete: "cascade" }),
+    number: text("number"),
+    group: text("group"),
+    description: text("description"),
+    framing: text("framing"),
+    camera: text("camera"),
+    lens: text("lens"),
+    resolution: text("resolution"),
+    frame_rate: real("frame_rate"),
+    duration: text("duration"),
+    status: text("status"),
+  },
+  (t) => [index("shots_order_idx").on(t.order_key), index("shots_list_idx").on(t.shot_list_id)],
+);
+
+export const shot_talent = sqliteTable(
+  "shot_talent",
+  {
+    shot_id: text("shot_id")
+      .notNull()
+      .references(() => shots.id, { onDelete: "cascade" }),
+    person_id: text("person_id")
+      .notNull()
+      .references(() => persons.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.shot_id, t.person_id] }),
+    index("shot_talent_person_idx").on(t.person_id),
+  ],
+);
+
+export const shot_content = sqliteTable(
+  "shot_content",
+  {
+    shot_id: text("shot_id")
+      .notNull()
+      .references(() => shots.id, { onDelete: "cascade" }),
+    content_id: text("content_id")
+      .notNull()
+      .references(() => content.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.shot_id, t.content_id] }),
+    index("shot_content_content_idx").on(t.content_id),
+  ],
+);
+
+/**
  * R2 objects of deleted attachments, kept for 24 h so Undo can bring a file back (a
  * restore recreates the row with the same id and removes it from here). The DO's alarm
  * purges older ones from R2 and only then gives the bytes back to `shows.storage_bytes`.
