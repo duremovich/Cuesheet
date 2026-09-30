@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 import { useAuth } from "../lib/auth";
+import { AccountMenu } from "./AccountMenu";
 import styles from "./AppHeader.module.css";
 import { ThemeToggle } from "./ThemeToggle";
 
@@ -31,6 +32,7 @@ export function AppHeader({ children }: { children?: ReactNode }) {
             >
               Sign out
             </button>
+            <AccountMenu />
           </>
         )}
       </div>

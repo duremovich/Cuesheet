@@ -1,41 +1,46 @@
+// /reset/<token>: an admin's one-time password reset link (R24). Setting the password
+// signs out every other session of the account and signs this browser in.
 import { type FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { type InviteInfoResponse, MIN_PASSWORD_LENGTH } from "../../shared/api";
+import { MIN_PASSWORD_LENGTH } from "../../shared/api";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import styles from "./pages.module.css";
 
-export function InvitePage() {
+export function ResetPasswordPage() {
   const { token = "" } = useParams();
   const { setUser } = useAuth();
   const navigate = useNavigate();
-  const [invite, setInvite] = useState<InviteInfoResponse | null>(null);
-  const email = invite?.email ?? null;
-  const [invalid, setInvalid] = useState(false);
+  const [email, setEmail] = useState<string | null>(null);
+  const [invalid, setInvalid] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     api
-      .getInvite(token)
-      .then(setInvite)
-      .catch(() => setInvalid(true));
+      .getResetLink(token)
+      .then((r) => setEmail(r.email))
+      .catch((e: unknown) =>
+        setInvalid(e instanceof Error ? e.message : "This reset link is invalid or has been used"),
+      );
   }, [token]);
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
+    const password = String(form.get("password") ?? "");
+    if (password !== String(form.get("confirm") ?? "")) {
+      setError("The two passwords don't match");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      const res = await api.acceptInvite(token, {
-        name: String(form.get("name") ?? ""),
-        password: String(form.get("password") ?? ""),
-      });
+      const res = await api.completeReset(token, password);
       setUser(res.user);
       navigate("/", { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not accept invite");
+      setError(err instanceof Error ? err.message : "Could not set the password");
       setBusy(false);
     }
   }
@@ -43,36 +48,36 @@ export function InvitePage() {
   return (
     <main className={styles.centered}>
       <div className={styles.authCard}>
-        <h1>Join Cuesheet</h1>
+        <h1>Set a new password</h1>
         {invalid && (
           <>
             <p className="error" role="alert">
-              This invite link is invalid or has already been used.
+              {invalid}
             </p>
             <Link to="/login">Go to sign in</Link>
           </>
         )}
-        {!invalid && email === null && <p className="muted">Checking invite…</p>}
+        {!invalid && email === null && <p className="muted">Checking the link…</p>}
         {email && (
           <form className={styles.form} onSubmit={onSubmit}>
             <p style={{ margin: 0 }}>
-              Setting up the account for <strong data-testid="invite-email">{email}</strong>.
-              {invite?.showName && (
-                <>
-                  {" "}
-                  You'll join <strong data-testid="invite-show">{invite.showName}</strong> as{" "}
-                  {invite.role === "editor" ? "an editor" : `a ${invite.role ?? "member"}`}.
-                </>
-              )}
+              For <strong data-testid="reset-email">{email}</strong>. Every other signed-in device
+              will be signed out.
             </p>
             <label>
-              Your name
-              <input name="name" type="text" autoComplete="name" required />
-            </label>
-            <label>
-              Password
+              New password
               <input
                 name="password"
+                type="password"
+                autoComplete="new-password"
+                minLength={MIN_PASSWORD_LENGTH}
+                required
+              />
+            </label>
+            <label>
+              Repeat it
+              <input
+                name="confirm"
                 type="password"
                 autoComplete="new-password"
                 minLength={MIN_PASSWORD_LENGTH}
@@ -86,7 +91,7 @@ export function InvitePage() {
               </p>
             )}
             <button type="submit" className="primary" disabled={busy}>
-              Create account
+              Set password and sign in
             </button>
           </form>
         )}

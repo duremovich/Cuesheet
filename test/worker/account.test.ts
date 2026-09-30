@@ -6,6 +6,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { CreateResetLinkResponse } from "../../src/shared/account";
 import type { CreateInviteResponse, MembersResponse, ShowResponse } from "../../src/shared/api";
+import type { ServerMessage } from "../../src/shared/ws";
 import { SESSION_TTL_MS } from "../../src/worker/auth/cookie";
 import { recordFailure, retryAfter } from "../../src/worker/auth/rate-limit";
 import { BACKUP_PREFIX, backupD1, type ShowExport } from "../../src/worker/routes/backup";
@@ -312,7 +313,9 @@ describe("invites and members", () => {
       body: JSON.stringify({ role: "editor" }),
       cookie: admin,
     });
-    expect(await mine.next((m) => m.type === "presence" && m.readOnly === 0)).toBeTruthy();
+    expect(
+      await mine.next((m): m is ServerMessage => m.type === "presence" && m.readOnly === 0),
+    ).toBeTruthy();
     mine.ws.close();
     theirs.ws.close();
   });

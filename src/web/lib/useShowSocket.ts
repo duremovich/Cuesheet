@@ -9,6 +9,8 @@ export type SocketStatus = "connecting" | "connected" | "disconnected" | "unauth
 export interface ShowSocketState {
   status: SocketStatus;
   clients: number;
+  /** How many of `clients` are read-only (viewers, share links). */
+  readOnly?: number;
 }
 
 const HEARTBEAT_MS = 25_000;
@@ -71,7 +73,7 @@ export function useShowSocket(
         }
         if (msg?.type === "hello" || msg?.type === "presence") {
           attempt = 0;
-          setState({ status: "connected", clients: msg.clients });
+          setState({ status: "connected", clients: msg.clients, readOnly: msg.readOnly ?? 0 });
         }
       };
       ws.onclose = async () => {

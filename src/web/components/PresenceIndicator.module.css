@@ -32,3 +32,14 @@
 .count {
   color: var(--color-text-muted);
 }
+
+.eye {
+  vertical-align: -2px;
+}
+
+.self {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-text-muted);
+}

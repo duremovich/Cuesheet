@@ -1,0 +1,158 @@
+/* Show settings → Sharing and Members (ShareSettings.tsx, ShareSettingsMembers.tsx). */
+
+.hint {
+  margin: 0 0 var(--space-2);
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: 13px;
+  margin-bottom: var(--space-3);
+}
+
+.form label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.form label.check {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.form select,
+.form input:not([type="checkbox"]) {
+  min-width: 0;
+  width: 100%;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.grow {
+  flex: 1;
+  min-width: 140px;
+}
+
+.created {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  margin-bottom: var(--space-3);
+  border: 1px solid var(--color-success);
+  background: var(--color-success-subtle);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+}
+
+.created p {
+  margin: 0;
+}
+
+.created code {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.created button {
+  align-self: flex-start;
+}
+
+.links {
+  list-style: none;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
+.links li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.links li:not([data-status="active"]) {
+  color: var(--color-text-muted);
+}
+
+.links button,
+.memberActions button {
+  padding: var(--space-1) var(--space-2);
+  font-size: 12px;
+}
+
+.linkText {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  display: block;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+/* Members */
+.roles {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px var(--space-2);
+  margin: 0 0 var(--space-3);
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.roles dt {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.roles dd {
+  margin: 0;
+}
+
+.memberActions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  align-items: center;
+}
+
+.roleLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-muted);
+}
+
+.invite {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+  font-size: 13px;
+}
+
+.invite code {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.invite button {
+  align-self: flex-start;
+}

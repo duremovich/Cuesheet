@@ -1,19 +1,16 @@
-// "Show settings" popover: Airtable import (editors) and members (everyone sees them; the
-// owner adds, changes and removes).
-import { type FormEvent, useEffect, useRef, useState } from "react";
-import {
-  GRANTABLE_ROLES,
-  type MemberDTO,
-  type Role,
-  type StorageResponse,
-} from "../../../shared/api";
+// "Show settings" popover: units, Airtable import (editors), storage, members (everyone
+// sees them; the owner manages them: ShareSettingsMembers.tsx) and sharing (owner:
+// ShareSettings.tsx).
+import { useEffect, useRef, useState } from "react";
+import type { MemberDTO, StorageResponse } from "../../../shared/api";
 import { formatBytes } from "../../../shared/attachments";
 import { isUnit, UNIT_LABELS, UNITS } from "../../../shared/units";
 import { IMPORT_LABEL } from "../../components/AirtableImport";
 import { api } from "../../lib/api";
-import { useApiErrorHandler } from "../../lib/auth";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
 import { setUserUnit, useUserUnit } from "../views/units";
+import { SharingSection } from "./ShareSettings";
+import { MembersSection } from "./ShareSettingsMembers";
 import styles from "./ShowWorkspace.module.css";
 import { useWorkspace } from "./workspace";
 
@@ -88,33 +85,6 @@ function SettingsBody({
   close: () => void;
 }) {
   const ws = useWorkspace();
-  const handleError = useApiErrorHandler();
-  const [error, setError] = useState<string | null>(null);
-  const isOwner = ws.role === "owner";
-
-  const run = async (fn: () => Promise<unknown>) => {
-    setError(null);
-    try {
-      await fn();
-      onMembersChanged();
-    } catch (e) {
-      setError(handleError(e));
-    }
-  };
-
-  const onAdd = (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const form = e.currentTarget;
-    const data = new FormData(form);
-    const email = String(data.get("email") ?? "").trim();
-    const role = String(data.get("role") ?? "editor") as Role;
-    if (!email) return;
-    void run(async () => {
-      await api.addMember(ws.showId, { email, role });
-      form.reset();
-    });
-  };
-
   return (
     <div className={styles.settingsBody}>
       <UnitSettings />
@@ -133,77 +103,9 @@ function SettingsBody({
         </section>
       )}
       <StorageUsage />
-      <section>
-        <h3>Members</h3>
-        {members === null && <p className="muted">Loading…</p>}
-        {members && (
-          <ul className={styles.members} data-testid="members">
-            {members.map((m) => (
-              <li key={m.userId}>
-                <span className={styles.memberName}>
-                  {m.name} <span className="muted">{m.email}</span>
-                </span>
-                {isOwner && m.role !== "owner" ? (
-                  <>
-                    <select
-                      aria-label={`Role for ${m.name}`}
-                      value={m.role}
-                      onChange={(e) =>
-                        void run(() =>
-                          api.updateMember(ws.showId, m.userId, { role: e.target.value as Role }),
-                        )
-                      }
-                    >
-                      {GRANTABLE_ROLES.map((r) => (
-                        <option key={r} value={r}>
-                          {r}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      aria-label={`Remove ${m.name}`}
-                      onClick={() => {
-                        if (window.confirm(`Remove ${m.name} from this show?`)) {
-                          void run(() => api.removeMember(ws.showId, m.userId));
-                        }
-                      }}
-                    >
-                      Remove
-                    </button>
-                  </>
-                ) : (
-                  <span className="muted">{m.role}</span>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-        {isOwner && (
-          <form className={styles.addMember} onSubmit={onAdd} aria-label="Add member">
-            <input
-              type="email"
-              name="email"
-              placeholder="Email of an existing user"
-              aria-label="Email"
-              required
-            />
-            <select name="role" aria-label="Role" defaultValue="editor">
-              {GRANTABLE_ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
-            <button type="submit">Add</button>
-          </form>
-        )}
-        {error && (
-          <p className="error" role="alert">
-            {error}
-          </p>
-        )}
-      </section>
+      {/* Members and Sharing: ShareSettingsMembers.tsx / ShareSettings.tsx (M5b). */}
+      <MembersSection members={members} onMembersChanged={onMembersChanged} />
+      {ws.role === "owner" && <SharingSection />}
     </div>
   );
 }
