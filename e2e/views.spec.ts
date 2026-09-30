@@ -102,7 +102,10 @@ async function addStatusFilter(page: Page, status: string) {
 
 /** The cue numbers of the rendered (non-section) rows. */
 async function shownNumbers(page: Page) {
-  return (await rows(page).locator('[data-col="number"]').allTextContents()).map((t) => t.trim());
+  // (A duplicate's cell also holds visually hidden "Warning: …" text.)
+  return (await rows(page).locator('[data-col="number"]').allTextContents()).map((t) =>
+    t.replace(/Warning:.*$/, "").trim(),
+  );
 }
 
 test("a personal view with a filter and a color rule; hidden columns survive a reload", async ({
@@ -192,7 +195,8 @@ test("an inserted row under a filter stays until you leave it, then a toast offe
   await expect(rows(page)).toHaveCount(3);
   const toast = page.getByTestId("toast").filter({ hasText: "Hidden by the current filter" });
   await expect(toast).toBeVisible();
-  await toast.getByRole("button", { name: "Undo filter" }).click();
+  await expect(toast.getByRole("button", { name: "Keep shown" })).toBeVisible();
+  await toast.getByRole("button", { name: "Clear filters" }).click();
   await expect(page.getByTestId("cue-count")).toHaveText("121 cues");
   await expect(rowByCue(page, "0.35")).toBeVisible();
 });
@@ -392,7 +396,9 @@ test("a link filter keeps working when the record is renamed; sorting by a hidde
   await fields.getByRole("checkbox", { name: "Cue", exact: true }).uncheck();
   await closePanel(page, "Fields");
   await expect(grid(page).getByRole("columnheader", { name: /^Cue\b/ })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Sort", exact: true })).toHaveText("Sorted by Cue");
+  await expect(page.getByRole("button", { name: "Sort", exact: true })).toHaveText(
+    "Sorted by Cue ↓",
+  );
   // Same rows in the same (descending cue number) order with the Cue column hidden.
   await expect
     .poll(() => rows(page).locator('[data-col="description"]').allTextContents())
@@ -462,4 +468,253 @@ test.describe("at phone width", () => {
     await addStatusFilter(page, "Cued");
     await expect(page.getByTestId("cue-count")).toHaveText("3 of 120 cues");
   });
+
+  for (const theme of ["dark", "light"] as const) {
+    test(`checkboxes and radios sit on one line with their labels (${theme})`, async ({
+      browser,
+    }) => {
+      const { page } = await exampleShow(browser, { width: 390, height: 844 });
+      await page.evaluate((t) => localStorage.setItem("cuesheet.theme", t), theme);
+      await page.reload();
+      await expect(grid(page)).toBeVisible();
+      const heights = async (name: string) => {
+        const d = await openPanel(page, name);
+        const hs = await d
+          .locator("label:has(input[type=checkbox]), label:has(input[type=radio])")
+          .evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height));
+        await closePanel(page, name);
+        return hs;
+      };
+      for (const name of ["Fields", "Group", "Row height"]) {
+        const hs = await heights(name);
+        expect(hs.length).toBeGreaterThan(1);
+        expect(Math.max(...hs)).toBeLessThan(32);
+      }
+      // The frozen-columns control comes before the field list on phones.
+      const fields = await openPanel(page, "Fields");
+      const frozen = await fields.getByLabel("Frozen columns").boundingBox();
+      const firstField = await fields.getByRole("checkbox").first().boundingBox();
+      expect(frozen?.y ?? 0).toBeLessThan(firstField?.y ?? 0);
+    });
+  }
+});
+
+test("a filter doesn't change ghost numbers or hide duplicates; Enter commits then hides", async ({
+  browser,
+}) => {
+  const { page, showId } = await exampleShow(browser);
+  // Only 0.10, 0.80 and one of the two 51.50s are Cued.
+  const cues = (await snapshot(page, showId)).tables.cues;
+  const byNumber = (n: string) => cues.filter((c) => c.number === n);
+  const [dup] = byNumber("51.50");
+  const ops = [
+    ...byNumber("0.30").map((c) => ({
+      op: "update",
+      table: "cues",
+      id: c.id,
+      fields: { status: "Rendered" },
+    })),
+    { op: "update", table: "cues", id: dup?.id, fields: { status: "Cued" } },
+  ];
+  expect(
+    (
+      await page.request.post(`/api/shows/${showId}/mutate`, { data: { clientId: "e2e", ops } })
+    ).status(),
+  ).toBe(200);
+  await page.reload();
+  await duplicateView(page, "Cued");
+  await addStatusFilter(page, "Cued");
+  await expect.poll(() => shownNumbers(page)).toEqual(["0.10", "0.80", "51.50"]);
+  // The other 51.50 is filtered out, but this one still warns.
+  await expect(cellOf(rowByCue(page, "51.50"), "number")).toHaveAttribute("data-warning", "true");
+
+  // Insert below 0.10: the ghost is between 0.10 and 0.30 (the next cue in the show), not
+  // the next shown one (0.80).
+  await cellOf(rowByCue(page, "0.10"), "number").click();
+  await page.keyboard.press("ControlOrMeta+Shift+Enter");
+  const fresh = rows(page).nth(1);
+  await expect(cellOf(fresh, "number")).toBeFocused();
+  await expect(cellOf(fresh, "number").getByTestId("ghost")).toHaveText("0.20");
+
+  // Enter commits and moves down: the new (not Cued) cue is hidden, with the toast.
+  await page.keyboard.type("0.20");
+  await page.keyboard.press("Enter");
+  const toast = page.getByTestId("toast").filter({ hasText: "Hidden by the current filter" });
+  await expect(toast).toBeVisible();
+  await expect.poll(() => shownNumbers(page)).toEqual(["0.10", "0.80", "51.50"]);
+  await expect(cellOf(rowByCue(page, "0.80"), "number")).toBeFocused();
+  await expect
+    .poll(async () => (await snapshot(page, showId)).tables.cues.some((c) => c.number === "0.20"))
+    .toBe(true);
+  // "Keep shown" brings it back and puts you in it.
+  await toast.getByRole("button", { name: "Keep shown" }).click();
+  await expect(rowByCue(page, "0.20")).toBeVisible();
+
+  // A remote change that unmatches the row you're editing: it stays until Enter moves you on.
+  await cellOf(rowByCue(page, "0.80"), "description").click();
+  await page.keyboard.type(" (edited)");
+  const eighty = cues.find((c) => c.number === "0.80");
+  const remote = await page.request.post(`/api/shows/${showId}/mutate`, {
+    data: {
+      clientId: "remote",
+      ops: [{ op: "update", table: "cues", id: eighty?.id, fields: { status: "Rendered" } }],
+    },
+  });
+  expect(remote.status()).toBe(200);
+  await expect(cellOf(rowByCue(page, "0.80"), "status")).toHaveText("Rendered");
+  await expect(rowByCue(page, "0.80")).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(rowByCue(page, "0.80")).toHaveCount(0);
+  await expect
+    .poll(
+      async () =>
+        (await snapshot(page, showId)).tables.cues.find((c) => c.id === eighty?.id)?.description,
+    )
+    .toMatch(/\(edited\)$/);
+});
+
+test("⌘K / ?cue= to a row the filter hides shows it with Keep shown / Clear filters; stale ?view", async ({
+  browser,
+}) => {
+  const { page, showId } = await exampleShow(browser);
+  await duplicateView(page, "Cued");
+  await addStatusFilter(page, "Cued");
+  await expect.poll(() => shownNumbers(page)).toEqual(CUED);
+  const hidden = (await snapshot(page, showId)).tables.cues.find((c) => c.number === "14.20");
+  const url = new URL(page.url());
+  url.searchParams.set("cue", hidden?.id ?? "");
+  await page.goto(url.toString());
+  await expect(cellOf(rowByCue(page, "14.20"), "number")).toHaveAttribute("data-active", "true");
+  const toast = page.getByTestId("toast").filter({ hasText: "Hidden by the current filter" });
+  await expect(toast.getByRole("button", { name: "Keep shown" })).toBeVisible();
+  // Leaving it hides it again.
+  await cellOf(rowByCue(page, "0.10"), "description").click();
+  await expect(rowByCue(page, "14.20")).toHaveCount(0);
+  await toast.getByRole("button", { name: "Clear filters" }).click();
+  await expect(page.getByTestId("cue-count")).toHaveText("120 cues");
+
+  // A ?view= you can't see (deleted, someone else's) is dropped with a note.
+  await page.goto(`/shows/${showId}/cues?view=0190a1b2-0000-7000-8000-000000000099`);
+  await expect(
+    page.getByTestId("toast").filter({ hasText: "That view no longer exists." }),
+  ).toBeVisible();
+  await expect(page).not.toHaveURL(/view=/);
+});
+
+test("a shared view saved by someone else while you have a draft: rebase, then save both", async ({
+  browser,
+}) => {
+  const { page, showId } = await exampleShow(browser);
+  await addStatusFilter(page, "Cued");
+  await expect(page.getByTestId("view-dirty")).toBeVisible();
+  // Someone else changes the shared view meanwhile.
+  const snap = (await (await page.request.get(`/api/shows/${showId}/snapshot`)).json()) as {
+    tables: {
+      views: { id: string; table: string; name: string; config: Record<string, unknown> }[];
+    };
+  };
+  const shared = snap.tables.views.find((v) => v.name === "All cues");
+  const res = await page.request.post(`/api/shows/${showId}/mutate`, {
+    data: {
+      clientId: "other",
+      ops: [
+        {
+          op: "update",
+          table: "views",
+          id: shared?.id,
+          fields: { config: { ...shared?.config, rowHeight: "tall" } },
+        },
+      ],
+    },
+  });
+  expect(res.status()).toBe(200);
+  await expect(page.getByTestId("view-conflict")).toHaveText("This view changed since your draft");
+  await expect(page.getByRole("button", { name: "Save view" })).toHaveCount(0);
+  // Still there after a reload.
+  await page.reload();
+  await expect(page.getByTestId("view-conflict")).toBeVisible();
+  await page.getByRole("button", { name: "Rebase" }).click();
+  await expect(page.getByTestId("view-dirty")).toBeVisible();
+  await page.getByRole("button", { name: "Save view" }).click();
+  await expect
+    .poll(async () => {
+      const s = (await (
+        await page.request.get(`/api/shows/${showId}/snapshot`)
+      ).json()) as typeof snap;
+      const v = s.tables.views.find((x) => x.id === shared?.id);
+      return [v?.config.rowHeight, (v?.config.filters as unknown[] | undefined)?.length];
+    })
+    .toEqual(["tall", 1]);
+  await expect(page.getByTestId("view-dirty")).toHaveCount(0);
+});
+
+test("a viewer's further changes reuse their copy of the shared view", async ({ browser }) => {
+  const { page: owner, showId } = await exampleShow(browser);
+  const { page: viewer } = await addMember(browser, owner, showId, "viewer");
+  pages.push(viewer);
+  trackErrors(viewer, errors);
+  await openCues(viewer, showId);
+  const height = await openPanel(viewer, "Row height");
+  await height.getByRole("radio", { name: "Tall" }).check();
+  await closePanel(viewer, "Row height");
+  await expect(viewer.getByTestId("current-view")).toHaveText("All cues (mine)");
+  // Back on the shared view, another change goes to the same copy.
+  await viewer.getByTestId("view-switcher").click();
+  await panel(viewer, "Views")
+    .getByRole("button", { name: /^All cues · default/ })
+    .click();
+  await expect(viewer.getByTestId("current-view")).toHaveText("All cues");
+  const again = await openPanel(viewer, "Row height");
+  await again.getByRole("radio", { name: "Compact" }).check();
+  await closePanel(viewer, "Row height");
+  await expect(viewer.getByTestId("current-view")).toHaveText("All cues (mine)");
+  await expect
+    .poll(async () => {
+      const s = (await (await viewer.request.get(`/api/shows/${showId}/snapshot`)).json()) as {
+        tables: {
+          views: { table: string; owner_user_id: string | null; config: { rowHeight: string } }[];
+        };
+      };
+      const mine = s.tables.views.filter((v) => v.table === "cues" && v.owner_user_id !== null);
+      return mine.map((v) => v.config.rowHeight);
+    })
+    .toEqual(["compact"]);
+});
+
+test("popover focus: first safe control, new filter row, wrap-around, Escape; ⌘K switches views", async ({
+  browser,
+}) => {
+  const { page, showId } = await exampleShow(browser);
+  const d = await openPanel(page, "Filter");
+  await expect(d.getByRole("button", { name: "+ Add filter" })).toBeFocused();
+  await d.getByRole("button", { name: "+ Add filter" }).click();
+  await expect(d.getByLabel("Filter 1 field")).toBeFocused();
+  // Reopening: the first control isn't the × that removes the filter.
+  await closePanel(page, "Filter");
+  await page.getByRole("button", { name: "Filter", exact: true }).click();
+  await expect(d.getByLabel("Filter 1 field")).toBeFocused();
+  // Shift+Tab from the first control wraps to the last, Tab from there back to the first.
+  await page.keyboard.press("Shift+Tab");
+  const inside = () =>
+    page.evaluate(() => !!document.activeElement?.closest('[role="dialog"][aria-label="Filter"]'));
+  expect(await inside()).toBe(true);
+  await page.keyboard.press("Tab");
+  expect(await inside()).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(d).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Filter", exact: true })).toBeFocused();
+
+  // ⌘K: "Switch view: …" for this tab's views.
+  await duplicateView(page, "Tech notes");
+  await page.getByTestId("view-switcher").click();
+  await panel(page, "Views")
+    .getByRole("button", { name: /^All cues/ })
+    .click();
+  await expect(page.getByTestId("current-view")).toHaveText("All cues");
+  await page.keyboard.press("ControlOrMeta+k");
+  const palette = page.getByRole("dialog", { name: "Search and commands" });
+  await palette.getByRole("combobox").fill("switch view");
+  await palette.getByRole("option", { name: /Switch view: Tech notes/ }).click();
+  await expect(page.getByTestId("current-view")).toHaveText("Tech notes");
+  expect(new URL(page.url()).pathname).toBe(`/shows/${showId}/cues`);
 });

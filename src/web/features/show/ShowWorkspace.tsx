@@ -12,7 +12,12 @@ import { AppHeader } from "../../components/AppHeader";
 import { PresenceIndicator } from "../../components/PresenceIndicator";
 import { ApiError, api } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
-import { useShowSocketState, useShowStore, useShowStoreInstance } from "../../lib/show-store";
+import {
+  useShowSocketState,
+  useShowStore,
+  useShowStoreInstance,
+  useViewsFor,
+} from "../../lib/show-store";
 import { setTheme } from "../../lib/theme";
 import pageStyles from "../../pages/pages.module.css";
 import { planSortNow } from "../cues/sortNow";
@@ -155,8 +160,26 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
     (tab: TabKey) => navigate(`/shows/${encodeURIComponent(showId)}/${tab}`),
     [navigate, showId],
   );
+  // "Switch view: <name>" for the tab you're on (its shared views, then yours).
+  const pathTab = TABS.find((t) => pathname.split("/")[3] === t.key);
+  const tabViews = useViewsFor(pathTab?.table ?? "cues", user?.id ?? "");
+  const viewCommands = useMemo<PaletteCommand[]>(
+    () =>
+      pathTab
+        ? [...tabViews.shared, ...tabViews.mine].map((v) => ({
+            id: `view-${v.id}`,
+            label: `Switch view: ${v.name || "Untitled view"}`,
+            run: () =>
+              navigate(
+                `/shows/${encodeURIComponent(showId)}/${pathTab.key}?view=${encodeURIComponent(v.id)}`,
+              ),
+          }))
+        : [],
+    [pathTab, tabViews, navigate, showId],
+  );
   const commands = useMemo<PaletteCommand[]>(
     () => [
+      ...viewCommands,
       ...(canEdit
         ? [
             {
@@ -190,7 +213,7 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
         ? [{ id: "import", label: IMPORT_LABEL, run: () => workspace.openImport() }]
         : []),
     ],
-    [canEdit, go, workspace, navigate, showId, currentCue],
+    [canEdit, go, workspace, navigate, showId, currentCue, viewCommands],
   );
   const onPick = useCallback(
     (tab: TabKey, id: string) => {

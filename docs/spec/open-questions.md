@@ -87,10 +87,11 @@ Things the first build had to decide; each is easy to change.
 ## Saved views (M2a decisions to confirm)
 
 - **Filtered groups.** With a filter on, groups left empty are hidden (the Unassigned group
-  too). "Undo filter" in the "Hidden by the current filter" toast clears all the view's
+  too). "Clear filters" in the "Hidden by the current filter" toast clears all the view's
   filters, not just the last one.
-- **A table always has a shared view.** The DO recreates the default when a table has no
-  shared view left (the UI won't delete the last one either).
+- **Rebase granularity.** Rebasing a draft onto a newer shared view takes your value for
+  each top-level config key you changed (all filters, all color rules, …), not a merge
+  within a key.
 
 ## Infrastructure
 
@@ -145,3 +146,6 @@ Things the first build had to decide; each is easy to change.
   are a per-browser overlay, other changes make a personal copy; link filters store record
   ids (renames keep working); multi-valued grouping groups by combination (Airtable-style,
   for now); sorting by a hidden column is allowed.
+- **A table always has a shared view** (M2a review): the server refuses to delete the last
+  one; drafts of shared views survive reloads and never overwrite a newer save (rebase or
+  discard); viewers' copies are reused; M1c widths migrate to a per-user overlay.

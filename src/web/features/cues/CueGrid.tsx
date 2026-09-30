@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useRef } from "react";
 import { newId } from "../../../shared/ids";
 import type { Op } from "../../../shared/ops";
-import { DataGrid, sortRows } from "../../components/grid";
+import { DataGrid } from "../../components/grid";
 import type { CellDecoration, Column, InsertPosition, MenuItem } from "../../components/grid/types";
 import { sceneIdForGroup, UNASSIGNED, ViewCache } from "../../lib/show-selectors";
 import type { ShowState } from "../../lib/show-store";
@@ -22,6 +22,7 @@ import {
   buildCueViews,
   type CueView,
   cueGroups,
+  hintOrder,
   openNotesByCue,
   openNotesByScene,
 } from "./cueViews";
@@ -74,11 +75,14 @@ export function CueGrid() {
     () => cueColumns({ store, fieldOptions, editable }),
     [store, fieldOptions, editable],
   );
+  // The saved view (below) decides whether a row is shown; the chrome asks it first.
+  const revealRef = useRef<((id: string) => "shown" | "pending" | "missing") | null>(null);
   const chrome = useTableChrome({
     tab: "cues",
     columns: baseColumns,
     ready: state.status === "ready",
     hasRow: useCallback((id: string) => viewsRef.current.has(id), []),
+    reveal: useCallback((id: string) => revealRef.current?.(id) ?? "shown", []),
   });
 
   // --- The saved view: filters, grouping, sort, fields, colors ---
@@ -101,6 +105,7 @@ export function CueGrid() {
   );
   const vc = useViewConfig<CueView>({
     table: "cues",
+    focusRow: useCallback((id: string) => chrome.grid.current?.focusRow(id), [chrome.grid]),
     columns: baseColumns,
     extraFields,
     rowId: (v) => v.id,
@@ -113,6 +118,7 @@ export function CueGrid() {
   });
   const vcRef = useRef(vc);
   vcRef.current = vc;
+  revealRef.current = vc.reveal;
   const shownGroups = vc.groups;
   const shownRows = vc.rows;
 
@@ -120,10 +126,10 @@ export function CueGrid() {
   const sort = vc.sort;
   const anchors = useRef(new Map<string, InsertAnchor>());
   const prevHints = useRef<Map<string, CellDecoration>>(new Map());
+  // Over ALL cues (show order, or the full sorted order under a live sort), never the
+  // filtered display: a filter mustn't change the suggested number or hide a duplicate.
   const hints = useMemo(() => {
-    const display = (shownGroups ?? [{ rows: shownRows ?? [] }]).flatMap((g) =>
-      sort ? sortRows(g.rows, sort, baseColumns) : g.rows,
-    );
+    const display = hintOrder(groups, sort, baseColumns);
     const next = cueNumberHints(
       display.map((v) => ({
         id: v.id,
@@ -136,7 +142,7 @@ export function CueGrid() {
     if (hintsEqual(prevHints.current, next)) return prevHints.current;
     prevHints.current = next;
     return next;
-  }, [shownGroups, shownRows, sort, baseColumns]);
+  }, [groups, sort, baseColumns]);
   const cellDecoration = useCallback(
     (v: CueView, key: string) => (key === "number" ? hints.get(v.id) : undefined),
     [hints],

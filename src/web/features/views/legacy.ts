@@ -1,9 +1,9 @@
 // Moving the M1c per-browser prefs (column widths per show+table, the cue live sort per
-// show, collapsed groups per user+show+table) into saved views. Widths and the live sort
-// become a personal "My view"; collapsed groups move to the per-view key. Pure apart from
-// the injected storage, so it's unit-tested (legacy.test.ts).
+// show, collapsed groups per user+show+table) into saved views: widths become your own
+// layout overlay on the shared view you're on, collapsed groups move to the per-view key,
+// the old live sort is dropped (useViewConfig does the moving). Pure apart from the
+// injected storage, so it's unit-tested (legacy.test.ts).
 import type { DataTableName } from "../../../shared/tables";
-import type { ViewConfig } from "../../../shared/views";
 
 export interface KeyValueStore {
   getItem(key: string): string | null;
@@ -40,7 +40,7 @@ function readJson(store: KeyValueStore, key: string): unknown {
 
 export interface LegacyPrefs {
   widths: Record<string, number>;
-  sorts: ViewConfig["sorts"];
+  sorts: { key: string; dir: "asc" | "desc" }[];
   collapsed: string[] | undefined;
 }
 
@@ -74,38 +74,6 @@ export function readLegacyPrefs(
     Array.isArray(c) && c.every((x) => typeof x === "string") ? (c as string[]) : undefined;
   if (Object.keys(widths).length === 0 && sorts.length === 0 && !collapsed) return null;
   return { widths, sorts, collapsed };
-}
-
-/** Does the migrated config differ from the base (worth a personal view)? */
-export function hasViewSettings(prefs: LegacyPrefs): boolean {
-  return Object.keys(prefs.widths).length > 0 || prefs.sorts.length > 0;
-}
-
-/**
- * `base` with the old widths and live sort applied. `columnKeys` is the table's columns in
- * default order: a width for a column the view doesn't list makes the view list every
- * column (in the order it already shows them), so nothing moves.
- */
-export function applyLegacyPrefs(
-  base: ViewConfig,
-  prefs: LegacyPrefs,
-  columnKeys: readonly string[],
-): ViewConfig {
-  const listed = new Set(base.fields.map((f) => f.key));
-  const needsAll = Object.keys(prefs.widths).some((k) => !listed.has(k));
-  const all = needsAll
-    ? [...base.fields, ...columnKeys.filter((k) => !listed.has(k)).map((key) => ({ key }))]
-    : base.fields;
-  const fields = all.map((f) => {
-    const width = prefs.widths[f.key];
-    return width ? { ...f, width } : f;
-  });
-  const out: ViewConfig = { ...base, fields };
-  if (prefs.sorts.length > 0) {
-    out.sorts = prefs.sorts;
-    out.sortMode = "live";
-  }
-  return out;
 }
 
 export function clearLegacyPrefs(

@@ -131,6 +131,8 @@
 
 .inline {
   display: inline-flex;
+  flex-direction: row;
+  font-weight: 400;
   align-items: center;
   gap: var(--space-2);
   font-size: 13px;
@@ -218,8 +220,11 @@
   background: var(--color-accent-hover);
 }
 
+/* Checkbox/radio + its text on one line (the global `label` rule stacks them). */
 .check {
   display: inline-flex;
+  flex-direction: row;
+  font-weight: 400;
   align-items: center;
   gap: var(--space-2);
   font-size: 13px;
@@ -405,4 +410,21 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1);
+}
+
+/* Phones: the frozen-columns control sits above the (long) field list. */
+.frozenRow {
+  order: 0;
+}
+
+@media (max-width: 600px) {
+  .frozenRow {
+    order: -1;
+  }
+}
+
+.check input {
+  flex-shrink: 0;
+  margin: 0;
+  accent-color: var(--color-accent);
 }

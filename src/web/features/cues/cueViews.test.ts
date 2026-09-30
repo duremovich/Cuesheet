@@ -3,7 +3,8 @@ import type { Op } from "../../../shared/ops";
 import { UNASSIGNED, ViewCache } from "../../lib/show-selectors";
 import { applyResolved, emptyData, resolveLocal, type ShowData } from "../../lib/show-state";
 import { searchShow } from "../search/searchShow";
-import { buildCueViews, type CueView, cueGroups, openNotesByScene } from "./cueViews";
+import { cueNumberHints } from "./cueNumbers";
+import { buildCueViews, type CueView, cueGroups, hintOrder, openNotesByScene } from "./cueViews";
 
 // Ids must look like UUIDv7 only for the server; the local resolver doesn't care.
 function build(ops: Op[], data: ShowData = emptyData()): ShowData {
@@ -94,5 +95,36 @@ describe("searchShow", () => {
     expect(searchShow(data, "fade").find((g) => g.tab === "notes")?.hits[0]?.id).toBe("n1");
     expect(searchShow(data, "casey").find((g) => g.tab === "people")?.hits[0]?.id).toBe("p1");
     expect(searchShow(data, "  ")).toEqual([]);
+  });
+});
+
+describe("hintOrder (ghosts and duplicates ignore the view's filter)", () => {
+  type N = { id: string; number: string | null };
+  const row = (id: string, number: string | null): N => ({ id, number });
+  const numberCol = [
+    { key: "number", title: "Cue", type: "text" as const, getValue: (r: N) => r.number },
+  ];
+  const groups = [
+    { id: "g1", title: "A", rows: [row("a", "1"), row("new", null), row("b", "2")] },
+    { id: "g2", title: "B", rows: [row("c", "5"), row("d", "3"), row("e", "5")] },
+  ];
+  const hints = (rows: N[]) =>
+    cueNumberHints(rows.map((r) => ({ ...r, isSection: false, description: null })));
+
+  it("uses every cue in show order: the ghost and duplicates don't depend on a filter", () => {
+    const all = hintOrder(groups, undefined, numberCol);
+    expect(all.map((r) => r.id)).toEqual(["a", "new", "b", "c", "d", "e"]);
+    const full = hints(all);
+    expect(full.get("new")?.ghost).toBe("1.5");
+    expect(full.get("c")?.warning).toMatch(/Duplicate/);
+    // What the filtered display alone would say (the bug this avoids).
+    const shown = hints(all.filter((r) => r.id !== "b" && r.id !== "e"));
+    expect(shown.get("new")?.ghost).not.toBe("1.5");
+    expect(shown.get("c")?.warning).toBeUndefined();
+  });
+
+  it("under a live sort, sorts each group in full", () => {
+    const all = hintOrder(groups, [{ key: "number", dir: "asc" }], numberCol);
+    expect(all.map((r) => r.id)).toEqual(["a", "b", "new", "d", "c", "e"]);
   });
 });

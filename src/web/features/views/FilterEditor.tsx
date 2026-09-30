@@ -243,6 +243,7 @@ export function FilterEditor<V>({
       <button
         type="button"
         className={styles.iconButton}
+        data-destructive
         aria-label={`Remove ${label.toLocaleLowerCase()}`}
         onClick={onRemove}
       >

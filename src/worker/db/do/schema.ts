@@ -183,8 +183,9 @@ export const note_assignees = sqliteTable(
 
 /**
  * Saved views (R16/R17). `config` is a JSON ViewConfig (src/shared/views.ts). Shared views
- * have `owner_user_id` null; personal ones belong to that user. The DO seeds one shared
- * default view per data table when the table is empty (ShowDO constructor).
+ * have `owner_user_id` null; personal ones belong to that user. The DO gives a data table
+ * with no shared view (a show created before views existed) its default view when it
+ * starts; the op engine refuses to delete a table's last shared view.
  */
 export const views = sqliteTable(
   "views",

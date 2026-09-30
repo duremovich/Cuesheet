@@ -1,13 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { defaultViewConfig } from "../../../shared/views";
-import {
-  applyLegacyPrefs,
-  clearLegacyPrefs,
-  hasViewSettings,
-  type KeyValueStore,
-  legacyKey,
-  readLegacyPrefs,
-} from "./legacy";
+import { applyLayoutOverlay } from "./evaluate";
+import { clearLegacyPrefs, type KeyValueStore, legacyKey, readLegacyPrefs } from "./legacy";
 
 function memory(entries: Record<string, string>): KeyValueStore & { data: Map<string, string> } {
   const data = new Map(Object.entries(entries));
@@ -35,43 +29,30 @@ describe("M1c prefs → saved views", () => {
       sorts: [{ key: "number", dir: "asc" }],
       collapsed: ["scene-1"],
     });
-    expect(prefs && hasViewSettings(prefs)).toBe(true);
     expect(readLegacyPrefs(store, "show", "u1", "notes")).toBeNull();
     expect(readLegacyPrefs(store, "other", "u1", "cues")).toBeNull();
   });
 
-  it("collapsed groups alone are not view settings", () => {
+  it("collapsed groups alone", () => {
     const store = memory({ [legacyKey.collapsed("u1", "show", "notes")]: '["status:Done"]' });
     const prefs = readLegacyPrefs(store, "show", "u1", "notes");
     expect(prefs?.collapsed).toEqual(["status:Done"]);
-    expect(prefs && hasViewSettings(prefs)).toBe(false);
+    expect(prefs?.widths).toEqual({});
   });
 
-  it("applies widths without moving columns, and the sort as a live sort", () => {
+  it("old widths become a layout overlay on the shared view (nothing else changes)", () => {
     const base = defaultViewConfig("cues");
-    const out = applyLegacyPrefs(
-      base,
-      { widths: { scene: 300 }, sorts: [{ key: "number", dir: "asc" }], collapsed: undefined },
-      ["number", "description", "scene"],
-    );
+    const out = applyLayoutOverlay(base, { widths: { scene: 300 } }, [
+      "number",
+      "description",
+      "scene",
+    ]);
     expect(out.fields).toEqual([
       { key: "number" },
       { key: "description" },
       { key: "scene", width: 300 },
     ]);
-    expect(out.sortMode).toBe("live");
-    expect(out.sorts).toEqual([{ key: "number", dir: "asc" }]);
-    // Widths for listed columns only touch those entries.
-    const listed = applyLegacyPrefs(
-      { ...base, fields: [{ key: "scene", hidden: true }, { key: "number" }] },
-      { widths: { number: 50 }, sorts: [], collapsed: undefined },
-      ["number", "scene"],
-    );
-    expect(listed.fields).toEqual([
-      { key: "scene", hidden: true },
-      { key: "number", width: 50 },
-    ]);
-    expect(listed.sortMode).toBe("none");
+    expect({ ...out, fields: [] }).toEqual({ ...base, fields: [] });
   });
 
   it("clears the old keys", () => {

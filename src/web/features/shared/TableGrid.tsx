@@ -72,11 +72,14 @@ export function TableGrid<V>(config: TableConfig<V>) {
   const cfg = useRef(config);
   cfg.current = config;
 
+  // The saved view (below) decides whether a row is shown; the chrome asks it first.
+  const revealRef = useRef<((id: string) => "shown" | "pending" | "missing") | null>(null);
   const chrome = useTableChrome({
     tab: config.tab,
     columns: config.columns,
     ready: status === "ready",
     hasRow: useCallback((id: string) => byIdRef.current.has(id), []),
+    reveal: useCallback((id: string) => revealRef.current?.(id) ?? "shown", []),
   });
 
   const table = tabInfo(config.tab).table;
@@ -84,6 +87,7 @@ export function TableGrid<V>(config: TableConfig<V>) {
   const dateFields = config.dateFields ?? DATE_FIELDS[table];
   const view = useViewConfig<V>({
     table,
+    focusRow: useCallback((id: string) => chrome.grid.current?.focusRow(id), [chrome.grid]),
     columns: config.columns,
     rowId: config.rowId,
     rows: all,
@@ -99,6 +103,7 @@ export function TableGrid<V>(config: TableConfig<V>) {
   });
   const viewRef = useRef(view);
   viewRef.current = view;
+  revealRef.current = view.reveal;
 
   const report = ws.reportError;
   const send = useCallback(

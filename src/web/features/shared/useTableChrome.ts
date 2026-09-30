@@ -30,6 +30,11 @@ export function useTableChrome<Row>(opts: {
   /** Data has loaded (a URL/⌘K focus waits for it). */
   ready: boolean;
   hasRow: (id: string) => boolean;
+  /**
+   * The saved view's check before focusing a row (`useViewConfig().reveal`): a row its
+   * filter hides is held and shown first ("pending": focus on a later render).
+   */
+  reveal?: (id: string) => "shown" | "pending" | "missing";
 }) {
   const { tab, ready } = opts;
   const { toast } = useWorkspace();
@@ -71,6 +76,7 @@ export function useTableChrome<Row>(opts: {
       }
       return;
     }
+    if (opts.reveal?.(id) === "pending") return; // shown on the next render
     pendingFocus.current = null;
     grid.current?.focusRow(id);
   });

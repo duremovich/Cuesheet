@@ -98,7 +98,8 @@ Link values carry labels so the grid can render and undo without lookups. The co
   decision 0003); only the dragged row's key changes. Dropping onto a collapsed group
   appends to it and expands it.
 - **Live sort** (`sort` set): the grid sorts (stable, multi-key, **empty values last** in
-  both directions; decimal strings compare numerically, so 14.2 < 14.25 < 14.3). The row
+  both directions; cue-number-like strings compare by `compareNumericText`: the decimal
+  numerically, then the letter suffix, so 14.2 < 14.25 < 14.3 < 14.3A < 14.5). The row
   you're in is **held in its slot** (its position within its group) while focus stays in
   it, whatever its own values or its neighbors' values do, including remote edits. When
   focus leaves the row (another row, Escape when not editing, focus leaving the grid), it

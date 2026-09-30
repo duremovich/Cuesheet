@@ -2,7 +2,7 @@
 // discard for a changed shared view; duplicate, rename, delete, set as default) and the
 // Filter, Sort, Group, Fields, Row height and Color panels. Every change goes through
 // `actions.update`, which decides between a draft, a save, or a personal copy.
-import { useState } from "react";
+import { type RefObject, useLayoutEffect, useRef, useState } from "react";
 import type { DataTableName, ViewRow } from "../../../shared/tables";
 import type { ColorRule, OptionColor, RowHeightName, ViewConfig } from "../../../shared/views";
 import { type Column, OPTION_COLORS } from "../../components/grid/types";
@@ -21,6 +21,8 @@ export interface ViewBarProps<V> {
   mine: ViewRow[];
   config: ViewConfig;
   dirty: boolean;
+  /** The shared view was saved by someone else since this draft started. */
+  conflict: boolean;
   canEdit: boolean;
   columns: Column<V>[];
   fields: ReadonlyMap<string, FieldDef<V>>;
@@ -43,7 +45,20 @@ export function ViewBar<V>(p: ViewBarProps<V>) {
   return (
     <div className={styles.bar} data-testid="view-bar">
       <ViewSwitcher {...p} />
-      {p.dirty && p.canEdit && (
+      {p.dirty && p.canEdit && p.conflict && (
+        <span className={styles.dirty} role="status">
+          <span data-testid="view-conflict" className={styles.dirtyBadge}>
+            This view changed since your draft
+          </span>
+          <button type="button" className={styles.toolButton} onClick={p.actions.rebase}>
+            Rebase
+          </button>
+          <button type="button" className={styles.toolButton} onClick={p.actions.discard}>
+            Discard
+          </button>
+        </span>
+      )}
+      {p.dirty && p.canEdit && !p.conflict && (
         <span className={styles.dirty}>
           <span data-testid="view-dirty" className={styles.dirtyBadge}>
             Unsaved changes
@@ -210,6 +225,7 @@ function ViewSwitcher<V>({ current, shared, mine, canEdit, actions, dirty }: Vie
                 <button
                   type="button"
                   className={styles.dangerButton}
+                  data-destructive
                   disabled={lastShared}
                   title={lastShared ? "The table needs at least one shared view" : undefined}
                   onClick={() => {
@@ -260,6 +276,8 @@ function FilterPanel<V>({ config, fields, rows, actions }: ViewBarProps<V>) {
   const list = [...fields.values()];
   const active = config.filters.filter(isComplete).length;
   const set = (filters: ViewConfig["filters"]) => actions.update((c) => ({ ...c, filters }));
+  const stack = useRef<HTMLDivElement>(null);
+  const focusNew = useFocusNew(stack, config.filters.length, (n) => `Filter ${n} field`);
   return (
     <Popover
       label="Filter"
@@ -268,7 +286,7 @@ function FilterPanel<V>({ config, fields, rows, actions }: ViewBarProps<V>) {
       wide
       button={active > 0 ? `Filter (${active})` : "Filter"}
     >
-      <div className={styles.stack}>
+      <div className={styles.stack} ref={stack}>
         {config.filters.length > 1 && (
           <ModeSelect
             label="Filter match"
@@ -298,13 +316,20 @@ function FilterPanel<V>({ config, fields, rows, actions }: ViewBarProps<V>) {
             disabled={list.length === 0}
             onClick={() => {
               const first = list[0];
-              if (first) set([...config.filters, newFilter(first)]);
+              if (!first) return;
+              focusNew();
+              set([...config.filters, newFilter(first)]);
             }}
           >
             + Add filter
           </button>
           {config.filters.length > 0 && (
-            <button type="button" className={styles.linkButton} onClick={() => set([])}>
+            <button
+              type="button"
+              className={styles.linkButton}
+              data-destructive
+              onClick={() => set([])}
+            >
               Clear filters
             </button>
           )}
@@ -331,7 +356,7 @@ function SortPanel<V>({ config, columns, actions, sortPresets, sortNow }: ViewBa
       wide
       button={
         live && first
-          ? `Sorted by ${title(first.key)}${config.sorts.length > 1 ? ` +${config.sorts.length - 1}` : ""}`
+          ? `Sorted by ${title(first.key)} ${first.dir === "desc" ? "↓" : "↑"}${config.sorts.length > 1 ? ` +${config.sorts.length - 1}` : ""}`
           : "Sort"
       }
     >
@@ -389,6 +414,7 @@ function SortPanel<V>({ config, columns, actions, sortPresets, sortNow }: ViewBa
               <button
                 type="button"
                 className={styles.iconButton}
+                data-destructive
                 aria-label={`Remove sort ${i + 1}`}
                 onClick={() => set(config.sorts.filter((_, j) => j !== i))}
               >
@@ -585,7 +611,7 @@ function FieldsPanel<V>({ config, columns, actions }: ViewBarProps<V>) {
             </li>
           ))}
         </ul>
-        <div className={styles.row}>
+        <div className={`${styles.row} ${styles.frozenRow}`}>
           <label className={styles.inline}>
             <span>Frozen columns</span>
             <input
@@ -743,6 +769,7 @@ function ColorPanel<V>({ config, fields, columns, rows, presets, actions }: View
                   <button
                     type="button"
                     className={styles.iconButton}
+                    data-destructive
                     aria-label={`Remove rule ${i + 1}`}
                     onClick={() => set(rules.filter((_, j) => j !== i))}
                   >
@@ -842,11 +869,39 @@ function ColorPanel<V>({ config, fields, columns, rows, presets, actions }: View
           </section>
         )}
         {rules.length > 0 && (
-          <button type="button" className={styles.dangerButton} onClick={() => set([])}>
+          <button
+            type="button"
+            className={styles.dangerButton}
+            data-destructive
+            onClick={() => set([])}
+          >
             Remove all rules
           </button>
         )}
       </div>
     </Popover>
   );
+}
+
+/**
+ * After "+ Add …": focus the new row's first control once it renders. Call the returned
+ * function right before adding; `label(n)` is the accessible name of row n's control.
+ */
+function useFocusNew(
+  container: RefObject<HTMLElement | null>,
+  count: number,
+  label: (n: number) => string,
+): () => void {
+  const want = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (want.current === null || count < want.current) return;
+    const n = want.current;
+    want.current = null;
+    container.current
+      ?.querySelector<HTMLElement>(`[aria-label="${CSS.escape(label(n))}"]`)
+      ?.focus();
+  });
+  return () => {
+    want.current = count + 1;
+  };
 }

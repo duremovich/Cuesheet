@@ -3,7 +3,8 @@
 // link lists or the linked records change (the grid re-renders exactly those rows).
 
 import type { CueRow, SceneRow } from "../../../shared/tables";
-import type { Group, PickerItem } from "../../components/grid/types";
+import { sortRows } from "../../components/grid/ordering";
+import type { Column, Group, PickerItem, SortSpec } from "../../components/grid/types";
 import { groupByScene, sceneTitle, UNASSIGNED, type ViewCache } from "../../lib/show-selectors";
 import type { ShowData } from "../../lib/show-state";
 import { contentItem, personItem, sceneItem } from "../shared/pickers";
@@ -109,4 +110,18 @@ export function cueGroups(
       rows: g.rows,
     };
   });
+}
+
+/**
+ * Every cue in the order number hints (ghost midpoint, duplicates) are computed over: all
+ * groups in show order, each sorted when a live sort is on. Never the filtered display.
+ */
+export function hintOrder<R>(
+  groups: readonly Group<R>[],
+  sort: readonly SortSpec[] | undefined,
+  columns: readonly Column<R>[],
+): R[] {
+  return groups.flatMap((g) =>
+    sort && sort.length > 0 ? sortRows(g.rows, sort, columns) : g.rows,
+  );
 }

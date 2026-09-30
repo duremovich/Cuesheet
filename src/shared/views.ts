@@ -284,6 +284,7 @@ export function normalizeViewConfig(raw: unknown, table?: DataTableName): ViewCo
             isColor(r.color),
         ),
     ),
+    ...(isKey(raw.forkedFrom) ? { forkedFrom: raw.forkedFrom } : {}),
   };
 }
 
