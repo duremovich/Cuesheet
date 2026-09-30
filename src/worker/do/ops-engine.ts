@@ -17,6 +17,7 @@ import type {
 import { effectivePlacement, orderKeyFor, PlacementError } from "../../shared/order";
 import {
   DATA_TABLES,
+  type DataTableName,
   FIELDS,
   type FieldOptions,
   type FieldSpec,
@@ -30,7 +31,13 @@ import {
   TABLE_NAMES,
   type TableName,
 } from "../../shared/tables";
-import { DEFAULT_VIEW_NAMES, defaultViewConfig, viewConfigError } from "../../shared/views";
+import {
+  DEFAULT_VIEW_NAMES,
+  defaultViewConfig,
+  MAX_PERSONAL_VIEWS,
+  sanitizeViewConfig,
+  viewConfigError,
+} from "../../shared/views";
 
 export interface MutationContext {
   userId: string;
@@ -381,10 +388,32 @@ export class Batch {
         }
         break;
       case "config": {
+        // Structure here; the table-aware check (sanitizeConfig) runs once the table is known.
         const error = viewConfigError(value);
         if (error) this.fail(`views.${error}`);
         break;
       }
+    }
+  }
+
+  /** The config rebuilt from known keys, or a 400 naming what's wrong (`sanitizeViewConfig`). */
+  private sanitizeConfig(table: DataTableName, value: unknown): unknown {
+    const r = sanitizeViewConfig(table, value);
+    if ("error" in r) this.fail(`views.${r.error}`);
+    return r.config;
+  }
+
+  /** At most MAX_PERSONAL_VIEWS personal views per user and table. */
+  private checkPersonalCap(table: string, owner: string): void {
+    const { n } = this.sql
+      .exec<{ n: number }>(
+        'SELECT count(*) AS n FROM views WHERE "table" = ? AND owner_user_id = ?',
+        table,
+        owner,
+      )
+      .one();
+    if (n >= MAX_PERSONAL_VIEWS) {
+      this.fail(`At most ${MAX_PERSONAL_VIEWS} personal views per table`);
     }
   }
 
@@ -490,7 +519,12 @@ export class Batch {
     }
     if (table === "views") {
       if (!isDataTable(row.table)) this.fail("views.table is required");
-      if (!("config" in fields)) row.config = defaultViewConfig(row.table);
+      row.config =
+        "config" in fields
+          ? this.sanitizeConfig(row.table, row.config)
+          : defaultViewConfig(row.table);
+      if (typeof row.owner_user_id === "string")
+        this.checkPersonalCap(row.table, row.owner_user_id);
     }
     row.created_by = this.ctx.userId;
     row.updated_at = this.now;
@@ -622,6 +656,9 @@ export class Batch {
         changes[name] = this.validate(table, name, spec, value);
       }
     }
+    if (table === "views" && "config" in changes) {
+      changes.config = this.sanitizeConfig(before.table as DataTableName, changes.config);
+    }
     this.write(table, id, before, changes);
     if (table === "views") this.afterViewWrite(id);
   }
@@ -640,6 +677,15 @@ export class Batch {
     const before = this.mustGet(table, id);
     this.noteViewOwner(table, id, before);
     this.checkRole(table, before);
+    if (table === "views" && before.owner_user_id === null) {
+      const { n } = this.sql
+        .exec<{ n: number }>(
+          'SELECT count(*) AS n FROM views WHERE "table" = ? AND owner_user_id IS NULL',
+          before.table,
+        )
+        .one();
+      if (n <= 1) this.fail("A table needs at least one shared view");
+    }
     // Cascade, as explicit ops so history and clients see every change.
     for (const spec of Object.values(LINKS) as LinkSpec[]) {
       if (spec.from === table) {

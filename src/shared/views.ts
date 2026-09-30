@@ -89,11 +89,18 @@ export interface ViewConfig {
   frozenCount: number;
   /** In order: the first matching row rule wins; cell rules stack. */
   colorRules: ColorRule[];
+  /**
+   * A viewer's/commenter's personal copy of a shared view: that view's id, so further
+   * changes reuse the copy instead of making another.
+   */
+  forkedFrom?: string;
 }
 
 export const MAX_FILTERS = 50;
 export const MAX_COLOR_RULES = 50;
 export const MAX_FIELDS = 200;
+/** Personal views per user and table (the server refuses more). */
+export const MAX_PERSONAL_VIEWS = 50;
 const MAX_KEY = 64;
 const MAX_VALUE_CHARS = 1000;
 const MAX_LIST = 200;
@@ -216,6 +223,9 @@ export function viewConfigError(raw: unknown): string | null {
     }
     if (!isColor(r.color)) return `${where}.color must be an option color`;
   }
+  if (c.forkedFrom !== undefined && !isKey(c.forkedFrom)) {
+    return "config.forkedFrom must be a view id";
+  }
   return null;
 }
 
@@ -304,3 +314,219 @@ export const DEFAULT_VIEW_NAMES: Record<DataTableName, string> = {
   notes: "All notes",
   persons: "Everyone",
 };
+
+// ---- Per-table fields (what a view may name), shared by server validation and client ----
+
+/** How a field filters and groups (a grid column's type, coarsened). */
+export type FieldKind = "text" | "number" | "checkbox" | "select" | "multi" | "link" | "date";
+
+export const OPS_BY_KIND: Record<FieldKind, readonly FilterOp[]> = {
+  text: [
+    "contains",
+    "notContains",
+    "is",
+    "isNot",
+    "isEmpty",
+    "isNotEmpty",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
+  ],
+  number: ["is", "isNot", "gt", "gte", "lt", "lte", "isEmpty", "isNotEmpty"],
+  checkbox: ["isTrue", "isFalse"],
+  select: ["is", "isNot", "anyOf", "noneOf", "isEmpty", "isNotEmpty"],
+  multi: ["is", "isNot", "anyOf", "noneOf", "isEmpty", "isNotEmpty"],
+  link: ["is", "isNot", "contains", "notContains", "anyOf", "noneOf", "isEmpty", "isNotEmpty"],
+  date: ["before", "after", "isEmpty", "isNotEmpty"],
+};
+
+export const GROUPABLE_KINDS: ReadonlySet<FieldKind> = new Set(["select", "multi", "link"]);
+
+/**
+ * The fields a view of each table can use: the grid's column keys (in the tabs'
+ * `columns.ts`; `views/viewFields.test.ts` keeps the two in step) with their kind, and
+ * `extra` fields that aren't columns (filter/color only).
+ */
+export const VIEW_FIELDS: Record<
+  DataTableName,
+  Record<string, { kind: FieldKind; extra?: true }>
+> = {
+  cues: {
+    number: { kind: "text" },
+    description: { kind: "text" },
+    trigger_type: { kind: "select" },
+    trigger_value: { kind: "text" },
+    sm_call: { kind: "text" },
+    lx_cue: { kind: "text" },
+    sq_cue: { kind: "text" },
+    timecode: { kind: "text" },
+    ae_time: { kind: "text" },
+    measure: { kind: "text" },
+    page: { kind: "text" },
+    status: { kind: "select" },
+    assignees: { kind: "link" },
+    content: { kind: "link" },
+    scene: { kind: "link" },
+    open_notes: { kind: "number", extra: true },
+  },
+  notes: {
+    body: { kind: "text" },
+    type: { kind: "multi" },
+    priority: { kind: "select" },
+    status: { kind: "select" },
+    assignees: { kind: "link" },
+    cues: { kind: "link" },
+    content: { kind: "link" },
+    scene: { kind: "link" },
+    session: { kind: "text" },
+    created_by: { kind: "text" },
+    created_at: { kind: "date" },
+  },
+  content: {
+    name: { kind: "text" },
+    scene: { kind: "link" },
+    status: { kind: "select" },
+    creator: { kind: "link" },
+    description: { kind: "text" },
+    loop_in: { kind: "text" },
+    loop_out: { kind: "text" },
+    cues: { kind: "link" },
+    notes: { kind: "text" },
+  },
+  scenes: {
+    number: { kind: "text" },
+    name: { kind: "text" },
+    act: { kind: "select" },
+    location: { kind: "text" },
+    time_of_day: { kind: "text" },
+    song: { kind: "text" },
+    description: { kind: "text" },
+    video_overview: { kind: "text" },
+    cues: { kind: "text" },
+    content_count: { kind: "text" },
+  },
+  persons: {
+    name: { kind: "text" },
+    role: { kind: "text" },
+    group: { kind: "select" },
+    email: { kind: "text" },
+    phone: { kind: "text" },
+    organization: { kind: "text" },
+  },
+};
+
+const NUMERIC_OPS: ReadonlySet<FilterOp> = new Set(["gt", "gte", "lt", "lte"]);
+const DATE_OPS: ReadonlySet<FilterOp> = new Set(["before", "after"]);
+
+/**
+ * The server's check of a view config for `table`: structurally valid (`viewConfigError`),
+ * then every field key known to the table, operators allowed for the field's kind, values
+ * shaped for their operator, groupable group fields, no duplicate sort keys, frozenCount
+ * within the columns. Returns a config rebuilt from the known keys only (anything else is
+ * dropped), or the first error.
+ */
+export function sanitizeViewConfig(
+  table: DataTableName,
+  raw: unknown,
+): { config: ViewConfig } | { error: string } {
+  const structural = viewConfigError(raw);
+  if (structural) return { error: structural };
+  const c = raw as ViewConfig;
+  const known = VIEW_FIELDS[table];
+  const kindOf = (key: string) => (Object.hasOwn(known, key) ? known[key]?.kind : undefined);
+  const isColumn = (key: string) => Object.hasOwn(known, key) && !known[key]?.extra;
+  const columnCount = Object.values(known).filter((f) => !f.extra).length;
+
+  const filter = (f: Filter, where: string): Filter | string => {
+    const kind = kindOf(f.key);
+    if (!kind) return `${where}: ${table} has no field "${f.key}"`;
+    if (!OPS_BY_KIND[kind].includes(f.op)) return `${where}: "${f.op}" doesn't apply to ${f.key}`;
+    const v = f.value ?? undefined;
+    if (VALUELESS_OPS.has(f.op)) {
+      if (v !== undefined) return `${where}: "${f.op}" takes no value`;
+    } else if (LIST_OPS.has(f.op)) {
+      if (v !== undefined && !Array.isArray(v)) return `${where}: "${f.op}" takes a list`;
+    } else if (NUMERIC_OPS.has(f.op)) {
+      if (v !== undefined && typeof v !== "number" && typeof v !== "string") {
+        return `${where}: "${f.op}" takes a number or text`;
+      }
+    } else if (DATE_OPS.has(f.op)) {
+      if (v !== undefined && typeof v !== "string") return `${where}: "${f.op}" takes a date`;
+    } else if (v !== undefined && typeof v !== "string" && typeof v !== "number") {
+      return `${where}: "${f.op}" takes one value`;
+    }
+    return {
+      key: f.key,
+      op: f.op,
+      ...(v !== undefined ? { value: v } : {}),
+      ...(kind === "link" && f.labels ? { labels: { ...f.labels } } : {}),
+    };
+  };
+
+  const filters: Filter[] = [];
+  for (const [i, f] of c.filters.entries()) {
+    const r = filter(f, `config.filters[${i}]`);
+    if (typeof r === "string") return { error: r };
+    filters.push(r);
+  }
+  const sortKeys = new Set<string>();
+  for (const s of c.sorts) {
+    if (!isColumn(s.key)) return { error: `config.sorts: ${table} has no column "${s.key}"` };
+    if (sortKeys.has(s.key)) return { error: `config.sorts lists ${s.key} twice` };
+    sortKeys.add(s.key);
+  }
+  const groupKey = c.group.key;
+  if (groupKey !== null) {
+    const kind = kindOf(groupKey);
+    if (!kind || !isColumn(groupKey)) return { error: `config.group: no column "${groupKey}"` };
+    if (!GROUPABLE_KINDS.has(kind)) return { error: `config.group: can't group by ${groupKey}` };
+  }
+  for (const f of c.fields) {
+    if (!isColumn(f.key)) return { error: `config.fields: ${table} has no column "${f.key}"` };
+  }
+  if (c.frozenCount > columnCount) {
+    return { error: `config.frozenCount is more than the ${columnCount} columns` };
+  }
+  const colorRules: ColorRule[] = [];
+  for (const [i, r] of c.colorRules.entries()) {
+    const when: Filter[] = [];
+    for (const [j, f] of r.when.entries()) {
+      const x = filter(f, `config.colorRules[${i}].when[${j}]`);
+      if (typeof x === "string") return { error: x };
+      when.push(x);
+    }
+    if (r.target !== "row" && !isColumn(r.target.cell)) {
+      return { error: `config.colorRules[${i}]: no column "${r.target.cell}"` };
+    }
+    colorRules.push({
+      when,
+      mode: r.mode,
+      target: r.target === "row" ? "row" : { cell: r.target.cell },
+      color: r.color,
+    });
+  }
+  return {
+    config: {
+      filters,
+      filterMode: c.filterMode,
+      sorts: c.sorts.map((s) => ({ key: s.key, dir: s.dir })),
+      sortMode: c.sortMode,
+      group: {
+        key: groupKey,
+        ...(c.group.collapsedByDefault !== undefined
+          ? { collapsedByDefault: c.group.collapsedByDefault }
+          : {}),
+      },
+      fields: c.fields.map((f) => ({
+        key: f.key,
+        ...(f.width !== undefined ? { width: f.width } : {}),
+        ...(f.hidden !== undefined ? { hidden: f.hidden } : {}),
+      })),
+      rowHeight: c.rowHeight,
+      frozenCount: c.frozenCount,
+      colorRules,
+      ...(c.forkedFrom !== undefined ? { forkedFrom: c.forkedFrom } : {}),
+    },
+  };
+}

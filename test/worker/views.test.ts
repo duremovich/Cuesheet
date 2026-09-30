@@ -228,6 +228,120 @@ describe("views: ops and roles", () => {
   });
 });
 
+describe("views: config validation against the table", () => {
+  it("rebuilds the config from known keys, dropping unknown ones", async () => {
+    const stub = await freshShow();
+    const id = newId();
+    const raw = {
+      ...config({
+        filters: [{ key: "status", op: "is", value: "Cued", extra: 1 } as never],
+      }),
+      somethingNew: { a: 1 },
+      group: { key: "scene", junk: true },
+    };
+    ok(await stub.mutate(editor, [createView(id, { config: raw })]));
+    const saved = (await views(stub)).find((v) => v.id === id)?.config as Record<string, unknown>;
+    expect(saved).not.toHaveProperty("somethingNew");
+    expect(saved.group).toEqual({ key: "scene" });
+    expect(saved.filters).toEqual([{ key: "status", op: "is", value: "Cued" }]);
+  });
+
+  it("refuses unknown fields, wrong operators and values, bad grouping/sorts/frozen", async () => {
+    const stub = await freshShow();
+    const id = newId();
+    ok(await stub.mutate(editor, [createView(id, {})]));
+    const bad = (patch: Partial<ViewConfig>) =>
+      stub.mutate(editor, [
+        { op: "update", table: "views", id, fields: { config: config(patch) } },
+      ]);
+    const cases: [Partial<ViewConfig>, RegExp][] = [
+      [{ filters: [{ key: "nope", op: "is", value: "x" }] }, /no field "nope"/],
+      [{ filters: [{ key: "status", op: "gt", value: "x" }] }, /doesn't apply/],
+      [{ filters: [{ key: "status", op: "isEmpty", value: "x" }] }, /takes no value/],
+      [{ filters: [{ key: "status", op: "anyOf", value: "Cued" }] }, /takes a list/],
+      [{ filters: [{ key: "number", op: "gt", value: ["1"] }] }, /number or text/],
+      [{ group: { key: "description" } }, /can't group/],
+      [{ group: { key: "open_notes" } }, /no column/],
+      [{ fields: [{ key: "ghost" }] }, /no column "ghost"/],
+
+      [
+        {
+          sorts: [
+            { key: "number", dir: "asc" },
+            { key: "number", dir: "desc" },
+          ],
+        },
+        /twice/,
+      ],
+      [{ sorts: [{ key: "open_notes", dir: "asc" }] }, /no column/],
+      [
+        {
+          colorRules: [{ when: [], mode: "and", target: { cell: "ghost" }, color: "red" }],
+        },
+        /no column "ghost"/,
+      ],
+    ];
+    for (const [patch, error] of cases) {
+      expect(await bad(patch)).toMatchObject({
+        ok: false,
+        status: 400,
+        error: expect.stringMatching(error),
+      });
+    }
+    // People have 6 columns: 7 frozen is too many.
+    expect(
+      await stub.mutate(editor, [
+        createView(newId(), {
+          table: "persons",
+          config: { ...defaultViewConfig("persons"), frozenCount: 7 },
+        }),
+      ]),
+    ).toMatchObject({ ok: false, status: 400, error: expect.stringMatching(/frozenCount/) });
+    // Extra fields can be filtered and colored by; incomplete filters are fine.
+    ok(
+      await bad({
+        filters: [
+          { key: "open_notes", op: "gt", value: 0 },
+          { key: "status", op: "is" },
+        ],
+      }),
+    );
+  });
+
+  it("keeps a table's last shared view and caps personal views at 50", async () => {
+    const stub = await freshShow();
+    const seeded = (await views(stub)).find((v) => v.table === "cues") as ViewRow;
+    expect(
+      await stub.mutate(editor, [{ op: "delete", table: "views", id: seeded.id }]),
+    ).toMatchObject({
+      ok: false,
+      status: 400,
+      error: expect.stringMatching(/at least one shared/),
+    });
+    const other = newId();
+    ok(await stub.mutate(editor, [createView(other, {})]));
+    ok(await stub.mutate(editor, [{ op: "delete", table: "views", id: seeded.id }]));
+
+    const ops = Array.from({ length: 50 }, () =>
+      createView(newId(), { owner_user_id: viewer.userId }),
+    );
+    ok(await stub.mutate(viewer, ops));
+    expect(
+      await stub.mutate(viewer, [createView(newId(), { owner_user_id: viewer.userId })]),
+    ).toMatchObject({ ok: false, status: 400, error: expect.stringMatching(/At most 50/) });
+    // Another table has its own allowance.
+    ok(
+      await stub.mutate(viewer, [
+        createView(newId(), {
+          owner_user_id: viewer.userId,
+          table: "notes",
+          config: defaultViewConfig("notes"),
+        }),
+      ]),
+    );
+  });
+});
+
 describe("views: default exclusivity", () => {
   it("setting is_default on a shared view clears it on the table's other shared views", async () => {
     const stub = await freshShow();

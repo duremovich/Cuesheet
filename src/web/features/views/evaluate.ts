@@ -10,7 +10,7 @@ import type {
   ColorRule as SavedColorRule,
   ViewConfig,
 } from "../../../shared/views";
-import { LIST_OPS, VALUELESS_OPS } from "../../../shared/views";
+import { type FieldKind, LIST_OPS, OPS_BY_KIND, VALUELESS_OPS } from "../../../shared/views";
 import { isEmptyValue } from "../../components/grid/ordering";
 import type { ColorRule, Column, ColumnType, PickerItem } from "../../components/grid/types";
 import { jsonEqual } from "../../lib/show-state";
@@ -24,7 +24,7 @@ export type FieldDef<V> = Column<V> & { valueType?: "date" };
 
 // ---- Operators per field type ----
 
-export type FieldKind = "text" | "number" | "checkbox" | "select" | "multi" | "link" | "date";
+export type { FieldKind };
 
 export function fieldKind(f: { type: ColumnType; valueType?: "date" }): FieldKind {
   if (f.valueType === "date") return "date";
@@ -45,28 +45,7 @@ export function fieldKind(f: { type: ColumnType; valueType?: "date" }): FieldKin
   }
 }
 
-const OPS_BY_KIND: Record<FieldKind, FilterOp[]> = {
-  text: [
-    "contains",
-    "notContains",
-    "is",
-    "isNot",
-    "isEmpty",
-    "isNotEmpty",
-    "gt",
-    "gte",
-    "lt",
-    "lte",
-  ],
-  number: ["is", "isNot", "gt", "gte", "lt", "lte", "isEmpty", "isNotEmpty"],
-  checkbox: ["isTrue", "isFalse"],
-  select: ["is", "isNot", "anyOf", "noneOf", "isEmpty", "isNotEmpty"],
-  multi: ["is", "isNot", "anyOf", "noneOf", "isEmpty", "isNotEmpty"],
-  link: ["is", "isNot", "contains", "notContains", "anyOf", "noneOf", "isEmpty", "isNotEmpty"],
-  date: ["before", "after", "isEmpty", "isNotEmpty"],
-};
-
-export function opsFor(f: { type: ColumnType; valueType?: "date" }): FilterOp[] {
+export function opsFor(f: { type: ColumnType; valueType?: "date" }): readonly FilterOp[] {
   return OPS_BY_KIND[fieldKind(f)];
 }
 
