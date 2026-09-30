@@ -299,3 +299,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* The header copy of the session control hides on phones. */
+@media (max-width: 600px) {
+  .headerOnly {
+    display: none;
+  }
+}

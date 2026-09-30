@@ -47,10 +47,12 @@ export function SessionControl({ compact = false }: { compact?: boolean }) {
     return sessionSuggestions(used).slice(0, 30);
   }, [notes]);
 
+  // The header's copy hides on phones (tech mode and quick-add show their own).
+  const cls = compact ? `${styles.sessionControl} ${styles.headerOnly}` : styles.sessionControl;
   if (!ws.canEdit) {
     if (compact && !current) return null;
     return (
-      <span className={styles.sessionControl} data-testid="session-label">
+      <span className={cls} data-testid="session-label">
         {!compact && "Session:"}
         <span className={styles.sessionValue}>{current ?? "—"}</span>
       </span>
@@ -73,7 +75,7 @@ export function SessionControl({ compact = false }: { compact?: boolean }) {
   };
 
   return (
-    <label className={styles.sessionControl} title="Session: stamped on every new note">
+    <label className={cls} title="Session: stamped on every new note">
       {!compact && "Session"}
       <input
         className={styles.sessionInput}
