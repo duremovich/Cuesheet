@@ -1962,7 +1962,15 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       onDragLeave={onFileDragLeave}
       onDrop={onFileDrop}
     >
-      <div ref={scrollRef} className={styles.scroll} data-testid="grid-scroll">
+      <div
+        ref={scrollRef}
+        className={styles.scroll}
+        data-testid="grid-scroll"
+        // The scroll offset this render laid out rows and the stuck header for. It trails
+        // el.scrollTop until the scroll event has been handled and React has committed, so
+        // tests wait for the two to agree before reading the layout (e2e/grid.spec.ts).
+        data-scroll-offset={Math.round(scrollTop)}
+      >
         <div
           role="row"
           aria-rowindex={1}

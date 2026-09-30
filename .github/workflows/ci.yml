@@ -31,9 +31,15 @@ jobs:
         run: pnpm check
       - name: Install Chromium for Playwright
         run: pnpm exec playwright install --with-deps chromium
+      # 3 workers (playwright.config.ts) on the 4-core runner; the 4th core runs workerd.
+      # One retry for a second trace, but a test that only passes on retry still fails the
+      # run (failOnFlakyTests).
       - name: End-to-end tests
         run: pnpm e2e
-      - uses: actions/upload-artifact@v4
+      # Traces are kept for failed tests only (trace: retain-on-failure) and land in
+      # test-results/; open one with `pnpm exec playwright show-trace <trace.zip>`.
+      - name: Upload Playwright report and traces
+        uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: playwright-report

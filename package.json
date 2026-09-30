@@ -16,6 +16,7 @@
     "format": "biome check --write .",
     "test": "vitest run",
     "e2e": "playwright test",
+    "e2e:stress": "playwright test --repeat-each=3 --workers=6",
     "check": "pnpm typecheck && pnpm lint && pnpm test",
     "db:generate": "drizzle-kit generate --config drizzle.d1.config.ts && drizzle-kit generate --config drizzle.do.config.ts",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",

@@ -20,11 +20,12 @@ import type {
   MutateError,
   MutateResponse,
 } from "../../shared/ops";
+import { sha256Hex } from "../auth/bytes";
 import { requireAuth } from "../auth/middleware";
 import { normalizeEmail } from "../auth/session";
 import { schema } from "../db/d1/client";
 import { RESERVED_KEYS } from "../do/ops-engine";
-import { USER_ID_HEADER } from "../do/ShowDO";
+import { SESSION_ID_HEADER, USER_ID_HEADER } from "../do/ShowDO";
 import { buildAirtableImport, type CsvFile } from "../import/airtable";
 import type { AppEnv } from "../types";
 import * as attachments from "./attachments";
@@ -205,6 +206,8 @@ export const showRoutes = new Hono<ShowEnv>()
   .get("/shows/:id/ws", requireSameOriginUpgrade, requireMembership, async (c) => {
     const headers = new Headers(c.req.raw.headers);
     headers.set(USER_ID_HEADER, c.var.user.id);
+    // So logout can close exactly this browser's sockets (ShowDO.disconnectSession).
+    headers.set(SESSION_ID_HEADER, await sha256Hex(c.var.sessionToken));
     return showStub(c.env, c.var.show.id).fetch(new Request(c.req.raw, { headers }));
   })
 

@@ -28,7 +28,8 @@ new decision record. Build milestone by milestone; don't pull later-milestone fe
 | `pnpm dev` | App + Worker under workerd (applies local D1 migrations first) |
 | `pnpm build` / `pnpm preview` | Production build / serve the built Worker locally |
 | `pnpm check` | typecheck + lint + unit/worker tests. Run before every commit |
-| `pnpm e2e` | Playwright headless (builds and starts its own server on :4317) |
+| `pnpm e2e` | Playwright headless (builds and starts its own server on :4317; `E2E_ORIGIN=http://localhost:<port>` picks another port) |
+| `pnpm e2e:stress` | The e2e suite with each test 3× on 6 workers, for flake hunting (see "E2E reliability") |
 | `pnpm test` | Vitest only (`--project unit`, `--project dom` or `--project worker` to narrow) |
 | `pnpm format` | Biome autofix (formatting + import order) |
 | `pnpm db:generate` | Drizzle SQL migrations for both D1 and the ShowDO |
@@ -189,10 +190,13 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   `ops-engine.ts`) from the role the Worker read on that request, so `/mutate` lets viewers
   through and the engine answers 403 for anything but their own views. Members: `GET/POST /api/shows/:id/members`,
   `PATCH/DELETE .../members/:userId` (owner only; the user must already have an account;
-  the owner can't be changed or removed). Removal and logout call
+  the owner can't be changed or removed). Removal calls
   `ShowDO.disconnectUser(userId)`, which sends `{type:"revoked"}` to that user's sockets
   and closes them with code 4003; `useShowSocket` treats `revoked` as terminal (status
-  `unauthorized`, "No access") and doesn't reconnect.
+  `unauthorized`, "No access") and doesn't reconnect. Logout does the same only to the
+  sockets **that session** opened (`ShowDO.disconnectSession(sessionId)`: the Worker
+  passes the session id, the SHA-256 of the cookie token, and the DO tags each socket
+  `session:<id>`), so the user's other browsers and devices stay live.
 - **Airtable import** (`POST /api/shows/:id/import/airtable`, multipart CSV files; editors
   and owners; 4 MB max). A show that already has rows in any core table gets 409
   `{error:"Show already has data"}` unless the request has `?append=1` (the UI asks for
@@ -217,10 +221,11 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   ("2.0") becomes one current `content_versions` record labelled "V02" (`versionLabel`),
   status Available.
 - **Writing an e2e test.** Add `e2e/<feature>.spec.ts`. Use helpers in `e2e/helpers.ts`
-  (`login`, `createShow`, `uniqueName`). Tests run in parallel against one server whose DB
-  persists for the run, so make data unique (`uniqueName`) and don't assume an empty DB.
-  Prefer role/label locators; use `data-testid` for things without a good accessible name.
-  Use separate `browser.newContext()`s to simulate multiple users.
+  (`login`, `createShow`, `openShow`, `waitForShowReady`, `uniqueName`). Tests run in
+  parallel against one server whose DB persists for the run, so make data unique
+  (`uniqueName`) and don't assume an empty DB. Prefer role/label locators; use
+  `data-testid` for things without a good accessible name. Use separate
+  `browser.newContext()`s to simulate multiple users. Read "E2E reliability" below.
 - **Writing a worker test.** Use `test/worker/helpers.ts` (`api`, `post`, `loginAdmin`,
   `newUser`, `createShow`, `connectDO`, `collect`, `isType`). `api()` adds a same-origin
   `Origin` to non-GET requests like a browser does (the CSRF check needs it on bodyless
@@ -230,6 +235,40 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   with `"rules": { "preset": "recommended" }` (Biome 2.5's replacement for the deprecated
   `recommended: true`). Don't disable rules globally; if you run `biome migrate`, check it
   didn't turn the linter's rules off.
+
+## E2E reliability
+
+The suite runs `fullyParallel` on 3 workers (locally and in CI, 4 cores), 60 s per test,
+5 s per `expect`, traces kept for failures (`test-results/**/trace.zip`). CI retries once
+for a second trace, but `failOnFlakyTests` still fails the run.
+
+- **No sleeps.** Never `waitForTimeout` to let something happen, and never a retry
+  annotation. Wait on a web-first assertion (`toHaveText`, `toHaveAttribute`,
+  `expect.poll`) of the state you need. The only accepted sleep checks that something
+  does *not* happen within a window (no reconnect after "No access"); say so in a comment.
+- **Wait on state attributes, not timing.** The app exposes them: `data-store-status`
+  (`loading`/`ready`/`error`) on `show-workspace` (use `waitForShowReady` / `openShow`),
+  `data-status` / `data-clients` on `presence`, `data-scroll-offset` on `grid-scroll`
+  (the offset the grid last laid out: after setting `scrollTop`, wait for it to match
+  before measuring rows or the stuck header). Missing one? Add it to the component
+  rather than guessing a delay. Presence counts come from server broadcasts that can
+  arrive in either order (an old socket's close after a new one's hello): assert the
+  settled value with a retrying matcher.
+- **Read a layout once, settled.** Don't compute an expected value from the DOM and then
+  assert against a later DOM; wait for the settle signal, then read both from one
+  `evaluate`.
+- **Unique data, fresh contexts.** Every test makes its own show (`uniqueName`) and its own
+  `browser.newContext()` (fresh cookies and localStorage); never rely on another test's
+  data or order. All tests share the one admin user, so never do anything to it that
+  reaches other sessions (a logout only closes its own session's sockets; see "Roles").
+- **Hunting a flake:** `pnpm e2e:stress` (each test 3× on 6 workers), or narrow it:
+  `pnpm exec playwright test e2e/x.spec.ts -g "name" --repeat-each=20 --workers=6`.
+  CPU throttling makes render races show up: `(await page.context().newCDPSession(page))
+  .send("Emulation.setCPUThrottlingRate", {rate: 6})`. Fix the app when the race is in
+  the app.
+- **Parallel runs.** Each run wipes and uses `.wrangler/e2e-state-<port>`. Another run
+  (another checkout) holding :4317? Use `E2E_ORIGIN=http://localhost:4391 pnpm e2e`.
+  Only one run per checkout at a time: runs share `dist/`.
 
 ## Grid
 
