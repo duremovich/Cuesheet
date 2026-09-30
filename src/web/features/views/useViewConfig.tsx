@@ -482,8 +482,12 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
     }
     const rows = keep ? setup.rows.filter(keep) : setup.rows;
     if (useGeneric && groupField) {
-      const g = groupRows(rows, groupField, { keepEmpty: true });
-      return { groups: g.groups, values: g.values };
+      const g = groupRows(rows, groupField, { keepEmpty: !keep });
+      // Filtered: only the groups that have rows (like the tab's own groups above).
+      return {
+        groups: keep ? g.groups.filter((x) => x.rows.length > 0) : g.groups,
+        values: g.values,
+      };
     }
     return { rows };
   }, [useNative, useGeneric, setup.groups, setup.rows, keep, groupField]);

@@ -2,7 +2,7 @@
 // Fields, Row height and Color panels). Focus moves into the panel and is trapped there
 // (Tab cycles); Escape or a click outside closes it and returns focus to the button. Below
 // 600px the panel is a full-width sheet at the bottom of the screen (CSS).
-import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import styles from "./ViewBar.module.css";
 
 const FOCUSABLE =
@@ -42,11 +42,22 @@ export function Popover({
   const setOpenRef = useRef(setOpen);
   setOpenRef.current = setOpen;
 
+  // Keep a panel opened near the right edge on screen (desktop; phones get a sheet).
+  useLayoutEffect(() => {
+    const el = panel.current;
+    if (!open || !el) return;
+    el.style.left = "";
+    if (window.innerWidth <= 600) return;
+    const over = el.getBoundingClientRect().right - (window.innerWidth - 8);
+    if (over > 0) el.style.left = `${-over}px`;
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
+    const body = panel.current?.querySelector<HTMLElement>("[data-pop-body]");
     const first =
-      panel.current?.querySelector<HTMLElement>("[data-autofocus]") ??
-      panel.current?.querySelector<HTMLElement>(FOCUSABLE);
+      body?.querySelector<HTMLElement>("[data-autofocus]") ??
+      body?.querySelector<HTMLElement>(FOCUSABLE);
     (first ?? panel.current)?.focus();
     const onDown = (e: PointerEvent) => {
       const t = e.target as Node;
@@ -122,7 +133,7 @@ export function Popover({
               ×
             </button>
           </div>
-          <div className={styles.popBody}>
+          <div className={styles.popBody} data-pop-body>
             {typeof children === "function" ? children(close) : children}
           </div>
         </div>

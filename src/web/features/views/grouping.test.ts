@@ -85,11 +85,13 @@ describe("groupRows", () => {
 });
 
 describe("filterGroups", () => {
-  it("keeps group identity when nothing is filtered out, and empty groups", () => {
+  it("keeps identity when nothing is filtered out; drops groups left empty", () => {
+    const people = groupRows(rows, assignees).groups;
+    expect(filterGroups(people, () => true)).toBe(people);
     const { groups } = groupRows(rows, status);
-    expect(filterGroups(groups, () => true)).toBe(groups);
-    const open = filterGroups(groups, (r) => r.id !== "4");
-    expect(open.map(ids)).toEqual([["3"], ["1", "5"], [], ["2"]]);
+    const open = filterGroups(groups, (r) => r.id !== "4" && r.id !== "2");
+    expect(open.map((g) => g.title)).toEqual(["No status", "Open"]);
+    expect(open.map(ids)).toEqual([["3"], ["1", "5"]]);
     expect(open[0]).toBe(groups[0]);
   });
 });

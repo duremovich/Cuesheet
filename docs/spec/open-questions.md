@@ -72,8 +72,8 @@ Things the first build had to decide; each is easy to change.
 - **Sort now.** Sorts the whole show by number; unnumbered cues go to the end (after a
   confirmation); section rows stay above the numbered cue that followed them. Not undoable
   yet. Should it sort within each scene instead, keeping scene order?
-- **Live sort scope.** Stored per show in the browser (like column widths and collapsed
-  groups) until saved views (M2). Viewers can use it too (it's only a view setting).
+- **Live sort scope.** Now part of the saved view (M2a). Viewers can use it too (it's a view
+  setting; changing a shared view gives them a personal copy).
 - **Content created from a picker** is named `SSS-NNN-<typed>` (scene number padded to 3
   digits, next free NNN in that scene) unless the typed name already has the prefix or
   the cue has no numeric scene.
@@ -85,6 +85,27 @@ Things the first build had to decide; each is easy to change.
 - **Deletes** from the grid are immediate for one row (multi-row asks first); deleting a
   scene with cues moves its cues to Unassigned (server cascade). Should scene deletes
   always confirm?
+
+## Saved views (M2a decisions to confirm)
+
+- **Who sees personal views.** The snapshot and broadcasts carry every member's personal
+  views (the UI lists only your own). Fine for a small team; filter them per user on the
+  server if they should be private.
+- **Saving.** Personal views save as you change them; a shared view changed by an editor
+  is a draft with Save / Discard (lost on reload). Should editors' changes to shared views
+  save immediately instead (Airtable-style)?
+- **Viewers' copies.** Any change a viewer/commenter makes to a shared view, including a
+  column resize, creates "<name> (mine)". Is a resize too small a reason?
+- **Filters on links match by label** ("Scene is 105 Backstage"): renaming the record
+  breaks the filter. Store ids instead?
+- **Filtered groups.** With a filter on, groups left empty are hidden (the Unassigned group
+  too). "Undo filter" in the "Hidden by the current filter" toast clears all the view's
+  filters, not just the last one.
+- **A table always has a shared view.** The DO recreates the default when a table has no
+  shared view left (the UI won't delete the last one either).
+- **Sorting by a hidden column** is ignored (the grid sorts by visible columns).
+- **Multi-valued grouping** (notes by assignee) groups by the exact combination ("Alice,
+  Bob" is its own group), like Airtable. Should a note appear under each assignee instead?
 
 ## Infrastructure
 

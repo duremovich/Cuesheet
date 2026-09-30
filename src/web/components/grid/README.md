@@ -195,7 +195,10 @@ background (`--option-<color>-bg`, text stays `--color-text`); `cell` rules stac
 wins) and set background + text (`--option-<color>-bg/fg`). Chips keep a faint outline so
 they still read as pills on a row of the same color. Selection and range highlight draw on
 top. Build the rules from a view's saved rule list (field, operator, value) in the data
-layer; keep the array identity stable (`useMemo`).
+layer; keep the array identity stable (`useMemo`). The show's tabs do this with
+`gridColorRules` in `src/web/features/views/evaluate.ts` (saved views, CLAUDE.md "Saved
+views"), which also lays out `columns` (order, hidden, widths, `frozen`) and the `sort`
+from the view.
 
 ## Wiring a real table
 

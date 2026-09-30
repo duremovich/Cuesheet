@@ -111,16 +111,23 @@ export function groupRows<V>(
 
 /**
  * Keep only rows that pass `keep` in each group, preserving group identity when nothing
- * was removed (so the grid doesn't re-render) and keeping empty groups (you can still add
- * to them).
+ * was removed (so the grid doesn't re-render). Groups left without rows are dropped: a
+ * filtered view shows only where its rows are.
  */
 export function filterGroups<V>(groups: readonly Group<V>[], keep: (r: V) => boolean): Group<V>[] {
   let changed = false;
-  const out = groups.map((g) => {
+  const out: Group<V>[] = [];
+  for (const g of groups) {
     const rows = g.rows.filter(keep);
-    if (rows.length === g.rows.length) return g;
-    changed = true;
-    return { ...g, rows };
-  });
+    if (rows.length === 0) {
+      changed = true;
+      continue;
+    }
+    if (rows.length === g.rows.length) out.push(g);
+    else {
+      changed = true;
+      out.push({ ...g, rows });
+    }
+  }
   return changed ? out : (groups as Group<V>[]);
 }
