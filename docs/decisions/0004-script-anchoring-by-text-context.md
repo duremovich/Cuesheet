@@ -1,6 +1,6 @@
 # 0004: Anchor cues in the script by text context, not page position
 
-- **Status:** proposed
+- **Status:** accepted (implemented in M4a; thresholds in CLAUDE.md "Script")
 - **Date:** 2026-09-30
 
 ## Context

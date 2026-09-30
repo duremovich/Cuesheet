@@ -8,6 +8,7 @@ import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import type { Role, ShowMetaDTO } from "../../shared/api";
 import { thumbnailKey } from "../../shared/attachments";
 import type {
+  AnyOp,
   AnyResolvedOp,
   HistoryEntry,
   MutateResponse,
@@ -15,9 +16,12 @@ import type {
 } from "../../shared/ops";
 import {
   type AttachmentRow,
+  type CueAnchorRow,
   DATA_TABLES,
   type FieldOptions,
   isTableName,
+  type ScriptRow,
+  type ScriptVersionRow,
 } from "../../shared/tables";
 import { PING_FRAME, PONG_FRAME, type ServerMessage } from "../../shared/ws";
 import migrations from "../db/do/migrations/migrations.js";
@@ -294,6 +298,86 @@ export class ShowDO extends DurableObject<Env> {
    */
   async setThumbKey(id: string, key: string): Promise<void> {
     this.ctx.storage.sql.exec("UPDATE attachments SET thumb_key = ? WHERE id = ?", key, id);
+  }
+
+  // ---- script (routes/script.ts: the text lives in R2, re-anchoring runs in the Worker) ----
+
+  /**
+   * The show's script and its versions (oldest first), or nulls/empty. Rows without
+   * `custom` (the recursive Json type makes RPC stub types too deep for TypeScript).
+   */
+  async scriptInfo(): Promise<{
+    script: Omit<ScriptRow, "custom"> | null;
+    versions: Omit<ScriptVersionRow, "custom">[];
+  }> {
+    const sql = this.ctx.storage.sql;
+    const script = sql
+      .exec<Record<string, SqlStorageValue>>("SELECT * FROM scripts LIMIT 1")
+      .toArray()[0];
+    const versions = sql
+      .exec<Record<string, SqlStorageValue>>(
+        "SELECT * FROM script_versions ORDER BY position, created_at, id",
+      )
+      .toArray();
+    const plain = <T>(
+      table: "scripts" | "script_versions",
+      row: Record<string, SqlStorageValue>,
+    ) => {
+      const { custom: _c, ...rest } = decodeRow(table, row);
+      return rest as unknown as T;
+    };
+    return {
+      script: script ? plain<Omit<ScriptRow, "custom">>("scripts", script) : null,
+      versions: versions.map((v) => plain<Omit<ScriptVersionRow, "custom">>("script_versions", v)),
+    };
+  }
+
+  /**
+   * Was this id ever a script version (deleted now: its history remains, its text may still
+   * wait in `pending_r2_deletes`)? Such ids aren't reused.
+   */
+  async scriptVersionIdUsed(id: string): Promise<boolean> {
+    const sql = this.ctx.storage.sql;
+    return (
+      sql.exec("SELECT 1 FROM pending_r2_deletes WHERE attachment_id = ? LIMIT 1", id).toArray()
+        .length > 0 ||
+      sql
+        .exec(
+          `SELECT 1 FROM changes WHERE "table" = 'script_versions' AND record_id = ? LIMIT 1`,
+          id,
+        )
+        .toArray().length > 0
+    );
+  }
+
+  /** A version's anchors (without `custom`, as above). */
+  async anchorsOf(versionId: string): Promise<Omit<CueAnchorRow, "custom">[]> {
+    return this.ctx.storage.sql
+      .exec<Record<string, SqlStorageValue>>(
+        "SELECT * FROM cue_anchors WHERE script_version_id = ? ORDER BY created_at, id",
+        versionId,
+      )
+      .toArray()
+      .map((a) => {
+        const { custom: _c, ...rest } = decodeRow("cue_anchors", a);
+        return rest as unknown as Omit<CueAnchorRow, "custom">;
+      });
+  }
+
+  /**
+   * A script route's batch (`ctx.script`): anchors for cues deleted since the Worker read
+   * them are dropped first, in the same synchronous turn as the batch, so a cue deleted
+   * mid-import doesn't fail the import.
+   */
+  async mutateScript(ctx: MutationContext, ops: AnyOp[]): Promise<MutateResult> {
+    const sql = this.ctx.storage.sql;
+    const kept = ops.filter(
+      (op) =>
+        !(op.op === "create" && op.table === "cue_anchors") ||
+        sql.exec("SELECT 1 FROM cues WHERE id = ?", op.fields.cue_id as string).toArray().length >
+          0,
+    );
+    return this.mutate({ ...ctx, script: true }, kept);
   }
 
   /**

@@ -4,6 +4,7 @@ import {
   attachmentUrl,
   checkAttachmentType,
   cleanFilename,
+  DOCX_TYPE,
   exifOrientation,
   formatBytes,
   imageSize,
@@ -31,6 +32,14 @@ describe("attachments (shared)", () => {
       kind: "pdf",
     });
     expect(checkAttachmentType("text/plain", "notes.txt")).toMatchObject({ kind: "text" });
+    // Scripts (R20): Word documents and Markdown.
+    expect(checkAttachmentType(DOCX_TYPE, "Script v4.docx")).toEqual({
+      contentType: DOCX_TYPE,
+      kind: "document",
+    });
+    expect(checkAttachmentType("", "script.docx")).toMatchObject({ contentType: DOCX_TYPE });
+    expect(checkAttachmentType("", "script.md")).toMatchObject({ contentType: "text/markdown" });
+    expect(withExtension("script", DOCX_TYPE)).toBe("script.docx");
     expect(checkAttachmentType("image/heic", "IMG_1.HEIC")).toEqual({
       error: expect.stringMatching(/HEIC/),
     });

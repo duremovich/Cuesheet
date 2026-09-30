@@ -3,7 +3,15 @@
 // Column names are the storage names from docs/spec/data-model.md and match the field specs
 // in src/shared/tables.ts (keep the two in step; see CLAUDE.md "Adding a field").
 // Writes go through the op engine (src/worker/do/ops-engine.ts), not Drizzle.
-import { index, integer, primaryKey, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import {
+  index,
+  integer,
+  primaryKey,
+  real,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 
 /** Single row (id = 1) describing the show this object holds. */
 export const meta = sqliteTable("meta", {
@@ -317,6 +325,82 @@ export const attachments = sqliteTable(
     position: real("position"),
   },
   (t) => [index("attachments_record_idx").on(t.table, t.record_id)],
+);
+
+/**
+ * The show's script (R20; at most one per show, the op engine checks). `current_version_id`
+ * is the version used for Cue.page and printing; deleting it makes the newest other
+ * version current. No foreign key (scripts ↔ versions would be circular); the engine
+ * clears it.
+ */
+export const scripts = sqliteTable("scripts", {
+  ...common(),
+  title: text("title"),
+  current_version_id: text("current_version_id"),
+});
+
+/**
+ * One imported version of the script. The extracted text (a ScriptText, src/shared/script.ts)
+ * is gzipped JSON in R2 at `text_key`, never here (DO rows are capped; scripts are big).
+ * `page_map` (JSON `[{startBlock, page, label}]`) lets the engine derive pages from blocks.
+ * Created only by POST /script/versions; the original file is an attachment
+ * (`script_versions.source_file`) whose id the client then sets in `attachment_id`.
+ */
+export const script_versions = sqliteTable(
+  "script_versions",
+  {
+    ...common(),
+    script_id: text("script_id")
+      .notNull()
+      .references(() => scripts.id, { onDelete: "cascade" }),
+    label: text("label"),
+    attachment_id: text("attachment_id"),
+    imported_at: integer("imported_at"),
+    source: text("source"),
+    confidence: real("confidence"),
+    text_key: text("text_key"),
+    /** Bytes of the gzipped text in R2 (counted in `shows.storage_bytes`). */
+    text_bytes: integer("text_bytes"),
+    block_count: integer("block_count"),
+    page_count: integer("page_count"),
+    page_map: text("page_map").notNull().default("[]"),
+    /** Anchor counts by state after re-anchoring (JSON). */
+    stats: text("stats").notNull().default("{}"),
+    position: real("position"),
+  },
+  (t) => [index("script_versions_script_idx").on(t.script_id)],
+);
+
+/**
+ * Where a cue sits in one script version (decision 0004): block/offset/length in the
+ * version's joined text, the quote and ≤ 32 characters of context either side. `page`
+ * (physical, 1-based) is derived from `block` by the engine. Block/offset/length are null
+ * only for a `missing` anchor. One per cue and version.
+ */
+export const cue_anchors = sqliteTable(
+  "cue_anchors",
+  {
+    ...common(),
+    cue_id: text("cue_id")
+      .notNull()
+      .references(() => cues.id, { onDelete: "cascade" }),
+    script_version_id: text("script_version_id")
+      .notNull()
+      .references(() => script_versions.id, { onDelete: "cascade" }),
+    block: integer("block"),
+    offset: integer("offset"),
+    length: integer("length"),
+    quote: text("quote"),
+    prefix: text("prefix"),
+    suffix: text("suffix"),
+    page: integer("page"),
+    state: text("state"),
+    confidence: real("confidence"),
+  },
+  (t) => [
+    uniqueIndex("cue_anchors_cue_version_idx").on(t.cue_id, t.script_version_id),
+    index("cue_anchors_version_idx").on(t.script_version_id),
+  ],
 );
 
 /**

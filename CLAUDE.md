@@ -5,9 +5,10 @@ data layer: core tables, ops, sync, history, members, Airtable import), M1b (the
 `DataGrid`), M1c (the show workspace: a grid tab per core table on the live store, ⌘K),
 M2a (saved views and conditional formatting), M2b (notes panel, editable row panel with
 history, tech mode, phone quick-add, the show's current session), M3a (content versions,
-attachments in R2 with thumbnails, the gallery layout) and M3b (surfaces, measurement /
-pixel-size / formula fields with unit conversion, the surface calculator) are built. The
-stack is decided in `docs/decisions/0005-cloudflare-platform.md`; don't relitigate it without a
+attachments in R2 with thumbnails, the gallery layout), M3b (surfaces, measurement /
+pixel-size / formula fields with unit conversion, the surface calculator) and
+M4a (the script data model, text extraction and the anchoring engine; see "Script") are
+built. The stack is decided in `docs/decisions/0005-cloudflare-platform.md`; don't relitigate it without a
 new decision record. Build milestone by milestone; don't pull later-milestone features
 (e.g. the cue grid) into an earlier one.
 
@@ -45,7 +46,8 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   `tables.ts` (core table field specs + row types), `ops.ts` (op/resolved-op/snapshot
   types), `order.ts` (order keys), `ids.ts` (UUIDv7), `views.ts` (saved view config type,
   validation, per-table defaults), `units.ts` (lengths and pixel sizes: parse/format),
-  `formula/` (the formula language). No runtime dependencies except
+  `formula/` (the formula language), `script.ts` + `script-anchor/` (script text types and
+  the anchoring engine; see "Script"). No runtime dependencies except
   `fractional-indexing` in `order.ts`, which must run identically on both sides.
 - `src/worker/do/ops-engine.ts`: applies op batches to the ShowDO's SQLite.
   `src/worker/import/airtable.ts`: CSVs → ops.
@@ -60,7 +62,7 @@ Before finishing any task: `pnpm check && pnpm e2e`.
 - Unit tests sit next to the code as `*.test.ts` and run in plain Node. React component
   tests are `*.test.tsx` and run in jsdom (the `dom` project; helpers in `src/web/test/dom.ts`,
   no testing-library).
-- `src/web/pages/dev/`: developer-only pages (`/dev/grid`). Registered via `devRoutes` in
+- `src/web/pages/dev/`: developer-only pages (`/dev/grid`, `/dev/script-extract`). Registered via `devRoutes` in
   `main.tsx`; present in `pnpm dev` and in builds with `VITE_DEV_PAGES=1` (the e2e build sets
   it), and compiled out of production builds along with the example data they embed.
 
@@ -589,7 +591,7 @@ views" below).
 - **Data.** ShowDO table `attachments`: `table`, `record_id`, `field` (default
   "attachments"), `filename`, `content_type`, `size`, `r2_key`, `width`, `height`,
   `thumb_key`, `position`. Which fields exist is `ATTACHMENT_FIELDS` in
-  `src/shared/tables.ts` (`content.attachments`, `notes.attachments`, `surfaces.images`;
+  `src/shared/tables.ts` (`content.attachments`, `notes.attachments`, `surfaces.images`, `script_versions.source_file`;
   field type `attachment`, not a column), plus `custom` (`original_size`, `caption`). Rows
   go through the op engine (history, broadcast), but **only the upload route creates new
   ones** (`MutationContext.upload`; a client `create` gets 403, except a restore, below);
@@ -635,7 +637,7 @@ views" below).
   `Accept-Ranges: bytes`) for video seeking and PDF viewers, `private, immutable` caching, `nosniff`, a sandboxing CSP except for PDFs); `GET
   …/:aid/thumb` the thumbnail; `GET /api/shows/:id/storage` → `{usedBytes, limitBytes}` (Show settings shows
   it). **Types** (`checkAttachmentType` in `src/shared/attachments.ts`): PNG, JPEG, GIF,
-  WebP (thumbnailed), PDF, MP4/MOV, plain text/CSV/Markdown; HEIC gets 415 "export as JPEG
+  WebP (thumbnailed), PDF, MP4/MOV, plain text/CSV/Markdown, Word `.docx` (script sources); HEIC gets 415 "export as JPEG
   or PNG"; SVG/HTML and anything else 415. **R2 keys**: `shows/<showId>/<attachmentId>/
   <filename>`; thumbnail `shows/<showId>/<attachmentId>/__thumb`.
 - **Thumbnails** are made **in the Worker on first request** with Photon
@@ -784,6 +786,131 @@ views" below).
   view's override wins. Projector: throw distance + lens ratio →
   image width, plus the distance / ratio that fills the surface's width. A region shows
   its parent's canvas and its share of it.
+
+## Script (M4a: R20, decisions 0004 and 0007)
+
+- **Model** (`src/shared/script.ts`, DO migration `0006_script`). `scripts` (one per show;
+  the engine refuses a second): `title`, `current_version_id` (used for Cue.page and
+  printing). `script_versions`: `script_id` (cascade), `label`, `attachment_id` (the
+  original file: an attachment on the version's `source_file` field), and server-set
+  `imported_at`, `source` (pdf/docx/txt/ocr), `confidence`, `text_key`, `text_bytes`,
+  `block_count`, `page_count`, `page_map` (`[{startBlock, page, label}]`), `stats`
+  (counts by state right after re-anchoring), plus `position`. `cue_anchors`: `cue_id`
+  and `script_version_id` (both cascade, immutable; unique together), `block`, `offset`,
+  `length`, `quote`, `prefix`, `suffix`, `page` (derived), `state` (select seeded
+  matched/moved/changed/missing/manual), `confidence`. The migration also seeds
+  `cues.status` "Cut" (the resolve screen's Cut).
+- **Where the text lives.** The extracted text of a version (`ScriptText`: `blocks`
+  `{i, page, kind, text}` with 1-based physical pages, `pages` `{page, label}`, `source`,
+  `confidence`, optional `warnings`) is gzipped JSON in R2 at
+  `shows/<showId>/script/<versionId>-<nonce>.json.gz` (`scriptTextKey`; a random nonce per
+  import, so purging a deleted version's text can never hit a live one), **never in
+  SQLite** (rows are capped at 512 KiB; snapshots stay small). `GET /api/shows/:id/script/versions/:vid/text`
+  serves it as plain JSON (immutable, ETag). Its bytes count toward `shows.storage_bytes`;
+  deleting a version queues the text in `pending_r2_deletes` (purged after 24 h, never
+  restorable; `pendingFile` ignores those entries).
+- **Routes** (`routes/script.ts`, registered in `shows.ts`): `POST /script/versions
+  {versionId?, label, text, baseVersionId?, title?, clientId?}` (editors/owner; 8 MB max;
+  the text is re-validated and normalized by `sanitizeScriptText`) stores the text, and in
+  **one batch** (`ShowDO.mutateScript`, which drops anchors for cues deleted meanwhile)
+  creates the script if needed, the version (`MutationContext.script` lets it write the
+  server-set fields; clients get 403 creating versions and 400 writing those fields), makes
+  it **current at once**, and creates one anchor per anchor of the base version (default:
+  the previous current) from re-anchoring, including `missing` ones (position null, the old
+  quote/context kept) → `{scriptId, versionId, baseVersionId, results, stats}` (201).
+  A `versionId` that exists, or was ever a version (history, or text awaiting purge:
+  `ShowDO.scriptVersionIdUsed`), gets 409.
+  `POST /script/versions/:vid/reanchor {baseVersionId}` re-runs it: anchors in state
+  `manual` on the target stay, others are updated or created, `stats` is rewritten
+  (its `manual` count includes the kept ones). The
+  original file: the client uploads it after the POST (`upload-url` with `{table:
+  "script_versions", recordId: versionId, field: "source_file"}`; DOCX, PDF, text and
+  Markdown are allowed types) and sends `update script_versions {attachment_id}` (the
+  engine checks it's that version's own `source_file` file). Client: `api.createScriptVersion`,
+  `api.reanchorScriptVersion`, `api.scriptText`.
+- **Anchors through ops** (editors/owner). The engine doesn't have the text; it checks
+  `block < block_count`, whole `offset`/`length` ≥ 0, confidence 0–1, one anchor per cue and
+  version, and allows `block: null` only for `state: "missing"` (offset/length/page are
+  then nulled). A create without a state is `manual`. `page` is always derived from `block`
+  through `page_map` (a client value is replaced). **Cue.page**: an anchor created/updated
+  on the current version sets its cue's `page` to the page label in the same batch;
+  changing `scripts.current_version_id` re-derives it for every cue anchored in the new
+  current version; deleting the current version makes the newest other version (highest
+  `position`) current. Cues without an anchor there keep their page. Deleting a cue deletes
+  its anchors; deleting a version deletes its anchors and its file; deleting the script
+  deletes everything. `show-state.ts` mirrors all of this optimistically
+  (`scriptFollowUps`).
+- **Anchoring engine** (`src/shared/script-anchor/`, pure, shared by Worker and client).
+  Positions are in a version's **joined text**: block texts joined by one space
+  (`joinBlocks`), so a quote survives reflow. `makeAnchor(text, block, offset, length)`
+  (a selection; quote + ≤ 32 chars of context each side), `makePositionAnchor(text, block)`
+  (LX/timecode/visual cues: the block's first words, ≤ 48 chars), `anchorPosition(text,
+  anchor)` (joined span, page/label, per-block `segments` to underline, `exact`),
+  `suggestSlot(text, {before, after})` (a block for a positional cue from its show-order
+  neighbours' anchors), `diffPages(old, new)` (page statuses same/changed/new, removed
+  pages, blocks inserted/deleted), `reanchor(old, new, [{cueId, anchor}])`, `anchorStats`.
+  **Re-anchoring** (header comment of `reanchor.ts`): the old block's position is
+  predicted in the new text through a patience diff of block texts (`mapBlocks`),
+  interpolated between unchanged blocks; then 1. prefix + quote + suffix exact →
+  `matched` (same printed page label and ≤ 3 blocks from the prediction, `NEAR_BLOCKS`)
+  or `moved`, confidence 1; 2. **cut check**: the anchor's old blocks all unmapped with
+  their unchanged neighbours now adjacent, or prefix and suffix meeting (or both in one
+  block that no longer holds the quote) → `missing`, unless the quote (≥ 4 words,
+  `MIN_MOVE_WORDS`) occurs exactly once elsewhere (then it moved: matched/moved, 0.9);
+  3. quote alone, accepted (matched/moved by place, 0.9) only with one side of the
+  context, or within `NEAR_BLOCKS` of the prediction, or as the sole occurrence of a ≥ 4
+  word quote with no fuzzy match ≥ 0.8 near the prediction (an edited original beats a
+  far exact copy); otherwise `changed` 0.6 (`CONFIDENCE_AMBIGUOUS`) with the occurrences
+  as candidates; 4. prefix and suffix both found around a plausible span → that span,
+  `changed`, confidence = its bigram Dice when ≥ 0.8, else 0.5; 5. fuzzy: bigram Dice
+  within ±15% (`WINDOW`) of the prediction, then everywhere, ranked by score × (1 −
+  0.1·min(1, distance/window)), accepted at ≥ **0.8** (`FUZZY_THRESHOLD`) → `changed`,
+  confidence = the raw score, top-3 `candidates`; 6. one side of the context (≥ 8 chars,
+  the side nearer the prediction) → `changed` 0.5; 7. `missing` (`to: null`, fuzzy
+  candidates even below 0.8). **Never someone else's line**: a span only in new blocks the
+  diff pairs with *other* old blocks is never accepted as an exact or fuzzy match (only
+  listed as a candidate). An anchor with no position (block < 0) searches without a
+  prediction. Regression scenarios from the M4a review: `scenarios.test.ts` (fixture
+  `scene.fixture.ts`). `normalizeText` (NFKC, curly
+  quotes/primes → straight, all dashes → "-", zero-width/soft hyphens removed, whitespace
+  collapsed) is applied to every block at extraction and to quotes when matching.
+  Performance: nominal target 1,500 blocks × 150 anchors < 300 ms; measured ≈ 5–10 ms when
+  lines are unchanged, 100–200 ms when every anchor needs the fuzzy search or is cut. The
+  test runs on cold texts (joining and tokenizing included) and asserts < 600 ms with
+  `retry: 2`, so a loaded CI machine doesn't fail it.
+- **Extraction** (`src/web/features/script/extract/`, browser; no UI: M4b's dialog calls
+  it). `extractScript(file, {pdfjs?})` → ScriptText, or `ScriptExtractError` with `code`
+  `unsupported` / `unreadable` (damaged, password) / `no-text-layer` (a scan: no OCR yet) /
+  `empty`, and a message for the user. **PDF** (`pdf.ts`; pdf.js's **legacy build**
+  `pdfjs-dist/legacy/build/pdf.mjs` and its worker are lazy chunks, `?url` for the worker;
+  unit tests pass the same build under Node): items → lines (same baseline, split at gaps
+  over 4 font sizes) → the first margin line (top/bottom 8%) on a page that reads as a page
+  number becomes its label (`pageLabelOf`: "14", "14a", "- 14 -", "Page 14", "I-3-14",
+  roman; later ones stay text), margin lines repeated on half the pages are dropped as
+  running headers → blocks (new block on a gap > 1.45 × median line spacing, an indent
+  change, and around headings, character names and parentheticals) → kinds
+  (`classifyBlocks`: heading = the whole line ("ACT ONE", "SCENE 3: THE TRAIN", "No. 4 -
+  VAMP"; no lowercase words after the keyword); character = a short caps name followed by
+  a paragraph that isn't all caps, or by a caps (sung) line when the name itself doesn't
+  look sung (`looksLikeLyric`: apostrophes, hyphens, OH/LA/…); direction = parenthesized /
+  bracketed or ≥ 60% italic by font name; dialogue after a name (lyric when shouty or caps
+  that look sung); caps that look sung elsewhere → lyric; else other); confidence = share
+  of pages with text. **DOCX** (`docx.ts`, JSZip imported lazily + regex tokenizer, no
+  DOM): text boxes (`w:txbxContent`, nested, and `mc:Fallback` copies) are stripped first;
+  paragraph style names → kinds; Word's `lastRenderedPageBreak`s → pages (else hard page
+  breaks, including one at the end of a paragraph; else 40 blocks a page with a warning,
+  `FALLBACK_BLOCKS_PER_PAGE`). **TXT/MD** (`text.ts`): blank-line paragraphs, a
+  character name on a paragraph's first line splits off, `--- page 14 ---` markers (label
+  after "page") or form feeds, else 40 a page with a warning; Markdown `#` headings and
+  `*italic*` lines (directions). Fixtures are generated in `extract.test.ts` (pdf-lib, JSZip).
+- **Tests**: `src/shared/script-anchor/reanchor.test.ts` (engine; synthetic scripts in
+  `testing.ts`) and `scenarios.test.ts` (review regressions),
+  `src/web/features/script/extract/extract.test.ts`,
+  `src/web/lib/show-state-script.test.ts`, `test/worker/script.test.ts`,
+  `e2e/script-import.spec.ts` (API import of `e2e/fixtures/script.txt`) and
+  `e2e/script-extract.spec.ts`: **extraction in Chromium** through the dev page
+  `/dev/script-extract` (`pages/dev/ScriptExtractDevPage.tsx`: pick a file, see the
+  ScriptText as JSON), a generated PDF (pdf.js + worker, running header, labels) and DOCX.
 
 ## Theme and colors
 

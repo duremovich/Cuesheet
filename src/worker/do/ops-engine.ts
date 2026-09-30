@@ -18,6 +18,13 @@ import type {
 } from "../../shared/ops";
 import { effectivePlacement, orderKeyFor, PlacementError } from "../../shared/order";
 import {
+  isPageMap,
+  type PageMapEntry,
+  pageForBlock,
+  SCRIPT_SOURCE_FIELD,
+  SCRIPT_SOURCES,
+} from "../../shared/script";
+import {
   ATTACHMENT_FIELDS,
   DATA_TABLES,
   type DataTableName,
@@ -56,6 +63,11 @@ export interface MutationContext {
    * Clients can't, except to restore a deleted one (Undo) whose file is still kept.
    */
   upload?: boolean;
+  /**
+   * The script routes only (routes/script.ts): may create `script_versions` rows and write
+   * their server-set fields (text key, counts, page map, stats).
+   */
+  script?: boolean;
 }
 
 /** How long a deleted attachment's R2 objects are kept (for Undo) before the alarm purges them. */
@@ -603,6 +615,9 @@ export class Batch {
 
   private create(table: TableName, id: string, requested: FieldValues, placement: Placement) {
     let fields = requested;
+    if (table === "script_versions" && !this.ctx.script) {
+      this.fail("Script versions are created by importing a script", 403);
+    }
     const restoring = table === "attachments" && !this.ctx.upload ? this.pendingFile(id) : null;
     if (table === "attachments" && !this.ctx.upload) {
       if (!restoring) this.fail("Files are attached by uploading them", 403);
@@ -629,7 +644,7 @@ export class Batch {
       } else {
         const spec = fieldSpec(table, name);
         if (!spec) this.fail(`unknown field ${table}.${name}`);
-        row[name] = this.validate(table, name, spec, value, table === "attachments");
+        row[name] = this.validate(table, name, spec, value, this.allowAuto(table));
       }
     }
     if (table === "attachments") {
@@ -637,6 +652,9 @@ export class Batch {
       this.prepareAttachment(row);
     }
     if (table === "content_versions") this.prepareVersion(row);
+    if (table === "scripts") this.prepareScript(id, row, true);
+    if (table === "script_versions") this.prepareScriptVersion(id, row, true);
+    if (table === "cue_anchors") this.prepareAnchor(row, true);
     if (table === "surfaces") this.checkParent(id, row.parent_id);
     if (table === "views") {
       if (!isDataTable(row.table)) this.fail("views.table is required");
@@ -680,6 +698,141 @@ export class Batch {
       this.afterViewWrite(id);
     }
     if (table === "content_versions") this.afterVersionWrite(id);
+    if (table === "cue_anchors") this.syncCuePage(row);
+  }
+
+  /**
+   * Server-set fields a create may carry: attachments (the upload route, or a restore
+   * rebuilt from the stored row) and the script route's versions. Updates: only the latter.
+   */
+  private allowAuto(table: TableName): boolean {
+    return table === "attachments" || (table === "script_versions" && !!this.ctx.script);
+  }
+
+  // ---- script (R20; src/shared/script.ts, routes/script.ts) ----
+
+  /** One script per show; its current version must be one of its own. */
+  private prepareScript(id: string, row: WireRow, creating: boolean): void {
+    if (creating) {
+      const other = this.sql.exec("SELECT 1 FROM scripts WHERE id != ? LIMIT 1", id).toArray();
+      if (other.length > 0) this.fail("The show already has a script");
+    }
+    const v = row.current_version_id;
+    if (typeof v === "string" && this.getRow("script_versions", v)?.script_id !== id) {
+      this.fail("scripts.current_version_id must be a version of this script");
+    }
+  }
+
+  /**
+   * A version's server-set fields are well-formed (the route computed them); its
+   * `attachment_id` must be the version's own `source_file` upload.
+   */
+  private prepareScriptVersion(id: string, row: WireRow, creating: boolean): void {
+    if (creating) {
+      if (typeof row.text_key !== "string") this.fail("script_versions.text_key is required");
+      if (!isPageMap(row.page_map)) this.fail("script_versions.page_map is malformed");
+      if (!Number.isInteger(row.block_count) || (row.block_count as number) < 1) {
+        this.fail("script_versions.block_count must be a positive whole number");
+      }
+      if (
+        typeof row.source !== "string" ||
+        !(SCRIPT_SOURCES as readonly string[]).includes(row.source)
+      ) {
+        this.fail(`script_versions.source must be one of ${SCRIPT_SOURCES.join(", ")}`);
+      }
+      if (row.imported_at === null) row.imported_at = this.now;
+      if (row.position === null) {
+        const { p } = this.sql
+          .exec<{ p: number | null }>(
+            "SELECT max(position) AS p FROM script_versions WHERE script_id = ?",
+            row.script_id as string,
+          )
+          .one();
+        row.position = (p ?? 0) + 1;
+      }
+    } else if ("page_map" in row && !isPageMap(row.page_map)) {
+      this.fail("script_versions.page_map is malformed");
+    }
+    const a = row.attachment_id;
+    if (typeof a === "string") {
+      const file = this.getRow("attachments", a);
+      if (
+        file?.table !== "script_versions" ||
+        file.record_id !== id ||
+        file.field !== SCRIPT_SOURCE_FIELD
+      ) {
+        this.fail("script_versions.attachment_id must be a file uploaded to this version");
+      }
+    }
+  }
+
+  /**
+   * Anchor checks (the DO doesn't have the text; the client's engine checked the rest):
+   * one per cue and version; block < the version's block_count; offset/length ≥ 0 (by
+   * the field specs); no position only for a "missing" anchor. `page` is derived from the
+   * block through the version's page map. Mutates `row` (the full row: create, or the
+   * merged row of an update).
+   */
+  private prepareAnchor(row: WireRow, creating: boolean): void {
+    const version = this.mustGet("script_versions", row.script_version_id as string);
+    if (creating) {
+      const dup = this.sql
+        .exec(
+          "SELECT 1 FROM cue_anchors WHERE cue_id = ? AND script_version_id = ?",
+          row.cue_id as string,
+          row.script_version_id as string,
+        )
+        .toArray();
+      if (dup.length > 0) this.fail("That cue already has an anchor in this script version");
+      if (row.state === null) row.state = "manual";
+    }
+    if (row.block === null) {
+      if (row.state !== "missing") {
+        this.fail('cue_anchors.block is required unless the anchor is "missing"');
+      }
+      row.offset = null;
+      row.length = null;
+      row.page = null;
+      return;
+    }
+    const count = Number(version.block_count ?? 0);
+    if ((row.block as number) >= count) {
+      this.fail(`cue_anchors.block must be less than ${count} (the version's block count)`);
+    }
+    if (row.offset === null) row.offset = 0;
+    if (row.length === null) row.length = 0;
+    const map = parseJson<PageMapEntry[]>(version.page_map, []);
+    row.page = pageForBlock(map, row.block as number)?.page ?? null;
+  }
+
+  /** The page label of an anchor, when its version is the script's current one. */
+  private currentPageLabel(anchor: Record<string, unknown>): string | null {
+    if (typeof anchor.block !== "number") return null;
+    const version = this.getRow("script_versions", anchor.script_version_id as string);
+    if (!version) return null;
+    const script = this.getRow("scripts", version.script_id as string);
+    if (script?.current_version_id !== version.id) return null;
+    const map = parseJson<PageMapEntry[]>(version.page_map, []);
+    return pageForBlock(map, anchor.block)?.label ?? null;
+  }
+
+  /** Cue.page follows an anchor on the current version (data-model.md §Cue). */
+  private syncCuePage(anchor: WireRow | DbRow): void {
+    const label = this.currentPageLabel(anchor);
+    if (label === null) return;
+    const cue = this.getRow("cues", anchor.cue_id as string);
+    if (cue && cue.page !== label) this.write("cues", cue.id as string, cue, { page: label });
+  }
+
+  /** The current version changed: every cue anchored in it takes its page from there. */
+  private syncCuePages(versionId: string): void {
+    const anchors = this.sql
+      .exec<DbRow>(
+        "SELECT * FROM cue_anchors WHERE script_version_id = ? AND block IS NOT NULL ORDER BY id",
+        versionId,
+      )
+      .toArray();
+    for (const a of anchors) this.syncCuePage(a);
   }
 
   /**
@@ -692,6 +845,8 @@ export class Batch {
       .toArray()[0];
     if (!found) return null;
     const stored = parseJson<Record<string, unknown>>(found.row, {});
+    // Only attachments can come back (a script version's text is purged, never restored).
+    if (typeof stored.record_id !== "string") return null;
     const out: FieldValues = {};
     for (const k of Object.keys(FIELDS.attachments)) if (k in stored) out[k] = stored[k];
     if (isPlainObject(stored.custom)) out.custom = stored.custom;
@@ -861,8 +1016,22 @@ export class Batch {
         if (spec.immutable && !sameValue(decodeRow(table, before)[name], value)) {
           this.fail(`${table}.${name} can't be changed`);
         }
-        changes[name] = this.validate(table, name, spec, value);
+        changes[name] = this.validate(
+          table,
+          name,
+          spec,
+          value,
+          table === "script_versions" && !!this.ctx.script,
+        );
       }
+    }
+    if (table === "scripts") this.prepareScript(id, changes, false);
+    if (table === "script_versions") this.prepareScriptVersion(id, changes, false);
+    if (table === "cue_anchors") {
+      // Checked on the row as it will be; the derived page (and cleared position) join the changes.
+      const merged = { ...decodeRow(table, before), ...changes };
+      this.prepareAnchor(merged, false);
+      for (const k of ["block", "offset", "length", "page"]) changes[k] = merged[k];
     }
     if (table === "views" && "config" in changes) {
       changes.config = this.sanitizeConfig(before.table as DataTableName, changes.config);
@@ -877,6 +1046,14 @@ export class Batch {
     this.write(table, id, before, changes);
     if (table === "views") this.afterViewWrite(id);
     if (table === "content_versions") this.afterVersionWrite(id);
+    if (table === "cue_anchors") this.syncCuePage(this.mustGet("cue_anchors", id));
+    if (
+      table === "scripts" &&
+      typeof changes.current_version_id === "string" &&
+      changes.current_version_id !== before.current_version_id
+    ) {
+      this.syncCuePages(changes.current_version_id);
+    }
     if (successor)
       this.write("content_versions", successor.id as string, successor, { is_current: true });
   }
@@ -908,8 +1085,29 @@ export class Batch {
     const before = this.mustGet(table, id);
     this.noteViewOwner(table, id, before);
     this.checkRole(table, before);
+    const currentOf =
+      table === "script_versions"
+        ? this.sql
+            .exec<DbRow>("SELECT * FROM scripts WHERE current_version_id = ?", id)
+            .toArray()[0]
+        : undefined;
     this.remove(table, id, before);
     if (table === "content_versions") this.afterVersionDelete(before);
+    if (currentOf) this.afterScriptVersionDelete(currentOf.id as string);
+  }
+
+  /** The current script version was deleted: the newest remaining one becomes current. */
+  private afterScriptVersionDelete(scriptId: string): void {
+    const script = this.getRow("scripts", scriptId);
+    const next = this.sql
+      .exec<DbRow>(
+        "SELECT * FROM script_versions WHERE script_id = ? ORDER BY position DESC, created_at DESC, id DESC LIMIT 1",
+        scriptId,
+      )
+      .toArray()[0];
+    if (!script || !next) return;
+    this.write("scripts", scriptId, script, { current_version_id: next.id });
+    this.syncCuePages(next.id as string);
   }
 
   /**
@@ -979,6 +1177,19 @@ export class Batch {
         Number(before.size) || 0,
         this.now,
         JSON.stringify(decodeRow("attachments", before)),
+      );
+      this.filesDeleted++;
+    }
+    if (table === "script_versions" && typeof before.text_key === "string") {
+      // The extracted text in R2 goes with the same delay (nothing restores it, but the
+      // purge also gives its bytes back to the show's storage count).
+      this.sql.exec(
+        "INSERT OR REPLACE INTO pending_r2_deletes (attachment_id, r2_key, size, deleted_at, row) VALUES (?, ?, ?, ?, ?)",
+        id,
+        before.text_key,
+        Number(before.text_bytes) || 0,
+        this.now,
+        JSON.stringify({ script_version_id: id }),
       );
       this.filesDeleted++;
     }
