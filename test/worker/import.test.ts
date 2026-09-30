@@ -106,9 +106,9 @@ describe("Airtable import", () => {
     expect(cue1420?.scene_id).toBe(scene105?.id);
     expect(vamp?.scene_id).toBe(scene105?.id);
     // Its assignee isn't in Personnel, so the importer created that person.
-    const mark = persons.find((p) => p.name === "Morgan Ellis");
-    expect(mark).toMatchObject({ group: null, email: null });
-    expect(snap.joins.cueAssignees[cue1420?.id ?? ""]).toEqual([mark?.id]);
+    const morgan = persons.find((p) => p.name === "Morgan Ellis");
+    expect(morgan).toMatchObject({ group: null, email: null });
+    expect(snap.joins.cueAssignees[cue1420?.id ?? ""]).toEqual([morgan?.id]);
     expect(persons.filter((p) => p.name === "Morgan Ellis")).toHaveLength(1);
 
     // 2.10 has no content; the cues around it are both in the Overture, so it is too.
@@ -141,9 +141,9 @@ describe("Airtable import", () => {
 
     // Select values map case-insensitively; Cast → person group.
     expect(cues.find((c) => c.number === "1.00")?.status).toBe("Cued");
-    expect(persons.find((p) => p.name === "[removed]")?.group).toBe("Cast");
-    expect(persons.find((p) => p.name === "[removed]")?.email).toBe(
-      "[removed]",
+    expect(persons.find((p) => p.name === "Jamie Petrova")?.group).toBe("Cast");
+    expect(persons.find((p) => p.name === "Quinn Weller")?.email).toBe(
+      "quinn.weller@example.com",
     );
     const multiType = noteRows.find((n) => n.type.length === 2);
     expect(multiType?.type).toEqual(["Stage Management", "Content"]);
