@@ -79,7 +79,13 @@ interface Snap {
     cues: { id: string; number: string | null }[];
     content: { id: string; name: string | null }[];
     content_versions: { id: string; content_id: string; version: string; is_current: boolean }[];
-    attachments: { id: string; table: string; record_id: string; filename: string }[];
+    attachments: {
+      id: string;
+      table: string;
+      record_id: string;
+      filename: string;
+      custom: Record<string, unknown>;
+    }[];
     notes: { id: string; body: string | null }[];
   };
   joins: { cueContent: Record<string, string[]> };
@@ -274,10 +280,30 @@ test("attachments: drop a PNG on the content cell, thumbnails everywhere, lightb
   await field.getByRole("button", { name: "Move vamp-alt.png later" }).click();
   await expect(field.getByTestId("attachment").first()).toContainText("vamp-still.png");
 
+  // Images show full width in the panel with an editable caption (the file name until set).
+  await expectLoaded(field.getByTestId("attachment-image").first());
+  const caption = field.getByRole("textbox", { name: "Caption for vamp-still.png" });
+  await expect(caption).toHaveValue("vamp-still.png");
+  await caption.fill("Vamp, act one");
+  await caption.press("Enter");
+  await expect
+    .poll(async () => {
+      const a = (await snap(page, showId)).tables.attachments.find(
+        (f) => f.filename === "vamp-still.png",
+      );
+      return a?.custom;
+    })
+    .toMatchObject({ caption: "Vamp, act one" });
+  // Escape reverts a caption being typed.
+  await caption.fill("nope");
+  await caption.press("Escape");
+  await expect(caption).toHaveValue("Vamp, act one");
+
   // Lightbox from the grid: prev / next with the arrow keys and buttons.
   await cell.getByRole("button", { name: "Open vamp-still.png" }).click();
   const lightbox = page.getByTestId("lightbox");
   await expect(lightbox.getByTestId("lightbox-filename")).toHaveText("vamp-still.png");
+  await expect(lightbox.getByTestId("lightbox-caption")).toHaveText("Vamp, act one");
   await expect(lightbox.getByTestId("lightbox-count")).toContainText("1 / 2");
   await expectLoaded(lightbox.getByTestId("lightbox-image"));
   await page.keyboard.press("ArrowRight");
@@ -410,7 +436,7 @@ test("gallery: the view toggle shows cards with the image; preset view; 390 px h
   await page.goto(`/shows/${showId}/content?content=${vampId}`);
   const vamp = gallery.locator(`[data-card-id="${vampId}"]`);
   await expect(vamp).toBeFocused();
-  await expectLoaded(vamp.getByTestId("gallery-image"));
+  await expectLoaded(vamp.getByTestId("gallery-image").locator("img"));
   await expect(vamp).toContainText("105-001-VAMP");
   // Cards without an image show their name as a placeholder; keyboard moves between cards.
   await vamp.click();
@@ -456,6 +482,37 @@ test("gallery: the view toggle shows cards with the image; preset view; 390 px h
     () => document.documentElement.scrollWidth > window.innerWidth,
   );
   expect(overflow).toBe(false);
+});
+
+test("surfaces: images on a surface, in its panel and the Surface gallery", async ({ browser }) => {
+  const page = await newPage(browser);
+  const showId = await apiCreateShow(page, uniqueName("Surface images"));
+  await importExamples(page, showId, ["Surfaces-Gallery.csv"]);
+  const surfaces = (
+    (await (await page.request.get(`/api/shows/${showId}/snapshot`)).json()) as {
+      tables: { surfaces: { id: string; name: string | null }[] };
+    }
+  ).tables.surfaces;
+  const surface = surfaces[0];
+  if (!surface) throw new Error("no surfaces");
+  await page.goto(`/shows/${showId}/surfaces?surface=${surface.id}`);
+  const row = page
+    .getByRole("grid", { name: "Surface list" })
+    .locator(`[data-row-id="${surface.id}"]`);
+  const cell = row.locator('[data-col="images"]');
+  await expect(cell).toBeVisible();
+  await dropFiles(cell, [{ name: "wall.png", type: "image/png", bytes: RED }]);
+  await expectLoaded(cell.getByTestId("thumb").locator("img"));
+  await row.locator('[data-col="name"]').click();
+  await page.keyboard.press("Space");
+  const field = page.getByTestId("row-panel").getByTestId("attachments-field");
+  await expectLoaded(field.getByTestId("attachment-image"));
+  await page.keyboard.press("Escape");
+  await page.getByTestId("view-switcher").click();
+  await page.getByRole("button", { name: "+ Surface gallery" }).click();
+  await expect(page.getByTestId("current-view")).toHaveText("Surface gallery");
+  const card = page.getByTestId("gallery").locator(`[data-card-id="${surface.id}"]`);
+  await expectLoaded(card.getByTestId("gallery-image").locator("img"));
 });
 
 test("notes: paste an image into the compose box; it's attached once the note is saved", async ({
@@ -520,6 +577,33 @@ test("quick add: the camera input attaches a photo to the saved note", async ({ 
       return s.tables.attachments.filter((a) => a.record_id === n?.id).map((a) => a.filename);
     })
     .toEqual(["photo.png"]);
+});
+
+test("quick add: a photo alone is a note; HEIC is refused before saving", async ({ browser }) => {
+  const { page, showId, cueId } = await exampleShow(browser);
+  const phone = await newPage(browser, { width: 390, height: 844 });
+  await phone.goto(`/shows/${showId}/quick?cue=${cueId}`);
+  const add = phone.getByRole("button", { name: "Add note" });
+  await expect(add).toBeDisabled();
+  const camera = phone.getByTestId("camera-input");
+  await camera.setInputFiles({ name: "IMG_1.heic", mimeType: "image/heic", buffer: RED });
+  await expect(phone.getByTestId("compose-error")).toContainText(/IMG_1\.heic/);
+  await expect(phone.getByTestId("pending-file")).toHaveCount(0);
+  await expect(add).toBeDisabled();
+  await camera.setInputFiles({ name: "only.png", mimeType: "image/png", buffer: BLUE });
+  await expect(phone.getByTestId("pending-file")).toHaveText(/only\.png/);
+  await expect(add).toBeEnabled();
+  await add.click();
+  await expect(phone.getByRole("status").filter({ hasText: /Saved to Cue/ })).toBeVisible();
+  await expect
+    .poll(async () => {
+      const s = await snap(page, showId);
+      const ids = new Set(
+        s.tables.attachments.filter((a) => a.filename === "only.png").map((a) => a.record_id),
+      );
+      return s.tables.notes.filter((n) => ids.has(n.id)).map((n) => n.body);
+    })
+    .toEqual([null]);
 });
 
 test("roles: viewers see and download but can't upload; commenters attach to their own notes only", async ({

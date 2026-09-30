@@ -45,6 +45,12 @@ interface Entry {
   file: File;
   ready: Promise<unknown>;
   started: boolean;
+  /** Settles once this file is reserved (or has failed): the next one reserves after it. */
+  reserved: Promise<void>;
+  settleReserved: () => void;
+  /** The previous file's `reserved`: reserving in the order files were added keeps a
+   * multi-file drop in order (the server hands out positions at reserve time). */
+  after: Promise<void>;
 }
 
 let seq = 0;
@@ -55,6 +61,7 @@ export class UploadQueue {
   private entries: Entry[] = [];
   private listeners = new Set<Listener>();
   private active = 0;
+  private lastReserved: Promise<void> = Promise.resolve();
   /** Snapshot of the items (a new array on every change). */
   private items: UploadItem[] = [];
 
@@ -97,10 +104,27 @@ export class UploadQueue {
       };
       const type = checkAttachmentType(file.type, item.filename);
       if ("error" in type) Object.assign(item, { status: "error", error: type.error });
-      else if (file.size > MAX_ATTACHMENT_BYTES && !this.opts.prepare) {
+      else if (file.size === 0) {
+        Object.assign(item, { status: "error", error: `${item.filename} is empty` });
+      } else if (file.size > MAX_ATTACHMENT_BYTES && !this.opts.prepare) {
         Object.assign(item, { status: "error", error: tooBig(item.filename) });
       }
-      this.entries.push({ item, file, ready, started: item.status === "error" });
+      let settleReserved = () => {};
+      const reserved = new Promise<void>((r) => {
+        settleReserved = r;
+      });
+      const after = this.lastReserved;
+      if (item.status === "error") settleReserved();
+      else this.lastReserved = reserved;
+      this.entries.push({
+        item,
+        file,
+        ready,
+        started: item.status === "error",
+        reserved,
+        settleReserved,
+        after,
+      });
       added.push(item);
       if (item.status === "error") this.opts.onError?.(item);
     }
@@ -167,6 +191,7 @@ export class UploadQueue {
         : { file: entry.file as Blob };
       if (prepared.file.size > MAX_ATTACHMENT_BYTES) throw new Error(tooBig(item.filename));
       if (prepared.file.size !== item.size) this.update(entry, { size: prepared.file.size });
+      await entry.after;
       const reserved = await this.transport.reserve(item.showId, {
         table: item.target.table,
         recordId: item.target.recordId,
@@ -176,12 +201,14 @@ export class UploadQueue {
         size: prepared.file.size,
         ...(prepared.originalSize ? { originalSize: prepared.originalSize } : {}),
       });
+      entry.settleReserved();
       await this.transport.put(reserved.uploadUrl, prepared.file, reserved.contentType, (loaded) =>
         this.update(entry, { loaded }),
       );
       this.entries = this.entries.filter((e) => e !== entry);
       this.changed();
     } catch (e) {
+      entry.settleReserved();
       this.update(entry, {
         status: "error",
         error: e instanceof Error ? e.message : String(e),

@@ -331,6 +331,8 @@ export const pending_r2_deletes = sqliteTable(
     r2_key: text("r2_key").notNull(),
     size: integer("size").notNull(),
     deleted_at: integer("deleted_at").notNull(),
+    /** The deleted row (JSON, as stored): a restore recreates exactly this. */
+    row: text("row").notNull(),
   },
   (t) => [index("pending_r2_deletes_at_idx").on(t.deleted_at)],
 );

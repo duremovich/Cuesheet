@@ -174,4 +174,40 @@ describe("content versions", () => {
     }
     ok(await stub.mutate(ctx("owner", "u-owner"), [version(newId(), content)]));
   });
+
+  it("un-currenting the current version hands it to the newest other one; the only one stays", async () => {
+    const stub = await freshShow();
+    const content = newId();
+    const [v1, v2, v3] = [newId(), newId(), newId()];
+    ok(
+      await stub.mutate(ctx(), [
+        { op: "create", table: "content", id: content, fields: {} },
+        version(v1, content, { version: "V01" }),
+      ]),
+    );
+    const only = await stub.mutate(ctx(), [
+      { op: "update", table: "content_versions", id: v1, fields: { is_current: false } },
+    ]);
+    expect(only).toMatchObject({
+      ok: false,
+      status: 400,
+      error: expect.stringMatching(/stays current/),
+    });
+    ok(
+      await stub.mutate(ctx(), [
+        version(v2, content, { version: "V02" }),
+        version(v3, content, { version: "V03" }),
+      ]),
+    );
+    ok(
+      await stub.mutate(ctx(), [
+        { op: "update", table: "content_versions", id: v1, fields: { is_current: false } },
+      ]),
+    );
+    expect((await versions(stub, content)).map((v) => [v.version, v.current])).toEqual([
+      ["V01", false],
+      ["V02", false],
+      ["V03", true],
+    ]);
+  });
 });

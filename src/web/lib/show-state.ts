@@ -220,6 +220,25 @@ function versionFollowUps(data: ShowData, op: Op, ctx: LocalContext): ResolvedOp
   const stamp = { updated_at: ctx.now, updated_by: ctx.userId };
   const versions = data.tables.content_versions;
   const v = versions.get(op.id);
+  if (v && !v.is_current && op.op === "update" && op.fields.is_current === false) {
+    // Un-currented: the newest other version takes over (the server refuses it when
+    // there's no other).
+    const others = [...versions.values()].filter(
+      (o) => o.id !== v.id && o.content_id === v.content_id,
+    );
+    if (others.some((o) => o.is_current)) return [];
+    const next = others.sort((a, b) => compareVersionAge(b, a))[0];
+    return next
+      ? [
+          {
+            op: "update",
+            table: "content_versions",
+            id: next.id,
+            fields: { is_current: true, ...stamp },
+          },
+        ]
+      : [];
+  }
   if (!v?.is_current) return [];
   const out: ResolvedOp[] = [];
   for (const o of versions.values()) {

@@ -4,12 +4,14 @@ import {
   attachmentUrl,
   checkAttachmentType,
   cleanFilename,
+  exifOrientation,
   formatBytes,
   imageSize,
   MAX_DECODE_PIXELS,
   resizeTarget,
   thumbnailKey,
   thumbnailUrl,
+  withExtension,
 } from "./attachments";
 
 describe("attachments (shared)", () => {
@@ -102,5 +104,107 @@ describe("attachments (shared)", () => {
     const square = resizeTarget(6000, 6000) as { width: number; height: number };
     expect(square.width * square.height).toBeLessThanOrEqual(MAX_DECODE_PIXELS);
     expect(Math.max(square.width, square.height)).toBeLessThanOrEqual(4096);
+  });
+
+  it("strips bidi controls from names; extensions match the stored type", () => {
+    expect(cleanFilename("photo\u202egpj.exe")).toBe("photogpj.exe");
+    expect(cleanFilename("\u2066a\u2069.png")).toBe("a.png");
+    expect(withExtension("photo", "image/jpeg")).toBe("photo.jpg");
+    expect(withExtension("photo.JPEG", "image/jpeg")).toBe("photo.JPEG");
+    expect(withExtension("notes.exe", "text/plain")).toBe("notes.exe.txt");
+    expect(withExtension("clip.m4v", "video/mp4")).toBe("clip.m4v");
+    expect(withExtension("x.bin", "application/unknown")).toBe("x.bin");
+  });
+
+  it("reads EXIF orientation from JPEGs: quarter turns swap the size", () => {
+    const jpeg = (orientation: number, le = false) => {
+      const tiff = le
+        ? [
+            0x49,
+            0x49,
+            0x2a,
+            0x00,
+            0x08,
+            0x00,
+            0x00,
+            0x00,
+            0x01,
+            0x00,
+            0x12,
+            0x01,
+            0x03,
+            0x00,
+            0x01,
+            0x00,
+            0x00,
+            0x00,
+            orientation,
+            0x00,
+            0x00,
+            0x00,
+            0,
+            0,
+            0,
+            0,
+          ]
+        : [
+            0x4d,
+            0x4d,
+            0x00,
+            0x2a,
+            0x00,
+            0x00,
+            0x00,
+            0x08,
+            0x00,
+            0x01,
+            0x01,
+            0x12,
+            0x00,
+            0x03,
+            0x00,
+            0x00,
+            0x00,
+            0x01,
+            0x00,
+            orientation,
+            0x00,
+            0x00,
+            0,
+            0,
+            0,
+            0,
+          ];
+      const payload = [0x45, 0x78, 0x69, 0x66, 0, 0, ...tiff];
+      const len = payload.length + 2;
+      return new Uint8Array([
+        0xff,
+        0xd8,
+        0xff,
+        0xe1,
+        len >> 8,
+        len & 0xff,
+        ...payload,
+        // SOF0: height 400, width 800.
+        0xff,
+        0xc0,
+        0x00,
+        0x11,
+        0x08,
+        0x01,
+        0x90,
+        0x03,
+        0x20,
+        0x03,
+        0x01,
+        0x22,
+        0x00,
+      ]);
+    };
+    expect(imageSize(jpeg(1))).toEqual({ width: 800, height: 400 });
+    expect(imageSize(jpeg(3))).toEqual({ width: 800, height: 400, orientation: 3 });
+    expect(imageSize(jpeg(6))).toEqual({ width: 400, height: 800, orientation: 6 });
+    expect(imageSize(jpeg(8, true))).toEqual({ width: 400, height: 800, orientation: 8 });
+    expect(exifOrientation(new Uint8Array([0x4d, 0x4d]))).toBeNull();
   });
 });

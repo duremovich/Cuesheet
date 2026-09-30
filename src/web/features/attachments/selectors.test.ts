@@ -4,6 +4,7 @@ import {
   attachmentRestoreOps,
   attachmentsOf,
   fileLabel,
+  hasThumbnail,
   positionAt,
   thumbnailOf,
 } from "./selectors";
@@ -98,5 +99,15 @@ describe("attachment selectors", () => {
         },
       },
     ]);
+  });
+
+  it("asks for a thumbnail only when the Worker has or can make one", () => {
+    expect(hasThumbnail(file({ width: 4000, height: 3000 }))).toBe(true);
+    expect(hasThumbnail(file({ width: 8000, height: 6000 }))).toBe(false);
+    expect(hasThumbnail(file({ width: 8000, height: 6000, thumb_key: "k" }))).toBe(true);
+    expect(hasThumbnail(file({ width: null, height: null }))).toBe(false);
+    expect(hasThumbnail(file({ content_type: "application/pdf", width: 1, height: 1 }))).toBe(
+      false,
+    );
   });
 });

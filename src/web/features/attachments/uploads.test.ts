@@ -160,4 +160,30 @@ describe("upload queue", () => {
     await tooBig.idle();
     expect(tooBig.getItems()[0]).toMatchObject({ status: "error", error: /over 25 MB/ });
   });
+
+  it("reserves in the order files were added, even when one is prepared faster", async () => {
+    const { transport, reserved, puts } = fakeTransport();
+    const slow = deferred<{ file: Blob }>();
+    const q = new UploadQueue(transport, {
+      concurrency: 3,
+      prepare: (f) => (f.name === "1.png" ? slow.promise : Promise.resolve({ file: f })),
+    });
+    q.add("show", { table: "content", recordId: "c1" }, [png("1.png"), png("2.png"), png("3.png")]);
+    await tick();
+    await tick();
+    expect(reserved).toEqual([]); // 2 and 3 wait for 1
+    slow.resolve({ file: png("1.png") });
+    for (let i = 0; i < 6; i++) await tick();
+    expect(reserved.map((r) => r.filename)).toEqual(["1.png", "2.png", "3.png"]);
+    for (const p of puts) p.done.resolve();
+    await q.idle();
+  });
+
+  it("refuses empty files at once", () => {
+    const q = new UploadQueue(fakeTransport().transport);
+    const [item] = q.add("show", { table: "content", recordId: "c1" }, [
+      new File([], "empty.png", { type: "image/png" }),
+    ]);
+    expect(item).toMatchObject({ status: "error", error: "empty.png is empty" });
+  });
 });

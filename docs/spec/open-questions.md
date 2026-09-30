@@ -154,15 +154,16 @@ Things the first build had to decide; each is easy to change.
 - **`@name`** (M2b): a full name without spaces or a unique first name; the picker that
   typing `@` opens is the reliable way; unknown `@words` stay in the text.
 - **Also needed**: script view with cue placement and version re-anchoring (R20), shot
-  lists (R14), calculations and unit conversion (R11, R12), images on surfaces (R13).
+  lists (R14), calculations and unit conversion (R11, R12), images on surfaces (R13, done in M3a).
 - **Saved views (M2a)** → CLAUDE.md "Saved views": personal views are private (snapshot,
   history and broadcasts are per user); an editor's unsaved changes to a shared view are a
   draft kept in the browser until Save/Discard; viewers' column widths and frozen columns
   are a per-browser overlay, other changes make a personal copy; link filters store record
   ids (renames keep working); multi-valued grouping groups by combination (Airtable-style,
   for now); sorting by a hidden column is allowed.
-- **Content versions** (M3a): records per content item, exactly one current (setting one
-  clears the others; the first is current; deleting the current one promotes the newest).
+- **Content versions** (M3a): records per content item, exactly one current whenever
+  there are any (setting one clears the others; the first is current; deleting or
+  un-currenting the current one promotes the newest other; the only one stays current).
   → CLAUDE.md "Content versions"
 - **Where files live** (M3a): uploaded to the app's R2 bucket (25 MB per file, 2 GB per
   show; images, PDF, MP4/MOV, text; HEIC refused with a hint). Thumbnails are generated in
@@ -172,7 +173,8 @@ Things the first build had to decide; each is easy to change.
   so Undo of a file or of a note with photos restores them. → CLAUDE.md "Attachments"
 - **Very large photos** (M3a): images over 16.7 MP are scaled down in the browser before
   upload (longest side ≤ 4096 px), keeping the original size in `custom.original_size`;
-  thumbnails always exist.
+  GIFs and animated WebP upload as they are, so they may have no thumbnail (the original
+  is shown instead).
 - **Version date** (M3a): a day (`YYYY-MM-DD`) is enough. Imported versions are
   Available.
 - **Storage cap** (M3a): 2 GB per show (thumbnails not counted).

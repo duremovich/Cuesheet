@@ -1,6 +1,6 @@
 // Attachments (R13) on the client: a record's files in order, and its thumbnail (the first
 // image). Cached per `attachments` map so results keep their identity until a file changes.
-import { attachmentKind, isImageType } from "../../../shared/attachments";
+import { attachmentKind, isImageType, MAX_DECODE_PIXELS } from "../../../shared/attachments";
 import type { Op } from "../../../shared/ops";
 import type { AttachmentRow } from "../../../shared/tables";
 
@@ -89,8 +89,9 @@ export function positionAt(list: readonly AttachmentRow[], movingId: string, to:
 }
 
 /**
- * Undo of a delete: recreate the rows with their ids, pointing at the same R2 files (the
- * server keeps them for a day after a delete and only accepts a restore that matches).
+ * Undo of a delete: recreate the rows with their ids. The server restores each from the row
+ * it kept at delete time (with its R2 file, kept for a day) and ignores these fields; they
+ * only make the optimistic copy look right.
  */
 export function attachmentRestoreOps(files: readonly AttachmentRow[]): Op[] {
   return files.map((f) => ({
@@ -112,4 +113,17 @@ export function attachmentRestoreOps(files: readonly AttachmentRow[]): Op[] {
       custom: f.custom,
     },
   }));
+}
+
+/**
+ * Whether asking for the image's thumbnail makes sense: the Worker has made one
+ * (`thumb_key`), or it can (the size is known and small enough to decode). Otherwise the
+ * original is shown, so no request ends in a 404 (and a console error).
+ */
+export function hasThumbnail(
+  f: Pick<AttachmentRow, "content_type" | "thumb_key" | "width" | "height">,
+): boolean {
+  if (!isImageType(f.content_type)) return false;
+  if (f.thumb_key) return true;
+  return f.width !== null && f.height !== null && f.width * f.height <= MAX_DECODE_PIXELS;
 }

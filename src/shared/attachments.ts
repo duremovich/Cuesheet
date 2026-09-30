@@ -84,8 +84,12 @@ export function isImageType(contentType: string): boolean {
 
 /** A filename safe to use as an R2 key segment and in Content-Disposition. */
 export function cleanFilename(name: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters
-  let n = name.replace(/[\u0000-\u001f\u007f/\\]/g, "_").trim();
+  let n = name
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters
+    .replace(/[\u0000-\u001f\u007f/\\]/g, "_")
+    // Bidi overrides/isolates would let "gpj.exe" display as "exe.jpg".
+    .replace(/[\u202a-\u202e\u2066-\u2069]/g, "")
+    .trim();
   if (!n || n === "." || n === "..") n = "file";
   if (n.length > MAX_FILENAME) {
     const ext = extension(n);
@@ -127,11 +131,36 @@ export function formatBytes(n: number): string {
   return `${v >= 10 || Number.isInteger(v) ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
 }
 
+/** The EXIF Orientation (1–8) in a TIFF block (after "Exif\0\0"), or null. */
+export function exifOrientation(t: Uint8Array): number | null {
+  if (t.length < 8) return null;
+  const le = t[0] === 0x49 && t[1] === 0x49; // "II"; "MM" is big endian
+  const u16 = (i: number) =>
+    le ? (t[i] ?? 0) | ((t[i + 1] ?? 0) << 8) : ((t[i] ?? 0) << 8) | (t[i + 1] ?? 0);
+  const u32 = (i: number) =>
+    le ? (u16(i) | (u16(i + 2) << 16)) >>> 0 : ((u16(i) << 16) | u16(i + 2)) >>> 0;
+  const ifd = u32(4);
+  const count = u16(ifd);
+  for (let e = 0; e < count; e++) {
+    const at = ifd + 2 + e * 12;
+    if (at + 12 > t.length) return null;
+    if (u16(at) === 0x0112) {
+      const v = u16(at + 8);
+      return v >= 1 && v <= 8 ? v : null;
+    }
+  }
+  return null;
+}
+
 /**
  * Width and height from an image file's first bytes (PNG, JPEG, GIF, WebP), or null. Used
- * by the Worker to record the real size of an upload without decoding it.
+ * by the Worker to record the real size of an upload without decoding it. For a JPEG with
+ * an EXIF Orientation other than 1, `orientation` is set and the size is the upright one
+ * (5–8 swap width and height), which is how the image is shown.
  */
-export function imageSize(bytes: Uint8Array): { width: number; height: number } | null {
+export function imageSize(
+  bytes: Uint8Array,
+): { width: number; height: number; orientation?: number } | null {
   const b = bytes;
   const u16be = (i: number) => ((b[i] ?? 0) << 8) | (b[i + 1] ?? 0);
   const u16le = (i: number) => (b[i] ?? 0) | ((b[i + 1] ?? 0) << 8);
@@ -154,6 +183,7 @@ export function imageSize(bytes: Uint8Array): { width: number; height: number } 
   }
   if (b.length >= 4 && b[0] === 0xff && b[1] === 0xd8) {
     let i = 2;
+    let orientation = 1;
     while (i + 9 < b.length) {
       if (b[i] !== 0xff) return null;
       const marker = b[i + 1] ?? 0;
@@ -162,9 +192,20 @@ export function imageSize(bytes: Uint8Array): { width: number; height: number } 
         continue;
       }
       const len = u16be(i + 2);
+      if (marker === 0xe1 && ascii(i + 4, 6) === "Exif\u0000\u0000") {
+        orientation = exifOrientation(b.subarray(i + 10, i + 2 + len)) ?? orientation;
+      }
       // SOF0..SOF15 except DHT (C4), JPG (C8) and DAC (CC).
       if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
-        return { width: u16be(i + 7), height: u16be(i + 5) };
+        const w = u16be(i + 7);
+        const h = u16be(i + 5);
+        // EXIF 5–8 turn the picture a quarter: the displayed size is swapped.
+        const turned = orientation >= 5 && orientation <= 8;
+        return {
+          width: turned ? h : w,
+          height: turned ? w : h,
+          ...(orientation !== 1 ? { orientation } : {}),
+        };
       }
       i += 2 + len;
     }
@@ -198,4 +239,30 @@ export function resizeTarget(
     width: Math.max(1, Math.floor(width * scale)),
     height: Math.max(1, Math.floor(height * scale)),
   };
+}
+
+/** The extensions each stored type may have (the first is the one added when missing). */
+const EXTENSIONS: Record<string, string[]> = {
+  "image/png": ["png"],
+  "image/jpeg": ["jpg", "jpeg"],
+  "image/gif": ["gif"],
+  "image/webp": ["webp"],
+  "application/pdf": ["pdf"],
+  "video/mp4": ["mp4", "m4v"],
+  "video/quicktime": ["mov"],
+  "text/plain": ["txt"],
+  "text/csv": ["csv"],
+  "text/markdown": ["md"],
+};
+
+/**
+ * The filename with an extension matching the type it's stored and served as ("photo" →
+ * "photo.jpg", "notes.exe" as text/plain → "notes.exe.txt"), so a download opens as what
+ * it is.
+ */
+export function withExtension(filename: string, contentType: string): string {
+  const exts = EXTENSIONS[contentType];
+  if (!exts) return filename;
+  if (exts.includes(extension(filename))) return filename;
+  return cleanFilename(`${filename}.${exts[0]}`);
 }

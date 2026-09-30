@@ -601,12 +601,16 @@ export class Batch {
 
   // ---- ops ----
 
-  private create(table: TableName, id: string, fields: FieldValues, placement: Placement) {
-    this.checkRole(table, null, fields);
+  private create(table: TableName, id: string, requested: FieldValues, placement: Placement) {
+    let fields = requested;
     const restoring = table === "attachments" && !this.ctx.upload ? this.pendingFile(id) : null;
-    if (table === "attachments" && !this.ctx.upload && !restoring) {
-      this.fail("Files are attached by uploading them", 403);
+    if (table === "attachments" && !this.ctx.upload) {
+      if (!restoring) this.fail("Files are attached by uploading them", 403);
+      // Undo of a delete: the row comes back exactly as it was (the client's fields are
+      // ignored), pointing at the same R2 file, which is kept until purged.
+      fields = restoring;
     }
+    this.checkRole(table, null, fields);
     if (this.getRow(table, id)) this.fail(`${table} ${id} already exists`);
     const row: WireRow = { id };
     for (const [name, spec] of Object.entries(FIELDS[table]) as [string, FieldSpec][]) {
@@ -629,13 +633,7 @@ export class Batch {
       }
     }
     if (table === "attachments") {
-      if (restoring) {
-        // Undo: the same file (kept in R2 until purged) comes back under the same id.
-        if (row.r2_key !== restoring.r2_key || row.size !== restoring.size) {
-          this.fail("A restored attachment must keep its file", 400);
-        }
-        this.sql.exec("DELETE FROM pending_r2_deletes WHERE attachment_id = ?", id);
-      }
+      if (restoring) this.sql.exec("DELETE FROM pending_r2_deletes WHERE attachment_id = ?", id);
       this.prepareAttachment(row);
     }
     if (table === "content_versions") this.prepareVersion(row);
@@ -684,16 +682,20 @@ export class Batch {
     if (table === "content_versions") this.afterVersionWrite(id);
   }
 
-  /** A deleted attachment whose file is still kept (restorable), or null. */
-  private pendingFile(id: string): { r2_key: string; size: number } | null {
-    return (
-      this.sql
-        .exec<{ r2_key: string; size: number }>(
-          "SELECT r2_key, size FROM pending_r2_deletes WHERE attachment_id = ?",
-          id,
-        )
-        .toArray()[0] ?? null
-    );
+  /**
+   * A deleted attachment whose file is still kept (restorable): the fields to recreate it
+   * with (as it was stored), or null.
+   */
+  private pendingFile(id: string): FieldValues | null {
+    const found = this.sql
+      .exec<{ row: string }>("SELECT row FROM pending_r2_deletes WHERE attachment_id = ?", id)
+      .toArray()[0];
+    if (!found) return null;
+    const stored = parseJson<Record<string, unknown>>(found.row, {});
+    const out: FieldValues = {};
+    for (const k of Object.keys(FIELDS.attachments)) if (k in stored) out[k] = stored[k];
+    if (isPlainObject(stored.custom)) out.custom = stored.custom;
+    return out;
   }
 
   /** A new attachment: its record must exist and have that attachment field. */
@@ -866,9 +868,30 @@ export class Batch {
       changes.config = this.sanitizeConfig(before.table as DataTableName, changes.config);
     }
     if (table === "surfaces" && "parent_id" in changes) this.checkParent(id, changes.parent_id);
+    // Un-currenting the current version hands "current" to the newest other one.
+    const successor =
+      table === "content_versions" && before.is_current === 1 && changes.is_current === false
+        ? this.newestVersion(before.content_id as string, id)
+        : undefined;
+    if (successor === null) this.fail("The only version of a content item stays current");
     this.write(table, id, before, changes);
     if (table === "views") this.afterViewWrite(id);
     if (table === "content_versions") this.afterVersionWrite(id);
+    if (successor)
+      this.write("content_versions", successor.id as string, successor, { is_current: true });
+  }
+
+  /** The content's newest version other than `except` (highest position), or null. */
+  private newestVersion(contentId: string, except: string): DbRow | null {
+    return (
+      this.sql
+        .exec<DbRow>(
+          "SELECT * FROM content_versions WHERE content_id = ? AND id != ? ORDER BY position DESC, created_at DESC, id DESC LIMIT 1",
+          contentId,
+          except,
+        )
+        .toArray()[0] ?? null
+    );
   }
 
   private move(table: TableName, id: string, placement: Placement) {
@@ -950,11 +973,12 @@ export class Batch {
     if (table === "attachments") {
       // The file stays in R2 for a day so Undo can bring it back; the DO's alarm purges it.
       this.sql.exec(
-        "INSERT OR REPLACE INTO pending_r2_deletes (attachment_id, r2_key, size, deleted_at) VALUES (?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO pending_r2_deletes (attachment_id, r2_key, size, deleted_at, row) VALUES (?, ?, ?, ?, ?)",
         id,
         before.r2_key,
         Number(before.size) || 0,
         this.now,
+        JSON.stringify(decodeRow("attachments", before)),
       );
       this.filesDeleted++;
     }
@@ -1166,6 +1190,9 @@ export function readHistory(sql: SqlStorage, query: HistoryQuery, userId?: strin
       limit,
     )
     .toArray()
+    .map((r) =>
+      r.table === "attachments" ? { ...r, old: hideKey(r.old), new: hideKey(r.new) } : r,
+    )
     .map((r) => ({
       version: r.version,
       ts: r.ts,
@@ -1199,4 +1226,13 @@ export function dueR2Deletes(
     )
     .one().t;
   return { due, next: later === null ? null : later + R2_DELETE_DELAY_MS };
+}
+
+/** History never shows where a file lives in R2 (an attachment row's `r2_key`/`thumb_key`). */
+function hideKey(v: string | null): string | null {
+  if (v === null) return v;
+  const parsed = parseJson<unknown>(v, null);
+  if (!isPlainObject(parsed) || !("r2_key" in parsed || "thumb_key" in parsed)) return v;
+  const { r2_key: _k, thumb_key: _t, ...rest } = parsed;
+  return JSON.stringify(rest);
 }

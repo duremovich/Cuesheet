@@ -14,6 +14,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { checkAttachmentType } from "../../../shared/attachments";
 import type { FieldOption } from "../../../shared/tables";
 import { Chip, type PickerItem, RecordPicker } from "../../components/grid";
 import { optionColor } from "../../components/grid/Chip";
@@ -119,8 +120,18 @@ export const NoteCompose = forwardRef<NoteComposeHandle, NoteComposeProps>(funct
   const fileSeq = useRef(0);
   const [dropping, setDropping] = useState(false);
   const addFiles = useCallback((list: File[]) => {
-    if (list.length) {
-      setFiles((f) => [...f, ...list.map((file) => ({ key: ++fileSeq.current, file }))]);
+    // Refused here, before the note is saved (HEIC, empty, unsupported types).
+    const ok: File[] = [];
+    const refused: string[] = [];
+    for (const file of list) {
+      const type = checkAttachmentType(file.type, file.name);
+      if ("error" in type) refused.push(`${file.name || "file"}: ${type.error}`);
+      else if (file.size === 0) refused.push(`${file.name || "file"} is empty`);
+      else ok.push(file);
+    }
+    setError(refused.length ? `Can't attach ${refused.join("; ")}` : null);
+    if (ok.length) {
+      setFiles((f) => [...f, ...ok.map((file) => ({ key: ++fileSeq.current, file }))]);
     }
   }, []);
   const savingRef = useRef(false);
@@ -161,8 +172,11 @@ export const NoteCompose = forwardRef<NoteComposeHandle, NoteComposeProps>(funct
   );
   // Only offer types the show has (options are editable per show).
   const activeTypes = types.filter((t) => typeValues.includes(t));
+  // A photo alone is a note too (quick-add: snap, save).
   const canSave =
-    !!parsed.body && !saving && !(requireTarget && !subject && parsed.target.kind === "current");
+    (!!parsed.body || files.length > 0) &&
+    !saving &&
+    !(requireTarget && !subject && parsed.target.kind === "current");
 
   const describe = useCallback(
     (target: NoteTarget): string => {
@@ -196,10 +210,10 @@ export const NoteCompose = forwardRef<NoteComposeHandle, NoteComposeProps>(funct
       currentCueId,
       persons: [...data.tables.persons.values()],
     });
-    if (!p.body) return;
+    if (!p.body && files.length === 0) return;
     const links = resolveLinks(data, p.target, subjectLinks(data, subject));
     const ops = noteCreateOps({
-      body: p.body,
+      body: p.body || null,
       types: activeTypes,
       priority,
       session: data.show?.currentSession ?? null,

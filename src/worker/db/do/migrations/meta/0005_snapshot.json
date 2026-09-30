@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "c6a21148-78fa-48b9-ac3c-abc66dd27990",
+  "id": "9cfc49e0-0efa-46ad-904c-a5f49f9b67f3",
   "prevId": "f23f2f82-d4b5-4f20-96a2-bafb9fa0797a",
   "tables": {
     "attachments": {
@@ -1393,6 +1393,13 @@
         "deleted_at": {
           "name": "deleted_at",
           "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "row": {
+          "name": "row",
+          "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false

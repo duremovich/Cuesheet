@@ -23,6 +23,7 @@ import {
   SHOW_STORAGE_LIMIT_BYTES,
   THUMB_MAX,
   thumbnailKey,
+  withExtension,
 } from "../../shared/attachments";
 import { isValidId, newId } from "../../shared/ids";
 import type { ResolvedCreate } from "../../shared/ops";
@@ -68,6 +69,7 @@ export async function uploadUrl(c: C): Promise<Response> {
   if (typeof size !== "number" || !Number.isInteger(size) || size < 0) {
     return c.json({ error: "size must be a byte count" }, 400);
   }
+  if (size === 0) return c.json({ error: "That file is empty" }, 400);
   const denied = await checkCanAttach(c, table, recordId);
   if (denied) return denied;
   if (size > MAX_ATTACHMENT_BYTES) return c.json({ error: tooBig }, 413);
@@ -76,6 +78,8 @@ export async function uploadUrl(c: C): Promise<Response> {
     filename,
   );
   if ("error" in type) return c.json({ error: type.error }, 415);
+  // The name ends in an extension of the type it's served as ("photo" → "photo.jpg").
+  const storedName = withExtension(filename, type.contentType);
   if ((await storageUsed(c.env, c.var.show.id)) + size > SHOW_STORAGE_LIMIT_BYTES) {
     return c.json({ error: full }, 413);
   }
@@ -97,7 +101,7 @@ export async function uploadUrl(c: C): Promise<Response> {
     table,
     recordId,
     field,
-    filename,
+    filename: storedName,
     contentType: type.contentType,
     size,
     ...(originalSize ? { originalSize } : {}),
@@ -119,6 +123,12 @@ export async function upload(c: C): Promise<Response> {
   if (len > MAX_ATTACHMENT_BYTES) return c.json({ error: tooBig }, 413);
   const pending = isValidId(id) ? await stub(c).takeUpload(id, c.var.user.id) : null;
   if (!pending) return c.json({ error: "Unknown or expired upload; ask for a new URL" }, 404);
+  if (len !== pending.size) {
+    return c.json(
+      { error: `The upload is ${len} bytes but ${pending.size} were reserved; ask for a new URL` },
+      400,
+    );
+  }
   const denied = await checkCanAttach(c, pending.table, pending.recordId);
   if (denied) return denied;
   if (!(await reserveStorage(c.env, showId, len))) return c.json({ error: full }, 413);
@@ -171,6 +181,7 @@ export async function upload(c: C): Promise<Response> {
           r2_key: key,
           width: size?.width ?? null,
           height: size?.height ?? null,
+          ...(typeof pending.position === "number" ? { position: pending.position } : {}),
           ...(pending.originalSize ? { custom: { original_size: pending.originalSize } } : {}),
         },
       },
@@ -207,10 +218,29 @@ export async function download(c: C): Promise<Response> {
   const id = c.req.param("aid") ?? "";
   const row = isValidId(id) ? await stub(c).attachment(id) : null;
   if (!row) return c.json({ error: "Attachment not found" }, 404);
-  const object = await c.env.FILES.get(row.r2_key, { onlyIf: c.req.raw.headers });
+  const rangeHeader = c.req.header("Range");
+  const range = rangeHeader ? parseRange(rangeHeader, row.size) : undefined;
+  if (range === null) {
+    return new Response(null, {
+      status: 416,
+      headers: { "Content-Range": `bytes */${row.size}`, "Accept-Ranges": "bytes" },
+    });
+  }
+  const object = await c.env.FILES.get(row.r2_key, {
+    onlyIf: c.req.raw.headers,
+    ...(range ? { range } : {}),
+  });
   if (!object) return c.json({ error: "File missing" }, 404);
   const headers = fileHeaders(object, row.filename, c.req.query("download") === "1");
+  headers.set("Accept-Ranges", "bytes");
   if (!("body" in object)) return new Response(null, { status: 304, headers });
+  if (range) {
+    // Video seeking and PDF viewers ask for byte ranges.
+    const end = range.offset + range.length - 1;
+    headers.set("Content-Range", `bytes ${range.offset}-${end}/${object.size}`);
+    headers.set("Content-Length", String(range.length));
+    return new Response(object.body, { status: 206, headers });
+  }
   headers.set("Content-Length", String(object.size));
   return new Response(object.body, { headers });
 }
@@ -259,4 +289,28 @@ export async function storage(c: C): Promise<Response> {
     usedBytes: await storageUsed(c.env, c.var.show.id),
     limitBytes: SHOW_STORAGE_LIMIT_BYTES,
   } satisfies StorageResponse);
+}
+
+/**
+ * A single `Range: bytes=…` request as an R2 range (`a-b`, `a-`, `-n`), clamped to the
+ * file; undefined when absent or not a single byte range (served whole, as HTTP allows);
+ * null when unsatisfiable (416).
+ */
+export function parseRange(
+  header: string,
+  size: number,
+): { offset: number; length: number } | null | undefined {
+  const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!m || (m[1] === "" && m[2] === "")) return undefined;
+  if (m[1] === "") {
+    const n = Number(m[2]);
+    if (n <= 0 || size === 0) return null;
+    const length = Math.min(n, size);
+    return { offset: size - length, length };
+  }
+  const start = Number(m[1]);
+  if (start >= size) return null;
+  const end = m[2] === "" ? size - 1 : Math.min(Number(m[2]), size - 1);
+  if (end < start) return null;
+  return { offset: start, length: end - start + 1 };
 }

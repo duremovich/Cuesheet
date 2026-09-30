@@ -1,8 +1,10 @@
 // Attachments (R13, S4): upload-url → PUT into R2 → row through the op engine; download,
 // thumbnails (Photon), roles, types, sizes, the per-show storage cap, and cleanup of R2
 // objects when rows (or their records) are deleted.
+
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import { PhotonImage } from "@cf-wasm/photon";
 import { describe, expect, it } from "vitest";
 import type { UploadUrlResponse } from "../../src/shared/api";
 import {
@@ -14,6 +16,7 @@ import {
 import { newId } from "../../src/shared/ids";
 import type { MutateResponse, Op, SnapshotResponse } from "../../src/shared/ops";
 import type { AttachmentRow } from "../../src/shared/tables";
+import { parseRange } from "../../src/worker/routes/attachments";
 import { api, createShow, loginAdmin, newUser, post } from "./helpers";
 
 // ---- a tiny PNG encoder (RGB, 8 bit) so tests can make images of any size ----
@@ -68,6 +71,61 @@ async function png(width: number, height: number): Promise<Uint8Array> {
     out.set(p, at);
     at += p.length;
   }
+  return out;
+}
+
+/**
+ * A JPEG w×h (left half red, right half blue) with an EXIF Orientation tag, like a phone
+ * photo taken sideways (6: turn 90° clockwise to view).
+ */
+function orientedJpeg(w: number, h: number, orientation: number): Uint8Array {
+  const raw = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const o = (y * w + x) * 4;
+      const left = x < w / 2;
+      raw.set(left ? [230, 20, 20, 255] : [20, 20, 230, 255], o);
+    }
+  }
+  const img = new PhotonImage(raw, w, h);
+  const jpeg = img.get_bytes_jpeg(90);
+  img.free();
+  // APP1 "Exif\0\0" + big-endian TIFF with one IFD entry: 0x0112 SHORT 1 = orientation.
+  const tiff = [
+    0x4d,
+    0x4d,
+    0x00,
+    0x2a,
+    0x00,
+    0x00,
+    0x00,
+    0x08,
+    0x00,
+    0x01,
+    0x01,
+    0x12,
+    0x00,
+    0x03,
+    0x00,
+    0x00,
+    0x00,
+    0x01,
+    0x00,
+    orientation,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+  ];
+  const payload = [...new TextEncoder().encode("Exif"), 0, 0, ...tiff];
+  const len = payload.length + 2;
+  const app1 = [0xff, 0xe1, len >> 8, len & 0xff, ...payload];
+  const out = new Uint8Array(jpeg.length + app1.length);
+  out.set(jpeg.subarray(0, 2));
+  out.set(app1, 2);
+  out.set(jpeg.subarray(2), 2 + app1.length);
   return out;
 }
 
@@ -301,10 +359,37 @@ describe("attachments", () => {
     expect(missing.status).toBe(404);
     await missing.arrayBuffer();
 
-    // PUT: over the size limit, missing length, unknown or someone else's reservation.
+    // Empty files are refused.
+    const empty = await uploadUrl(showId, admin, {
+      ...base,
+      size: 0,
+      filename: "a.txt",
+      contentType: "text/plain",
+    });
+    expect(empty.status).toBe(400);
+    await empty.arrayBuffer();
+
+    // PUT: over the size limit, missing length, unknown or someone else's reservation, a
+    // body that isn't the size reserved.
     const ok = (await (
-      await uploadUrl(showId, admin, { ...base, filename: "a.txt", contentType: "text/plain" })
+      await uploadUrl(showId, admin, {
+        ...base,
+        size: 5,
+        filename: "a.txt",
+        contentType: "text/plain",
+      })
     ).json()) as UploadUrlResponse;
+    const other = (await (
+      await uploadUrl(showId, admin, {
+        ...base,
+        size: 5,
+        filename: "b.txt",
+        contentType: "text/plain",
+      })
+    ).json()) as UploadUrlResponse;
+    const wrongSize = await api(other.uploadUrl, { method: "PUT", cookie: admin, body: "hello!!" });
+    expect(wrongSize.status).toBe(400);
+    expect(((await wrongSize.json()) as { error: string }).error).toMatch(/7 bytes but 5/);
     const tooLong = await api(ok.uploadUrl, {
       method: "PUT",
       cookie: admin,
@@ -488,23 +573,30 @@ describe("attachments", () => {
     expect(await used(showId)).toBe(rowA.size + rowB.size);
     expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).not.toBeNull();
 
-    // Undo: the same row (same id, same file) comes back, and leaves the purge list.
+    // Undo: the row comes back exactly as it was deleted (same id, same file); whatever
+    // fields the client sends are ignored, so it can't point the row at another object.
     const fields = restoreFields(rowA);
-    const forged = await mutate(showId, admin, [
+    const undo = await mutate(showId, admin, [
       {
         op: "create",
         table: "attachments",
         id: rowA.id,
-        fields: { ...fields, r2_key: `shows/${showId}/other/x.png` },
+        fields: { ...fields, r2_key: `shows/${showId}/other/x.png`, filename: "evil.exe" },
       },
-    ]);
-    expect(forged.status).toBe(400); // must keep its own file
-    await forged.arrayBuffer();
-    const undo = await mutate(showId, admin, [
-      { op: "create", table: "attachments", id: rowA.id, fields },
     ]);
     expect(undo.status, await undo.clone().text()).toBe(200);
     await undo.arrayBuffer();
+    const restored = (await snapshot(showId, admin)).tables.attachments.find(
+      (f) => f.id === rowA.id,
+    );
+    expect(restored).toMatchObject({
+      r2_key: rowA.r2_key,
+      filename: "a.png",
+      size: rowA.size,
+      position: rowA.position,
+      width: 400,
+      height: 300,
+    });
     const back = await api(a.reserved.uploadUrl, { cookie: admin });
     expect(back.status).toBe(200);
     await back.arrayBuffer();
@@ -660,5 +752,167 @@ describe("attachments", () => {
     expect(await used(showId)).toBe(0);
     const listed = await env.FILES.list({ prefix: `shows/${showId}/` });
     expect(listed.objects).toHaveLength(0);
+  });
+  it("applies EXIF orientation: size stored upright, thumbnail turned (Orientation=6)", async () => {
+    const { admin, showId, content } = await setup();
+    const bytes = orientedJpeg(800, 400, 6);
+    const { put, reserved } = await uploadFile(
+      showId,
+      admin,
+      { table: "content", recordId: content },
+      { name: "phone.jpg", type: "image/jpeg", bytes },
+    );
+    expect(put.status).toBe(201);
+    const { attachment } = (await put.json()) as { attachment: AttachmentRow };
+    expect(attachment).toMatchObject({ width: 400, height: 800 });
+    const thumb = await api(`${reserved.uploadUrl}/thumb`, { cookie: admin });
+    expect(thumb.status).toBe(200);
+    const tb = new Uint8Array(await thumb.arrayBuffer());
+    expect(imageSize(tb)).toEqual({ width: 160, height: 320 });
+    // Turned clockwise: the picture's left half (red) is now on top, the right (blue) below.
+    const img = PhotonImage.new_from_byteslice(tb);
+    const px = img.get_raw_pixels();
+    const at = (x: number, y: number) =>
+      Array.from(px.subarray((y * 160 + x) * 4, (y * 160 + x) * 4 + 3));
+    img.free();
+    const [r1, , b1] = at(80, 20) as [number, number, number];
+    const [r2, , b2] = at(80, 300) as [number, number, number];
+    expect(r1 - b1).toBeGreaterThan(80); // red on top
+    expect(b2 - r2).toBeGreaterThan(80); // blue below
+  });
+
+  it("restores only as it was, and only for whoever may attach to its record", async () => {
+    const { admin, showId } = await setup();
+    const note = newId();
+    await (
+      await mutate(showId, admin, [
+        { op: "create", table: "notes", id: note, fields: { body: "x" } },
+      ])
+    ).arrayBuffer();
+    const up = await uploadFile(
+      showId,
+      admin,
+      { table: "notes", recordId: note },
+      { name: "a.png", type: "image/png", bytes: await png(8, 6) },
+    );
+    const row = ((await up.put.json()) as { attachment: AttachmentRow }).attachment;
+    await (
+      await mutate(showId, admin, [{ op: "delete", table: "attachments", id: row.id }])
+    ).arrayBuffer();
+    // A commenter can't bring back a file on someone else's note, whatever they claim.
+    const commenter = await addMember(showId, admin, "commenter");
+    const own = newId();
+    await (
+      await mutate(showId, commenter.cookie, [
+        { op: "create", table: "notes", id: own, fields: { body: "mine" } },
+      ])
+    ).arrayBuffer();
+    const claim = await mutate(showId, commenter.cookie, [
+      {
+        op: "create",
+        table: "attachments",
+        id: row.id,
+        fields: { ...restoreFields(row), record_id: own },
+      },
+    ]);
+    expect(claim.status).toBe(403);
+    await claim.arrayBuffer();
+    const restored = await mutate(showId, admin, [
+      { op: "create", table: "attachments", id: row.id, fields: {} },
+    ]);
+    expect(restored.status).toBe(200);
+    await restored.arrayBuffer();
+    const snap = await snapshot(showId, admin);
+    expect(snap.tables.attachments.find((f) => f.id === row.id)?.record_id).toBe(note);
+
+    // History never shows the R2 key.
+    const hist = (await (
+      await api(`/api/shows/${showId}/history?table=attachments&id=${row.id}`, { cookie: admin })
+    ).json()) as { changes: { field: string; old: string | null; new: string | null }[] };
+    expect(hist.changes).toHaveLength(3);
+    for (const ch of hist.changes) {
+      expect(ch.old ?? "").not.toContain("r2_key");
+      expect(ch.new ?? "").not.toContain("r2_key");
+    }
+    expect(hist.changes.some((ch) => (ch.new ?? "").includes('"filename":"a.png"'))).toBe(true);
+  });
+
+  it("serves byte ranges (video seeking, PDF viewers)", async () => {
+    const { admin, showId, content } = await setup();
+    const bytes = new TextEncoder().encode("0123456789");
+    const { put, reserved } = await uploadFile(
+      showId,
+      admin,
+      { table: "content", recordId: content },
+      { name: "clip.txt", type: "text/plain", bytes },
+    );
+    await put.arrayBuffer();
+    const whole = await api(reserved.uploadUrl, { cookie: admin });
+    expect(whole.headers.get("Accept-Ranges")).toBe("bytes");
+    await whole.arrayBuffer();
+    const part = await api(reserved.uploadUrl, { cookie: admin, headers: { Range: "bytes=2-5" } });
+    expect(part.status).toBe(206);
+    expect(part.headers.get("Content-Range")).toBe("bytes 2-5/10");
+    expect(await part.text()).toBe("2345");
+    const tail = await api(reserved.uploadUrl, { cookie: admin, headers: { Range: "bytes=-3" } });
+    expect(tail.status).toBe(206);
+    expect(tail.headers.get("Content-Range")).toBe("bytes 7-9/10");
+    expect(await tail.text()).toBe("789");
+    const open = await api(reserved.uploadUrl, { cookie: admin, headers: { Range: "bytes=8-" } });
+    expect(await open.text()).toBe("89");
+    const bad = await api(reserved.uploadUrl, { cookie: admin, headers: { Range: "bytes=20-" } });
+    expect(bad.status).toBe(416);
+    expect(bad.headers.get("Content-Range")).toBe("bytes */10");
+    await bad.arrayBuffer();
+    expect(parseRange("bytes=0-", 0)).toBeNull();
+    expect(parseRange("items=0-1", 10)).toBeUndefined();
+    expect(parseRange("bytes=5-2", 10)).toBeNull();
+  });
+
+  it("names match the stored type; a multi-file drop keeps its order", async () => {
+    const { admin, showId, content } = await setup();
+    const r = await uploadUrl(showId, admin, {
+      table: "content",
+      recordId: content,
+      filename: "photo",
+      contentType: "image/png",
+      size: 10,
+    });
+    expect(((await r.json()) as UploadUrlResponse).attachmentId).toBeTruthy();
+    // Reserved 1, 2, 3; the PUTs finish 3, 1, 2: positions follow the reserve order.
+    const reserved: UploadUrlResponse[] = [];
+    for (const name of ["one.txt", "two.txt", "three.txt"]) {
+      const res = await uploadUrl(showId, admin, {
+        table: "content",
+        recordId: content,
+        filename: name,
+        contentType: "text/plain",
+        size: 3,
+      });
+      reserved.push((await res.json()) as UploadUrlResponse);
+    }
+    for (const i of [2, 0, 1]) {
+      const put = await api((reserved[i] as UploadUrlResponse).uploadUrl, {
+        method: "PUT",
+        cookie: admin,
+        body: "abc",
+      });
+      expect(put.status).toBe(201);
+      await put.arrayBuffer();
+    }
+    const png8 = await png(8, 6);
+    const named = await uploadFile(
+      showId,
+      admin,
+      { table: "content", recordId: content },
+      { name: "still", type: "image/png", bytes: png8 },
+    );
+    const snap = await snapshot(showId, admin);
+    const files = snap.tables.attachments
+      .filter((f) => f.record_id === content)
+      .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+      .map((f) => f.filename);
+    expect(files).toEqual(["one.txt", "two.txt", "three.txt", "still.png"]);
+    await named.put.arrayBuffer();
   });
 });

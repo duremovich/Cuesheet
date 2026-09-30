@@ -10,7 +10,14 @@ import type { Column } from "../../components/grid/types";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
 import { useWorkspace, type Workspace } from "../show/workspace";
 import styles from "./Attachments.module.css";
-import { attachmentRestoreOps, attachmentsOf, fileLabel, isImage, positionAt } from "./selectors";
+import {
+  attachmentRestoreOps,
+  attachmentsOf,
+  fileLabel,
+  hasThumbnail,
+  isImage,
+  positionAt,
+} from "./selectors";
 import { openLightbox, uploadErrors, uploadQueue, useLightbox } from "./state";
 import { progressOf, useRecordUploads } from "./uploads";
 
@@ -69,34 +76,46 @@ export function useDeleteFile() {
   );
 }
 
+/** The caption shown for a file: its `custom.caption`, else its filename. */
+export function captionOf(file: AttachmentRow): string {
+  const c = (file.custom as { caption?: unknown }).caption;
+  return typeof c === "string" && c.trim() ? c : file.filename;
+}
+
 export function Thumb({
   file,
   size = "sm",
   showId,
+  testId = "thumb",
 }: {
   file: AttachmentRow;
-  size?: "xs" | "sm" | "md" | "lg";
+  /** `fill`: as big as its box (gallery cards). */
+  size?: "xs" | "sm" | "md" | "lg" | "fill";
   showId: string;
+  testId?: string;
 }) {
-  const [src, setSrc] = useState(() => thumbnailUrl(showId, file.id));
+  // The thumbnail when the Worker has (or can make) one; else the original.
+  const original = attachmentUrl(showId, file.id);
+  const [src, setSrc] = useState(() =>
+    hasThumbnail(file) ? thumbnailUrl(showId, file.id) : original,
+  );
   const [failed, setFailed] = useState(false);
   if (!isImage(file) || failed) {
     return (
       <span className={styles.thumb} data-size={size} title={file.filename}>
-        {fileLabel(file).slice(0, 4)}
+        {size === "fill" ? file.filename : fileLabel(file).slice(0, 4)}
       </span>
     );
   }
   return (
-    <span className={styles.thumb} data-size={size} data-testid="thumb">
+    <span className={styles.thumb} data-size={size} data-testid={testId}>
       <img
         src={src}
-        alt={file.filename}
+        alt={captionOf(file)}
         loading="lazy"
         draggable={false}
         onError={() => {
-          // No thumbnail (too large to make one): the original, else a label.
-          const original = attachmentUrl(showId, file.id);
+          // No thumbnail after all: the original, else a label.
           if (src !== original) setSrc(original);
           else setFailed(true);
         }}
@@ -262,6 +281,18 @@ export function AttachmentsField({
   const add = (list: File[]) => {
     if (list.length) uploadQueue.add(ws.showId, { table, recordId, field }, list);
   };
+  /** Caption edits: `custom.caption` (cleared when it's empty or just the filename). */
+  const setCaption = (file: AttachmentRow, caption: string) => {
+    const text = caption.trim();
+    const value = text && text !== file.filename ? text : null;
+    const current = (file.custom as { caption?: unknown }).caption ?? null;
+    if (value === current) return;
+    store
+      .mutate([
+        { op: "update", table: "attachments", id: file.id, fields: { custom: { caption: value } } },
+      ])
+      .catch((e: unknown) => ws.reportError(e, "save the caption"));
+  };
   const move = (file: AttachmentRow, to: number) => {
     store
       .mutate([
@@ -305,18 +336,42 @@ export function AttachmentsField({
       {files.length > 0 ? (
         <ul className={styles.files} aria-label={label}>
           {files.map((f, i) => (
-            <li key={f.id} className={styles.file} data-testid="attachment">
+            <li
+              key={f.id}
+              className={styles.file}
+              data-testid="attachment"
+              data-image={isImage(f) || undefined}
+            >
               <button
                 type="button"
                 className={styles.fileOpen}
                 aria-label={`Open ${f.filename}`}
                 onClick={() => openLightbox({ table, recordId, field, attachmentId: f.id })}
               >
-                <Thumb file={f} size="lg" showId={ws.showId} />
+                {isImage(f) ? (
+                  // Images full width (ux.md §Images), the original, not the thumbnail.
+                  <img
+                    className={styles.fullImage}
+                    src={attachmentUrl(ws.showId, f.id)}
+                    alt={captionOf(f)}
+                    loading="lazy"
+                    draggable={false}
+                    data-testid="attachment-image"
+                  />
+                ) : (
+                  <Thumb file={f} size="md" showId={ws.showId} />
+                )}
               </button>
-              <span className={styles.fileName} title={`${f.filename} · ${formatBytes(f.size)}`}>
-                {f.filename}
-              </span>
+              <div className={styles.fileText}>
+                {canEdit ? (
+                  <Caption file={f} onCommit={(caption) => setCaption(f, caption)} />
+                ) : (
+                  <span className={styles.caption}>{captionOf(f)}</span>
+                )}
+                <span className={styles.fileName} title={`${f.filename} · ${formatBytes(f.size)}`}>
+                  {f.filename} · {formatBytes(f.size)}
+                </span>
+              </div>
               {canEdit && (
                 <span className={styles.fileActions}>
                   <button
@@ -326,7 +381,7 @@ export function AttachmentsField({
                     disabled={i === 0}
                     onClick={() => move(f, i - 1)}
                   >
-                    ←
+                    ↑
                   </button>
                   <button
                     type="button"
@@ -335,7 +390,7 @@ export function AttachmentsField({
                     disabled={i === files.length - 1}
                     onClick={() => move(f, i + 1)}
                   >
-                    →
+                    ↓
                   </button>
                   <button
                     type="button"
@@ -402,6 +457,50 @@ export function AttachmentsField({
         </span>
       )}
     </fieldset>
+  );
+}
+
+/** A caption input: a local draft while focused; Enter or leaving saves, Escape reverts. */
+function Caption({ file, onCommit }: { file: AttachmentRow; onCommit: (caption: string) => void }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  // The live draft, so Enter/Escape followed by the blur they cause commits at most once
+  // (and Escape not at all), whatever render the handlers closed over.
+  const live = useRef<string | null>(null);
+  const edit = (value: string | null) => {
+    live.current = value;
+    setDraft(value);
+  };
+  const shown = draft ?? captionOf(file);
+  const finish = () => {
+    const value = live.current;
+    if (value === null) return;
+    edit(null);
+    onCommit(value);
+  };
+  return (
+    <input
+      type="text"
+      className={styles.captionInput}
+      aria-label={`Caption for ${file.filename}`}
+      value={shown}
+      maxLength={500}
+      onFocus={() => edit(captionOf(file))}
+      onChange={(e) => edit(e.target.value)}
+      onBlur={finish}
+      onKeyDown={(e) => {
+        if (e.nativeEvent.isComposing) return;
+        if (e.key === "Enter") {
+          e.preventDefault();
+          finish();
+          e.currentTarget.blur();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          edit(null);
+          e.currentTarget.blur();
+        }
+      }}
+    />
   );
 }
 
@@ -532,6 +631,11 @@ function Lightbox() {
           <h2 className={styles.lbTitle} data-testid="lightbox-filename" title={file.filename}>
             {file.filename}
           </h2>
+          {captionOf(file) !== file.filename && (
+            <span className={styles.lbCaption} data-testid="lightbox-caption">
+              {captionOf(file)}
+            </span>
+          )}
           <span className={styles.lbCount} data-testid="lightbox-count">
             {index + 1} / {files.length} · {formatBytes(file.size)}
           </span>

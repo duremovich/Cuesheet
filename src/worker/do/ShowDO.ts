@@ -64,6 +64,8 @@ export interface PendingUpload {
   contentType: string;
   size: number;
   originalSize?: { width: number; height: number };
+  /** Where it goes among the record's files: reserved in order, so a drop keeps its order. */
+  position: number;
   expiresAt: number;
 }
 
@@ -180,6 +182,14 @@ export class ShowDO extends DurableObject<Env> {
     const meta = await this.getMeta();
     const { due, next } = dueR2Deletes(this.ctx.storage.sql, now);
     if (meta && due.length > 0) {
+      // Off the list first (synchronously): from here on a restore can't pick these up,
+      // so no row can come back pointing at a file that's about to go.
+      for (const d of due) {
+        this.ctx.storage.sql.exec(
+          "DELETE FROM pending_r2_deletes WHERE attachment_id = ?",
+          d.attachment_id,
+        );
+      }
       const keys = due.flatMap((d) => [d.r2_key, thumbnailKey(meta.showId, d.attachment_id)]);
       await this.env.FILES.delete(keys);
       const bytes = due.reduce((n, d) => n + d.size, 0);
@@ -189,12 +199,6 @@ export class ShowDO extends DurableObject<Env> {
         )
           .bind(bytes, meta.showId)
           .run();
-      }
-      for (const d of due) {
-        this.ctx.storage.sql.exec(
-          "DELETE FROM pending_r2_deletes WHERE attachment_id = ?",
-          d.attachment_id,
-        );
       }
     }
     // More than one batch due (500 at a time) → again soon; else when the next one is due.
@@ -238,12 +242,35 @@ export class ShowDO extends DurableObject<Env> {
    * Remember a reserved upload until its PUT (an hour at most). Expired reservations are
    * dropped here.
    */
-  async reserveUpload(id: string, upload: Omit<PendingUpload, "expiresAt">): Promise<void> {
+  async reserveUpload(
+    id: string,
+    upload: Omit<PendingUpload, "expiresAt" | "position">,
+  ): Promise<void> {
     const now = Date.now();
     const all = await this.ctx.storage.list<PendingUpload>({ prefix: UPLOAD_PREFIX });
     const stale = [...all].filter(([, u]) => u.expiresAt < now).map(([k]) => k);
     if (stale.length) await this.ctx.storage.delete(stale);
-    await this.ctx.storage.put(UPLOAD_PREFIX + id, { ...upload, expiresAt: now + UPLOAD_TTL_MS });
+    // After the record's files and the uploads already reserved for it (in reserve order).
+    const { p } = this.ctx.storage.sql
+      .exec<{ p: number | null }>(
+        'SELECT max(position) AS p FROM attachments WHERE "table" = ? AND record_id = ? AND field = ?',
+        upload.table,
+        upload.recordId,
+        upload.field,
+      )
+      .one();
+    let position = (p ?? 0) + 1;
+    for (const [k, u] of all) {
+      if (stale.includes(k)) continue;
+      if (u.table === upload.table && u.recordId === upload.recordId && u.field === upload.field) {
+        position = Math.max(position, (u.position ?? 0) + 1);
+      }
+    }
+    await this.ctx.storage.put(UPLOAD_PREFIX + id, {
+      ...upload,
+      position,
+      expiresAt: now + UPLOAD_TTL_MS,
+    });
   }
 
   /** Claim a reserved upload (once): only by the user who reserved it, before it expires. */

@@ -44,7 +44,8 @@ CREATE TABLE `pending_r2_deletes` (
 	`attachment_id` text PRIMARY KEY NOT NULL,
 	`r2_key` text NOT NULL,
 	`size` integer NOT NULL,
-	`deleted_at` integer NOT NULL
+	`deleted_at` integer NOT NULL,
+	`row` text NOT NULL
 );
 --> statement-breakpoint
 CREATE INDEX `pending_r2_deletes_at_idx` ON `pending_r2_deletes` (`deleted_at`);--> statement-breakpoint

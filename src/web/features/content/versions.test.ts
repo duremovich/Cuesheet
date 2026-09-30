@@ -192,6 +192,27 @@ describe("content versions in the optimistic store (mirrors the op engine)", () 
     ]);
   });
 
+  it("un-currenting the current version promotes the newest other one", () => {
+    let d = withContent();
+    d = run(
+      d,
+      ["a", "b", "c"].map((id, i) => ({
+        op: "create" as const,
+        table: "content_versions" as const,
+        id,
+        fields: { content_id: "c1", version: `V0${i + 1}` },
+      })),
+    );
+    d = run(d, [
+      { op: "update", table: "content_versions", id: "a", fields: { is_current: false } },
+    ]);
+    expect(cur(d)).toEqual([
+      ["V01", false],
+      ["V02", false],
+      ["V03", true],
+    ]);
+  });
+
   it("deleting content deletes its versions and attachments", () => {
     let d = withContent();
     d = run(d, [

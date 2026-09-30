@@ -18,11 +18,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { thumbnailUrl } from "../../../shared/attachments";
 import type { AttachmentRow } from "../../../shared/tables";
 import { optionColor } from "../../components/grid/Chip";
 import type { ColorRule, Column, DataGridHandle, Group } from "../../components/grid/types";
 import { formatValue } from "../../components/grid/values";
+import { Thumb } from "../attachments/Attachments";
 import styles from "./Gallery.module.css";
 import {
   cardRowHeight,
@@ -303,12 +303,12 @@ export function Gallery<V>(p: GalleryProps<V>) {
                   >
                     <div className={styles.image} style={{ height: Math.round(cw * 0.75) }}>
                       {file ? (
-                        <img
-                          src={thumbnailUrl(p.showId, file.id)}
-                          alt={file.filename}
-                          loading="lazy"
-                          draggable={false}
-                          data-testid="gallery-image"
+                        <Thumb
+                          key={file.id}
+                          file={file}
+                          size="fill"
+                          showId={p.showId}
+                          testId="gallery-image"
                         />
                       ) : (
                         <span className={styles.placeholder}>{title}</span>
