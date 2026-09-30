@@ -38,6 +38,14 @@ async function openPanel(page: Page, name: string) {
   return d;
 }
 
+/** Fields popover → "Fields…" (the manager, above the column list). */
+async function openFieldsManager(page: Page) {
+  const fields = await openPanel(page, "Fields");
+  await fields.getByRole("button", { name: "Fields…" }).click();
+  await expect(fields.getByRole("button", { name: "+ Add field" })).toBeVisible();
+  return fields;
+}
+
 async function closePanel(page: Page, name: string) {
   await page.keyboard.press("Escape");
   await expect(panel(page, name)).toHaveCount(0);
@@ -50,7 +58,7 @@ async function addField(
   type: string,
   fill?: (form: Locator) => Promise<void>,
 ) {
-  const fields = await openPanel(page, "Fields");
+  const fields = await openFieldsManager(page);
   await fields.getByRole("button", { name: "+ Add field" }).click();
   const form = fields.getByTestId("field-form");
   await form.getByLabel("Field name").fill(name);
@@ -140,7 +148,7 @@ test("a formula custom field on Surfaces reads PPI", async ({ browser }) => {
   await page.keyboard.press("Enter");
   await expect(cellOf(lpro, "custom.double_ppi")).toHaveText("43.35");
   // A formula error is a value, not a crash.
-  const fields = await openPanel(page, "Fields");
+  const fields = await openFieldsManager(page);
   await fields.getByRole("button", { name: "Edit field Double PPI" }).click();
   await fields.getByLabel("Formula", { exact: true }).fill("{PPI} / 0");
   await fields.getByRole("button", { name: "Save field" }).click();
@@ -252,7 +260,7 @@ test("the Fields manager at 390 px", async ({ browser }) => {
     await form.getByRole("button", { name: "+ Add option" }).click();
     await form.getByLabel("Option 1", { exact: true }).fill("Dark");
   });
-  const fields = await openPanel(page, "Fields");
+  const fields = await openFieldsManager(page);
   await fields.getByRole("button", { name: "Edit field Mood" }).click();
   await expect(fields.getByTestId("field-form")).toBeVisible();
   const overflow = await page.evaluate(

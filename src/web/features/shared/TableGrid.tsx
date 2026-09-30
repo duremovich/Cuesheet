@@ -95,6 +95,8 @@ export interface TableConfig<V> {
     rowOf: (v: V) => { id: string; custom: CustomValues };
     /** Names formulas may use besides the columns (a surface's storage fields). */
     fallbackRecord?: (v: V) => FormulaRecord;
+    /** Who may edit the values (default: editors); notes: commenters on their own notes. */
+    editable?: (v: V) => boolean;
   };
   /** Per-cell warnings and ghosts (shot numbers). Keep it stable. */
   cellDecoration?: (v: V, key: string) => CellDecoration | undefined;
@@ -130,7 +132,7 @@ export function TableGrid<V>(config: TableConfig<V>) {
     fieldTable: custom?.fieldTable ?? "",
     table: info.table,
     rowOf: custom?.rowOf ?? noRow,
-    editable: ws.canEdit,
+    editable: custom?.editable ?? ws.canEdit,
     baseColumns: config.columns,
     rows: all,
     ...(custom?.fallbackRecord ? { fallbackRecord: custom.fallbackRecord } : {}),

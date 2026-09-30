@@ -191,7 +191,7 @@ describe("Airtable import", () => {
       custom_rows: 1,
       custom_fields: 2,
     });
-    expect((await importCsv(show.id, admin, new FormData())).status).toBe(400);
+    expect((await importCsv(show.id, admin, new FormData(), "?append=1")).status).toBe(400);
   });
 
   it("refuses to import into a show that has data unless asked to append", async () => {

@@ -202,12 +202,21 @@ export class LocalOpError extends Error {}
 export function resolveLocal(data: ShowData, ops: AnyOp[], ctx: LocalContext): AnyResolvedOp[] {
   const out: AnyResolvedOp[] = [];
   let state = data;
-  for (const op of ops) {
-    if (isMetaOp(op)) {
+  for (const requested of ops) {
+    if (isMetaOp(requested)) {
       // Resolves to itself (the server validates the unit).
-      state = applyResolved(state, [op]);
-      out.push(op);
+      state = applyResolved(state, [requested]);
+      out.push(requested);
       continue;
+    }
+    let op: Op = requested;
+    if (op.op === "update" && op.table === "custom_fields" && "renames" in op.fields) {
+      // Renamed select choices: the rows' values follow first (like the server).
+      const { renames, ...rest } = op.fields;
+      const more = renameOps(state, op.id, renames, ctx);
+      state = applyResolved(state, more);
+      out.push(...more);
+      op = { ...op, fields: rest };
     }
     const resolved = resolveOne(state, op, ctx);
     state = applyResolved(state, resolved);
@@ -262,6 +271,38 @@ function rowsWithKey(
   return out;
 }
 
+/** Like the server's `renameChoices` (stored values; the server also rewrites views). */
+function renameOps(data: ShowData, fieldId: string, raw: unknown, ctx: LocalContext): ResolvedOp[] {
+  const f = data.tables.custom_fields.get(fieldId);
+  if (!f || !Array.isArray(raw)) return [];
+  const map = new Map<string, string>();
+  for (const r of raw as { from?: unknown; to?: unknown }[]) {
+    if (typeof r?.from === "string" && typeof r.to === "string" && r.from !== r.to) {
+      map.set(r.from, r.to);
+    }
+  }
+  if (map.size === 0) return [];
+  const stamp = { updated_at: ctx.now, updated_by: ctx.userId };
+  const out: ResolvedOp[] = [];
+  for (const { table, row } of rowsWithKey(data, f.table, f.key)) {
+    const v = row.custom[f.key];
+    const next =
+      typeof v === "string"
+        ? (map.get(v) ?? v)
+        : Array.isArray(v)
+          ? [...new Set(v.map((x) => (typeof x === "string" ? (map.get(x) ?? x) : x)))]
+          : v;
+    if (jsonEqual(next, v)) continue;
+    out.push({
+      op: "update",
+      table,
+      id: row.id,
+      fields: { custom: { ...row.custom, [f.key]: next as never }, ...stamp },
+    });
+  }
+  return out;
+}
+
 /** Like the server: values that no longer fit a changed field are cleared. */
 function refitOps(
   data: ShowData,
@@ -274,7 +315,7 @@ function refitOps(
   const out: ResolvedOp[] = [];
   for (const { table, row } of rowsWithKey(data, after.table, after.key)) {
     const v = row.custom[after.key];
-    const next = refitValue(before.type, after, v);
+    const next = refitValue(before, after, v);
     if (jsonEqual(next ?? null, v ?? null)) continue;
     const custom = { ...row.custom };
     if (next === null) delete custom[after.key];

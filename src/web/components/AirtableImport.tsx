@@ -135,10 +135,12 @@ export function AirtableImport({
     if (files.length === 0) return;
     // Asked right away (before reading the files), so the question comes with the click.
     const state = store.getState();
-    if (DATA_TABLES.some((t) => state.tables[t].size > 0)) {
+    if (DATA_TABLES.some((t) => state.tables[t].size > 0) || state.tables.custom_rows.size > 0) {
       const n = state.order.cues.length;
+      const what =
+        n > 0 || state.tables.custom_rows.size === 0 ? `${n} ${n === 1 ? "cue" : "cues"}` : "data";
       const ok = window.confirm(
-        `This show already has ${n} ${n === 1 ? "cue" : "cues"}. Import anyway? Rows will be added, not merged.`,
+        `This show already has ${what}. Import anyway? Rows will be added, not merged.`,
       );
       if (!ok) return;
     }
@@ -158,7 +160,8 @@ export function AirtableImport({
     // The server refuses (409) to import into a show with data unless told to append (the
     // user agreed to that when choosing the files).
     const state = store.getState();
-    const append = DATA_TABLES.some((t) => state.tables[t].size > 0);
+    const append =
+      DATA_TABLES.some((t) => state.tables[t].size > 0) || state.tables.custom_rows.size > 0;
     setPreview(null);
     setBusy(true);
     setError(null);

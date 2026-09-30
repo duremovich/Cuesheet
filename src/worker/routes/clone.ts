@@ -10,7 +10,7 @@ import {
   MAX_NAME_LENGTH,
   type ShowSummaryDTO,
 } from "../../shared/api";
-import { customTableId, customTableRef } from "../../shared/custom-fields";
+import { customTableId, customTableRef, isStoredType } from "../../shared/custom-fields";
 import { newId } from "../../shared/ids";
 import type { AnyOp, SnapshotResponse } from "../../shared/ops";
 import type { ViewRow } from "../../shared/tables";
@@ -35,6 +35,55 @@ function remapIds(v: unknown, ids: ReadonlyMap<string, string>): unknown {
     );
   }
   return v;
+}
+
+/**
+ * `custom` values worth copying onto a scene / surface: those of defined, stored fields that
+ * don't point at other records (links, files); free-form keys stay behind.
+ */
+function copiedCustom(
+  snap: SnapshotResponse,
+  table: string,
+  custom: Record<string, unknown>,
+): Record<string, unknown> {
+  const keep = new Set(
+    snap.tables.custom_fields
+      .filter((f) => f.table === table && f.type !== "link" && isStoredType(f.type))
+      .map((f) => f.key),
+  );
+  return Object.fromEntries(Object.entries(custom).filter(([k]) => keep.has(k)));
+}
+
+/** A view config without the given record ids (filters on scenes that weren't copied). */
+function withoutIds(config: unknown, drop: ReadonlySet<string>): unknown {
+  if (drop.size === 0 || !config || typeof config !== "object") return config;
+  const c = config as { filters?: unknown; colorRules?: unknown };
+  const fix = (list: unknown) =>
+    Array.isArray(list)
+      ? list.flatMap((f) => {
+          if (!f || typeof f !== "object") return [f];
+          const v = (f as { value?: unknown }).value;
+          if (typeof v === "string" && drop.has(v)) return [];
+          if (Array.isArray(v)) {
+            const kept = v.filter((x) => !(typeof x === "string" && drop.has(x)));
+            if (kept.length === 0 && v.length > 0) return [];
+            return [{ ...f, value: kept }];
+          }
+          return [f];
+        })
+      : list;
+  return {
+    ...c,
+    filters: fix(c.filters),
+    colorRules: Array.isArray(c.colorRules)
+      ? c.colorRules.flatMap((r) => {
+          if (!r || typeof r !== "object") return [r];
+          const when = fix((r as { when?: unknown }).when) as unknown[];
+          const before = (r as { when?: unknown[] }).when ?? [];
+          return when.length === 0 && before.length > 0 ? [] : [{ ...r, when }];
+        })
+      : c.colorRules,
+  };
 }
 
 /** The ops that copy `snap`'s structure, one list per table (applied in this order). */
@@ -75,6 +124,7 @@ export function cloneOps(
         throw_distance: s.throw_distance,
         lens_ratio: s.lens_ratio,
         description: s.description,
+        custom: copiedCustom(snap, "surfaces", s.custom),
       },
     });
   }
@@ -107,6 +157,7 @@ export function cloneOps(
           stage_direction: s.stage_direction,
           description: s.description,
           video_overview: s.video_overview,
+          custom: copiedCustom(snap, "scenes", s.custom),
         },
       });
       for (const surfaceId of snap.joins.sceneSurfaces[s.id] ?? []) {
@@ -172,6 +223,7 @@ export function cloneOps(
   // views make way for the copies of a table that has any.
   const views: AnyOp[] = [];
   const shared = t.views.filter((v) => v.owner_user_id === null);
+  const dropped = new Set(opts.includeScenes ? [] : t.scenes.map((s) => s.id));
   for (const v of shared) {
     const table = mapTable(v.table);
     if (!table) continue;
@@ -184,12 +236,19 @@ export function cloneOps(
         name: v.name,
         is_default: v.is_default,
         position: v.position,
-        config: remapIds(v.config, ids),
+        config: remapIds(withoutIds(v.config, dropped), ids),
       },
     });
   }
   batches.push(views);
-  return { batches: batches.filter((b) => b.length > 0), ids };
+  // Definitions before the rows that carry custom values (so those are checked on the way in).
+  const rank = (b: AnyOp[]) => {
+    const first = b[0];
+    const table = first && first.op !== "meta" ? first.table : "meta";
+    return ["meta", "custom_tables", "custom_fields", "surfaces", "scenes", "views"].indexOf(table);
+  };
+  const ordered = batches.filter((b) => b.length > 0).sort((a, b) => rank(a) - rank(b));
+  return { batches: ordered, ids };
 }
 
 export async function cloneShow(c: C): Promise<Response> {
@@ -211,12 +270,8 @@ export async function cloneShow(c: C): Promise<Response> {
   const id = crypto.randomUUID();
   const createdAt = Date.now();
   const userId = c.var.user.id;
-  await c.var.db.batch([
-    c.var.db
-      .insert(schema.shows)
-      .values({ id, name, createdBy: userId, createdAt, isTemplate: asTemplate }),
-    c.var.db.insert(schema.memberships).values({ showId: id, userId, role: "owner", createdAt }),
-  ]);
+  // The new show's data first; the D1 rows (which make it exist for anyone) only once every
+  // batch went in. A failed copy leaves an unreachable object behind, never a half show.
   const target = showStub(c.env, id);
   await target.sync(id, name);
   const ctx: MutationContext = { userId, role: "owner", clientId: null };
@@ -236,6 +291,12 @@ export async function cloneShow(c: C): Promise<Response> {
       }
     }
   }
+  await c.var.db.batch([
+    c.var.db
+      .insert(schema.shows)
+      .values({ id, name, createdBy: userId, createdAt, isTemplate: asTemplate }),
+    c.var.db.insert(schema.memberships).values({ showId: id, userId, role: "owner", createdAt }),
+  ]);
   const show: ShowSummaryDTO = { id, name, role: "owner", createdAt, isTemplate: asTemplate };
   return c.json({ show } satisfies CloneShowResponse, 201);
 }

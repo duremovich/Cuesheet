@@ -643,12 +643,22 @@ export function sanitizeViewConfig(
  */
 function dropDeletedCustomFields(c: ViewConfig, known: Record<string, ViewFieldSpec>): ViewConfig {
   const gone = (key: string) => key.startsWith("custom.") && !Object.hasOwn(known, key);
-  const keepFilter = (f: Filter) => !gone(f.key);
+  // A custom field whose type changed: filters with an operator its kind doesn't take go.
+  const keepFilter = (f: Filter) => {
+    if (gone(f.key)) return false;
+    const kind = f.key.startsWith("custom.") ? known[f.key]?.kind : undefined;
+    return !kind || OPS_BY_KIND[kind].includes(f.op);
+  };
+  const groupKey = c.group.key;
+  const staleGroup =
+    groupKey?.startsWith("custom.") &&
+    (gone(groupKey) ||
+      !(GROUPABLE_KINDS.has(known[groupKey]?.kind as FieldKind) || known[groupKey]?.groupable));
   return {
     ...c,
     filters: c.filters.filter(keepFilter),
     sorts: c.sorts.filter((s) => !gone(s.key)),
-    group: c.group.key !== null && gone(c.group.key) ? { key: null } : c.group,
+    group: staleGroup ? { key: null } : c.group,
     fields: c.fields.filter((f) => !gone(f.key)),
     colorRules: c.colorRules.flatMap((r) => {
       if (r.target !== "row" && gone(r.target.cell)) return [];

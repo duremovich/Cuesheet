@@ -24,7 +24,12 @@ const DONE_COLLAPSED = [statusGroupId("Done")];
 const ADD_TO_OPEN = { groupId: statusGroupId("Open") };
 const selectState = (s: ShowState) => s;
 
-const CUSTOM = { fieldTable: "notes", rowOf: (v: NoteView) => v.note };
+// Custom values follow the note's own editability (commenters: their own notes).
+const CUSTOM = {
+  fieldTable: "notes",
+  rowOf: (v: NoteView) => v.note,
+  editable: (v: NoteView) => v.editable,
+};
 
 export function NotesGrid() {
   const ws = useWorkspace();

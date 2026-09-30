@@ -66,8 +66,9 @@ describe("view export mapping", () => {
   it("shows values as the grid does; sensitive columns left out", () => {
     const out = exportRows({ columns, rows, isSection: (r) => !!r.section });
     expect(out).toEqual([
-      ["Cue", "Width", "Who", "Date", "PPI", "Done"],
-      ["2", "450.0 cm", "Casey, Riley, Jr.", "2026-09-30", "10.84", "true"],
+      // Measurements: plain numbers in the active unit, the unit in the header.
+      ["Cue", "Width (cm)", "Who", "Date", "PPI", "Done"],
+      ["2", "450", "Casey, Riley, Jr.", "2026-09-30", "10.84", "true"],
       ["1", "", "", "", "#DIV/0", "false"],
     ]);
   });
@@ -93,5 +94,15 @@ describe("view export mapping", () => {
       ["101 Open", "1"],
       ["101 Open", "2"],
     ]);
+  });
+
+  it("no duplicate group column when the grouped field is a visible column", () => {
+    const out = exportRows({
+      columns: columns.slice(0, 1),
+      groups: [{ id: "g1", title: "2", rows: rows.slice(0, 1) }],
+      groupTitle: "Cue",
+      groupKey: "number",
+    });
+    expect(out).toEqual([["Cue"], ["2"]]);
   });
 });

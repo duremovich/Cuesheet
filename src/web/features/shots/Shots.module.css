@@ -33,3 +33,24 @@
   flex-wrap: wrap;
   gap: var(--space-2);
 }
+
+.details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 1;
+}
+
+.detail {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 13px;
+  min-width: 0;
+}
+
+.detail input {
+  min-width: 0;
+  max-width: 14em;
+}

@@ -179,7 +179,7 @@ export interface ViewState<V> {
   /** The saved view shown (null: the built-in default), e.g. for the Print view link. */
   viewId: string | null;
   /** Download the view as CSV (R26). */
-  exportCsv: (opts?: ExportOptions & { bom?: boolean }) => void;
+  exportCsv: (opts?: ExportOptions & { bom?: boolean; excelSafe?: boolean }) => void;
 }
 
 const NO_IDS: string[] = [];
@@ -1011,7 +1011,7 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
   const exportRef = useRef({ columns, out, sort, allColumns, groupField, current, setup });
   exportRef.current = { columns, out, sort, allColumns, groupField, current, setup };
   const exportCsv = useCallback(
-    (opts: ExportOptions & { bom?: boolean } = {}) => {
+    (opts: ExportOptions & { bom?: boolean; excelSafe?: boolean } = {}) => {
       const x = exportRef.current;
       const rows = exportRows(
         {
@@ -1019,13 +1019,13 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
           ...(x.out.groups ? { groups: x.out.groups } : { rows: x.out.rows ?? [] }),
           sort: x.sort,
           sortColumns: x.allColumns,
-          ...(x.groupField ? { groupTitle: x.groupField.title } : {}),
+          ...(x.groupField ? { groupTitle: x.groupField.title, groupKey: x.groupField.key } : {}),
           ...(x.setup.isSection ? { isSection: x.setup.isSection } : {}),
         },
         opts,
       );
       downloadText(
-        toCsv(rows, { bom: opts.bom ?? false }),
+        toCsv(rows, { bom: opts.bom ?? false, excelSafe: opts.excelSafe ?? true }),
         csvFileName(x.setup.exportTitle ?? table, x.current?.name ?? defaultViewName(table)),
       );
     },

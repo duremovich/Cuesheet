@@ -52,7 +52,9 @@ export interface ViewBarProps<V> {
   /** One-click personal views under My views. */
   viewPresets?: { name: string; config: ViewConfig }[] | undefined;
   /** Export CSV (R26). */
-  onExport?: ((opts: { bom?: boolean; includeSensitive?: boolean }) => void) | undefined;
+  onExport?:
+    | ((opts: { bom?: boolean; includeSensitive?: boolean; excelSafe?: boolean }) => void)
+    | undefined;
   /** Owners may include sensitive (masked) fields in an export. */
   canExportSensitive?: boolean;
 }
@@ -111,6 +113,7 @@ export function ViewBar<V>(p: ViewBarProps<V>) {
 
 function ExportPanel<V>({ onExport, canExportSensitive, columns }: ViewBarProps<V>) {
   const [bom, setBom] = useState(true);
+  const [safe, setSafe] = useState(true);
   const [sensitive, setSensitive] = useState(false);
   const hasSensitive = columns.some((c) => c.masked);
   return (
@@ -123,6 +126,10 @@ function ExportPanel<V>({ onExport, canExportSensitive, columns }: ViewBarProps<
           <label className={styles.check}>
             <input type="checkbox" checked={bom} onChange={(e) => setBom(e.target.checked)} />
             For Excel (UTF-8 byte order mark)
+          </label>
+          <label className={styles.check}>
+            <input type="checkbox" checked={safe} onChange={(e) => setSafe(e.target.checked)} />
+            Excel-safe (cells starting with = + - @ get a leading ')
           </label>
           {hasSensitive && (
             <label className={styles.check}>
@@ -140,7 +147,11 @@ function ExportPanel<V>({ onExport, canExportSensitive, columns }: ViewBarProps<
               type="button"
               className={styles.primary}
               onClick={() => {
-                onExport?.({ bom, includeSensitive: sensitive && !!canExportSensitive });
+                onExport?.({
+                  bom,
+                  excelSafe: safe,
+                  includeSensitive: sensitive && !!canExportSensitive,
+                });
                 close();
               }}
             >
@@ -664,14 +675,29 @@ function FieldsPanel<V>({
   const setOrder = (order: { key: string; hidden: boolean }[]) =>
     actions.update((c) => ({ ...c, fields: withFieldOrder(columns, c, order) }));
   const visibleCount = list.length - hiddenCount;
+  const [managing, setManaging] = useState(false);
   return (
     <Popover
       label="Fields"
       testId="view-fields"
       pressed={hiddenCount > 0}
       button={hiddenCount > 0 ? `Fields (${hiddenCount} hidden)` : "Fields"}
+      onOpenChange={(o) => {
+        if (!o) setManaging(false);
+      }}
     >
       <div className={styles.stack}>
+        {fieldTable && (
+          <button
+            type="button"
+            className={styles.linkButton}
+            aria-expanded={managing}
+            onClick={() => setManaging((m) => !m)}
+          >
+            {canEdit ? "Fields…" : "Custom fields…"}
+          </button>
+        )}
+        {fieldTable && managing && <FieldsManager fieldTable={fieldTable} canEdit={canEdit} />}
         <ul className={styles.fieldList}>
           {list.map((f, i) => (
             <li
@@ -785,7 +811,6 @@ function FieldsPanel<V>({
             </label>
           </div>
         )}
-        {fieldTable && <FieldsManager fieldTable={fieldTable} canEdit={canEdit} />}
       </div>
     </Popover>
   );

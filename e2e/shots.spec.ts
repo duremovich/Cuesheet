@@ -42,11 +42,25 @@ async function serverShots(page: Page, showId: string): Promise<SnapShot[]> {
   return ((await res.json()) as { tables: { shots: SnapShot[] } }).tables.shots;
 }
 
+const current = (page: Page) => page.getByTestId("current-shot-list");
+
+/** The "Current shot list" menu → an item (a list's name, "+ New list…", "Rename…"…). */
+async function listMenu(page: Page, item: string) {
+  await page.getByRole("button", { name: "Current shot list" }).click();
+  // Lists are checkable items (the current one checked); actions are plain items.
+  const menu = page.getByRole("menu");
+  await menu
+    .getByRole("menuitemcheckbox", { name: item, exact: true })
+    .or(menu.getByRole("menuitem", { name: item, exact: true }))
+    .click();
+}
+
 async function newList(page: Page, name: string) {
   page.once("dialog", (d) => void d.accept(name));
-  await page.getByRole("button", { name: "+ New list" }).click();
-  await expect(page.getByLabel("Current shot list")).toHaveValue(/.+/);
-  await expect(page.getByLabel("Current shot list").locator("option:checked")).toHaveText(name);
+  const first = page.getByRole("button", { name: "+ New list", exact: true });
+  if (await first.isVisible()) await first.click();
+  else await listMenu(page, "+ New list…");
+  await expect(current(page)).toHaveText(name);
 }
 
 test("shots: a list, ghost numbers, groups, drag across groups, print preset", async ({
@@ -87,6 +101,7 @@ test("shots: a list, ghost numbers, groups, drag across groups, print preset", a
   await expect(cellOf(rowByShot(page, "2").first(), "number")).toContainText("Duplicate of shot 2");
 
   // Grouped by `group` (the default view).
+  await expect(page.getByRole("button", { name: "Group" })).toHaveText(/Grouped by Group/);
   const headers = grid(page).getByTestId("group-header");
   await expect(headers.filter({ hasText: "Car" })).toBeVisible();
   await expect(headers.filter({ hasText: "Street" })).toBeVisible();
@@ -137,14 +152,23 @@ test("shot lists: rename, a second list, delete; the tab at 390 px", async ({ br
   const showId = await apiCreateShow(page, uniqueName("Phone shots"));
   await page.goto(`/shows/${showId}/shots`);
   await newList(page, "Day 1");
+  // The list's details are edited in place.
+  const details = page.getByTestId("shot-list-details");
+  await details.getByLabel("Location").fill("Stage 4");
+  await details.getByLabel("Location").press("Enter");
+  await expect
+    .poll(async () => {
+      const res = await page.request.get(`/api/shows/${showId}/snapshot`);
+      const snap = (await res.json()) as { tables: { shot_lists: { location: string | null }[] } };
+      return snap.tables.shot_lists.map((l) => l.location);
+    })
+    .toEqual(["Stage 4"]);
   await page.getByRole("button", { name: "+ Add shot" }).click();
   await expect(rows(page)).toHaveCount(1);
   await page.keyboard.press("Escape");
   page.once("dialog", (d) => void d.accept("Pickups"));
-  await page.getByRole("button", { name: "Rename" }).click();
-  await expect(page.getByLabel("Current shot list").locator("option:checked")).toHaveText(
-    "Pickups",
-  );
+  await listMenu(page, "Rename…");
+  await expect(current(page)).toHaveText("Pickups");
   await newList(page, "Day 2");
   await expect(page.getByTestId("shot-empty")).toContainText("No shots in this list yet");
   const overflow = await page.evaluate(
@@ -155,10 +179,11 @@ test("shot lists: rename, a second list, delete; the tab at 390 px", async ({ br
   expect(bar && bar.x + bar.width <= 390).toBe(true);
 
   // Deleting the first list deletes its shot.
-  await page.getByLabel("Current shot list").selectOption({ label: "Pickups" });
+  await listMenu(page, "Pickups");
+  await expect(current(page)).toHaveText("Pickups");
   await expect(rows(page)).toHaveCount(1);
   page.once("dialog", (d) => void d.accept());
-  await page.getByRole("button", { name: "Delete list" }).click();
+  await listMenu(page, "Delete list…");
   await expect.poll(async () => (await serverShots(page, showId)).length).toBe(0);
-  await expect(page.getByLabel("Current shot list").locator("option:checked")).toHaveText("Day 2");
+  await expect(current(page)).toHaveText("Day 2");
 });

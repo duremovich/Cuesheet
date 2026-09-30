@@ -1,6 +1,6 @@
 import Papa from "papaparse";
 import { describe, expect, it } from "vitest";
-import { csvField, csvFileName, toCsv } from "./csv";
+import { csvField, csvFileName, excelSafe, toCsv } from "./csv";
 
 describe("CSV writer", () => {
   it("quotes only what needs quoting, doubling quotes", () => {
@@ -35,5 +35,16 @@ describe("CSV writer", () => {
     expect(csvFileName("Cues", "All cues")).toBe("Cues - All cues.csv");
     expect(csvFileName("A/B: c?")).toBe("A B c.csv");
     expect(csvFileName("", null)).toBe("export.csv");
+  });
+
+  it("Excel-safe: formula-like cells get a leading quote; numbers don't", () => {
+    expect(excelSafe('=HYPERLINK("x")')).toBe('\'=HYPERLINK("x")');
+    expect(excelSafe("+1 555")).toBe("'+1 555");
+    expect(excelSafe("-- cue")).toBe("'-- cue");
+    expect(excelSafe("@sum")).toBe("'@sum");
+    expect(excelSafe("-2.5")).toBe("-2.5");
+    expect(excelSafe("a=b")).toBe("a=b");
+    expect(toCsv([["=1+1", "ok"]], { excelSafe: true })).toBe("'=1+1,ok\r\n");
+    expect(toCsv([["=1+1"]])).toBe("=1+1\r\n");
   });
 });

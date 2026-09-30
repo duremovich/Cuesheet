@@ -65,7 +65,11 @@ export function customTablesInOrder(tables: Map<string, CustomTableRow>): Custom
 export function customRowLabel(data: ShowData, row: CustomRowRow): string {
   const table = data.tables.custom_tables.get(row.table_id);
   const key = table?.primary_field_key;
-  const primary = key ? row.custom[key] : undefined;
+  // A sensitive primary field (a password) never names the row.
+  const primaryField = key
+    ? fieldsFor(data.tables.custom_fields, customTableRef(row.table_id)).find((f) => f.key === key)
+    : undefined;
+  const primary = key && !primaryField?.options.sensitive ? row.custom[key] : undefined;
   if (typeof primary === "string" && primary.trim()) return primary;
   if (typeof primary === "number") return String(primary);
   for (const f of fieldsFor(data.tables.custom_fields, customTableRef(row.table_id))) {
@@ -305,4 +309,18 @@ export function valueCount(data: ShowData, fieldTable: string, key: string): num
   ];
   for (const r of map?.values() ?? []) if (Object.hasOwn(r.custom, key)) n++;
   return n;
+}
+
+/** The `custom` values of every row of a field table. */
+export function customRowsOf(data: ShowData, fieldTable: string): CustomValues[] {
+  const ct = customTableId(fieldTable);
+  if (ct) {
+    return [...data.tables.custom_rows.values()]
+      .filter((r) => r.table_id === ct)
+      .map((r) => r.custom);
+  }
+  const map = (data.tables as Record<string, Map<string, { custom: CustomValues }> | undefined>)[
+    fieldTable
+  ];
+  return [...(map?.values() ?? [])].map((r) => r.custom);
 }

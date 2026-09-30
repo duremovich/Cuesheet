@@ -472,7 +472,8 @@ export class ShowDO extends DurableObject<Env> {
 
   /** True when any core table has rows (import refuses to run into a non-empty show). */
   async hasData(): Promise<boolean> {
-    return DATA_TABLES.some(
+    // Custom tables' rows count too (importing the Network CSV twice would duplicate it).
+    return [...DATA_TABLES, "custom_rows"].some(
       (t) => this.ctx.storage.sql.exec(`SELECT 1 FROM "${t}" LIMIT 1`).toArray().length > 0,
     );
   }

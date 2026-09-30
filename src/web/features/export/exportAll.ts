@@ -99,19 +99,20 @@ export function tableRows(
   });
   const defs = fieldTable ? fieldsFor(data.tables.custom_fields, fieldTable) : [];
   const store = { getState: () => data } as unknown as ShowStore;
-  const custom = customColumns<Raw>(
-    defs.filter((f) => opts.includeSensitive || !f.options.sensitive),
-    {
-      store,
-      table,
-      rowOf: (r) => r as unknown as { id: string; custom: Record<string, never> },
-      editable: false,
-      showId: "",
-      baseColumns: [...base, ...linkCols],
-      sampleRows: rows as unknown as Raw[],
-    },
-  );
-  const cols = [...base.filter((c) => c.key !== "table_id"), ...linkCols, ...custom];
+  const custom = customColumns<Raw>(defs, {
+    store,
+    table,
+    rowOf: (r) => r as unknown as { id: string; custom: Record<string, never> },
+    editable: false,
+    showId: "",
+    baseColumns: [...base, ...linkCols],
+    sampleRows: rows as unknown as Raw[],
+  });
+  const cols = [
+    ...base.filter((c) => c.key !== "table_id"),
+    ...linkCols,
+    ...custom.filter((c) => opts.includeSensitive || !c.masked),
+  ];
   const cell = (c: Column<Raw>, r: Raw): string => {
     const v = c.getValue(r);
     if (c.type === "formula") return formatFormulaValue(v as Value, "m");
@@ -171,7 +172,7 @@ export async function exportZip(
   const { default: JSZip } = await import("jszip");
   const zip = new JSZip();
   const tables = exportAllTables(data, opts);
-  for (const t of tables) zip.file(t.file, toCsv(t.rows, { bom: true }));
+  for (const t of tables) zip.file(t.file, toCsv(t.rows, { bom: true, excelSafe: true }));
   zip.file(
     "manifest.json",
     JSON.stringify(

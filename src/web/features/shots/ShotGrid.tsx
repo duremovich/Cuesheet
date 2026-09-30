@@ -14,6 +14,7 @@ import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
 import { attachmentsOf } from "../attachments/selectors";
 import { cueNumberHints, hintsEqual } from "../cues/cueNumbers";
 import { usePrintMode } from "../print/PrintShell";
+import { MenuButton, type MenuEntry } from "../shared/MenuButton";
 import { groupOrder, placementFor } from "../shared/ops";
 import { contentItem, personItem } from "../shared/pickers";
 import { usePref } from "../shared/prefs";
@@ -234,41 +235,39 @@ export function ShotGrid() {
     setPicked(null);
   };
 
+  const menuItems: MenuEntry[] = [
+    ...sorted.map((l) => ({
+      label: l.name || "Untitled",
+      checked: l.id === listId,
+      onSelect: () => setPicked(l.id),
+    })),
+    ...(canEdit
+      ? [
+          { label: "+ New list…", onSelect: newList },
+          ...(list
+            ? [
+                { label: "Rename…", onSelect: renameList },
+                { label: "Delete list…", onSelect: deleteList },
+              ]
+            : []),
+        ]
+      : []),
+  ];
   const picker = (
     <div className={styles.listBar} data-testid="shot-list-bar">
-      <label className={styles.listPicker}>
-        <span className="muted">Shot list</span>
-        <select
-          aria-label="Current shot list"
-          value={listId ?? ""}
-          disabled={sorted.length === 0}
-          onChange={(e) => setPicked(e.target.value || null)}
-        >
-          {sorted.length === 0 && <option value="">No shot lists</option>}
-          {sorted.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.name || "Untitled"}
-            </option>
-          ))}
-        </select>
-      </label>
-      {canEdit && (
-        <span className={styles.listActions}>
-          <button type="button" className={frame.toolButton} onClick={newList}>
-            + New list
-          </button>
-          {list && (
-            <>
-              <button type="button" className={frame.toolButton} onClick={renameList}>
-                Rename
-              </button>
-              <button type="button" className={frame.toolButton} onClick={deleteList}>
-                Delete list
-              </button>
-            </>
-          )}
-        </span>
+      <span className="muted">Shot list</span>
+      <MenuButton label="Current shot list" items={menuItems}>
+        <span data-testid="current-shot-list">
+          {list ? list.name || "Untitled" : "No shot lists"}
+        </span>{" "}
+        ▾
+      </MenuButton>
+      {canEdit && !list && (
+        <button type="button" className={frame.toolButton} onClick={newList}>
+          + New list
+        </button>
       )}
+      {list && <ListDetails key={list.id} list={list} canEdit={canEdit} />}
     </div>
   );
 
@@ -313,3 +312,38 @@ export function ShotGrid() {
 }
 
 const CUSTOM = { fieldTable: "shots", rowOf: (v: ShotView) => v.shot };
+
+/** The list's shoot date, location and notes, edited in place (Enter or leaving saves). */
+function ListDetails({ list, canEdit }: { list: ShotListRow; canEdit: boolean }) {
+  const ws = useWorkspace();
+  const store = useShowStoreInstance();
+  const save = (field: "shoot_date" | "location" | "notes", value: string) => {
+    const v = value.trim() || null;
+    if (v === (list[field] ?? null)) return;
+    store
+      .mutate([{ op: "update", table: "shot_lists", id: list.id, fields: { [field]: v } }])
+      .catch((e: unknown) => ws.reportError(e, "save the shot list"));
+  };
+  const field = (name: "shoot_date" | "location" | "notes", label: string, type = "text") => (
+    <label className={styles.detail}>
+      <span className="muted">{label}</span>
+      <input
+        type={type}
+        aria-label={label}
+        defaultValue={list[name] ?? ""}
+        readOnly={!canEdit}
+        onBlur={(e) => save(name, e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+        }}
+      />
+    </label>
+  );
+  return (
+    <div className={styles.details} data-testid="shot-list-details">
+      {field("shoot_date", "Shoot date", "date")}
+      {field("location", "Location")}
+      {field("notes", "Notes")}
+    </div>
+  );
+}

@@ -84,6 +84,10 @@ export interface FormulaScope<V> {
   fallback?: ((v: V) => FormulaRecord) | undefined;
 }
 
+const hidden: FormulaError = {
+  error: "Sensitive fields can't be used in formulas",
+  code: "#HIDDEN",
+};
 const circular: FormulaError = {
   error: "Circular reference between formula fields",
   code: "#ERROR",
@@ -120,6 +124,8 @@ export function rowRecord<V>(
     get(name) {
       const col = byName.get(norm(name));
       if (col) {
+        // Sensitive fields (passwords) are never formula inputs.
+        if (col.masked) return hidden;
         const formula = scope.formulas.get(col.key);
         if (formula) return evaluateFormulaField(scope, formula, v, visiting);
         return columnValue(col, col.getValue(v));

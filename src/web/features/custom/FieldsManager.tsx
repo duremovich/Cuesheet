@@ -17,13 +17,22 @@ import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
 import { useWorkspace } from "../show/workspace";
 import styles from "../views/ViewBar.module.css";
 import { compileCached } from "./formula";
-import { fieldsFor, linkTargets, newFieldOps, targetTableLabel, valueCount } from "./model";
+import {
+  customRowsOf,
+  fieldsFor,
+  linkTargets,
+  newFieldOps,
+  targetTableLabel,
+  valueCount,
+} from "./model";
 
 interface Draft {
   id: string | null;
   label: string;
   type: CustomFieldType;
   choices: CustomOption[];
+  /** Each choice's stored value when the form opened (null: added now), for renames. */
+  originals: (string | null)[];
   target: string;
   multiple: boolean;
   formula: string;
@@ -35,6 +44,7 @@ const EMPTY: Omit<Draft, "id"> = {
   label: "",
   type: "text",
   choices: [],
+  originals: [],
   target: "persons",
   multiple: true,
   formula: "",
@@ -48,6 +58,7 @@ function draftOf(f: CustomFieldRow): Draft {
     label: f.label ?? f.key,
     type: f.type,
     choices: f.options.choices ?? [],
+    originals: (f.options.choices ?? []).map((c) => c.value),
     target: f.options.target ?? "persons",
     multiple: f.options.multiple !== false,
     formula: f.options.formula ?? "",
@@ -139,35 +150,77 @@ export function FieldsManager({ fieldTable, canEdit }: { fieldTable: string; can
       }
     }
     const options = optionsOf(draft);
+    const data = store.getState();
+    const rows = (n: number) => `${n} ${n === 1 ? "row" : "rows"}`;
     if (draft.id) {
-      const before = store.getState().tables.custom_fields.get(draft.id);
-      if (before && before.type !== draft.type && !keepsValues(before.type, draft.type)) {
+      const before = data.tables.custom_fields.get(draft.id);
+      if (!before) return;
+      // Renamed choices keep their rows (the server rewrites values and view filters).
+      const isSelect = draft.type === "select" || draft.type === "multiselect";
+      const renames = isSelect
+        ? draft.choices.flatMap((c, i) => {
+            const from = draft.originals[i];
+            const to = c.value.trim();
+            return from && to && from !== to ? [{ from, to }] : [];
+          })
+        : [];
+      const warnings: string[] = [];
+      if (before.type !== draft.type && !keepsValues(before.type, draft.type)) {
         const n = countOf(before);
-        if (
-          n > 0 &&
-          !window.confirm(
-            `Changing the type clears the values in ${n} ${n === 1 ? "row" : "rows"}. Continue?`,
-          )
-        ) {
-          return;
+        if (n > 0) warnings.push(`Changing the type clears the values in ${rows(n)}.`);
+      } else if (isSelect && before.type === draft.type) {
+        const kept = new Set(draft.originals.filter((o): o is string => !!o));
+        const removed = (before.options.choices ?? [])
+          .map((c) => c.value)
+          .filter((v) => !kept.has(v));
+        const n = choiceUseCount(data, fieldTable, before.key, removed);
+        if (n > 0) {
+          warnings.push(
+            `Removing ${removed.map((v) => `"${v}"`).join(", ")} clears it from ${rows(n)}.`,
+          );
+        }
+      } else if (draft.type === "link" && before.type === "link") {
+        if ((before.options.target ?? "") !== draft.target) {
+          const n = countOf(before);
+          if (n > 0) warnings.push(`Linking to another table clears the links in ${rows(n)}.`);
+        } else if (before.options.multiple !== false && !draft.multiple) {
+          const n = manyLinksCount(data, fieldTable, before.key);
+          if (n > 0) warnings.push(`${rows(n)} link more than one record; only the first stays.`);
         }
       }
+      if (warnings.length && !window.confirm(`${warnings.join(" ")} Continue?`)) return;
       store
         .mutate([
           {
             op: "update",
             table: "custom_fields",
             id: draft.id,
-            fields: { label, type: draft.type, options },
+            fields: {
+              label,
+              type: draft.type,
+              options,
+              ...(renames.length ? { renames } : {}),
+            },
           },
         ])
         .catch((e: unknown) => ws.reportError(e, "save the field"));
     } else {
-      const { ops } = newFieldOps(store.getState(), fieldTable, {
+      const { ops, key } = newFieldOps(data, fieldTable, {
         label,
         type: draft.type,
         options: options as Record<string, unknown>,
       });
+      // Rows may already hold values under this key (imported, free-form): the ones that
+      // don't fit the new field are cleared.
+      const n = valueCount(data, fieldTable, key);
+      if (
+        n > 0 &&
+        !window.confirm(
+          `${rows(n)} already ${n === 1 ? "has a value" : "have values"} under "${key}"; values that don't fit a ${CUSTOM_FIELD_TYPE_LABELS[draft.type].toLowerCase()} field are cleared. Continue?`,
+        )
+      ) {
+        return;
+      }
       store.mutate(ops).catch((e: unknown) => ws.reportError(e, "add the field"));
     }
     setDraft(null);
@@ -349,7 +402,12 @@ function FieldForm({
                 className={styles.iconButton}
                 data-destructive
                 aria-label={`Remove option ${i + 1}`}
-                onClick={() => set({ choices: draft.choices.filter((_, j) => j !== i) })}
+                onClick={() =>
+                  set({
+                    choices: draft.choices.filter((_, j) => j !== i),
+                    originals: draft.originals.filter((_, j) => j !== i),
+                  })
+                }
               >
                 ×
               </button>
@@ -369,6 +427,7 @@ function FieldForm({
                     ] as string,
                   },
                 ],
+                originals: [...draft.originals, null],
               })
             }
           >
@@ -463,4 +522,28 @@ function FieldForm({
       </div>
     </form>
   );
+}
+
+/** Rows whose value uses any of `values` (a select's removed choices). */
+function choiceUseCount(
+  data: Parameters<typeof valueCount>[0],
+  fieldTable: string,
+  key: string,
+  values: readonly string[],
+): number {
+  if (values.length === 0) return 0;
+  const set = new Set(values);
+  return customRowsOf(data, fieldTable).filter((c) => {
+    const v = c[key];
+    return typeof v === "string"
+      ? set.has(v)
+      : Array.isArray(v) && v.some((x) => set.has(x as string));
+  }).length;
+}
+
+/** Rows linking more than one record through `key`. */
+function manyLinksCount(data: Parameters<typeof valueCount>[0], fieldTable: string, key: string) {
+  return customRowsOf(data, fieldTable).filter(
+    (c) => Array.isArray(c[key]) && (c[key] as unknown[]).length > 1,
+  ).length;
 }

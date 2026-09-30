@@ -8,6 +8,7 @@ import { emptyData } from "../../lib/show-state";
 import type { ShowStore } from "../../lib/show-store";
 import { customColumns, customEditOps } from "./columns";
 import { formulaDependencies, readsLinks } from "./formula";
+import { customRowLabel } from "./model";
 
 interface Row {
   id: string;
@@ -126,5 +127,41 @@ describe("formula custom fields", () => {
       customEditOps("surfaces", "r1", fields, "custom.who", [{ id: "p1", label: "Casey" }]),
     ).toEqual([{ op: "update", table: "surfaces", id: "r1", fields: { custom: { who: ["p1"] } } }]);
     expect(customEditOps("surfaces", "r1", fields, "name", "x")).toBeNull();
+  });
+
+  it("sensitive values never reach formulas, directly or through a link's name", () => {
+    const secret: Row = { ...row, custom: { pin: "1234", gain: 3 } };
+    const cols = build([
+      field("pin", "text", { sensitive: true }, "PIN"),
+      field("leak", "formula", { formula: '{PIN} & ""' }),
+      field("leak2", "formula", { formula: "LEN(pin)" }),
+    ]);
+    const get = (key: string) => cols.find((c) => c.key === `custom.${key}`)?.getValue(secret);
+    expect(get("leak")).toMatchObject({ code: "#HIDDEN" });
+    expect(get("leak2")).toMatchObject({ code: "#HIDDEN" });
+
+    // A link's records expose their name only, and a sensitive primary never names a row.
+    const data = emptyData();
+    const tableId = "t1";
+    data.tables.custom_tables.set(tableId, {
+      id: tableId,
+      label: "Logins",
+      primary_field_key: "password",
+    } as never);
+    data.tables.custom_fields.set("fp", {
+      ...field("password", "text", { sensitive: true }),
+      id: "fp",
+      table: `custom:${tableId}`,
+    });
+    data.tables.custom_fields.set("fs", {
+      ...field("site", "text"),
+      id: "fs",
+      table: `custom:${tableId}`,
+    });
+    const login = { id: "r", table_id: tableId, custom: { password: "hunter2", site: "wiki" } };
+    expect(customRowLabel(data, login as never)).toBe("wiki");
+    expect(customRowLabel(data, { ...login, custom: { password: "hunter2" } } as never)).toBe(
+      "Untitled",
+    );
   });
 });

@@ -650,3 +650,264 @@ describe("import: other CSVs become custom tables", () => {
     expect(JSON.stringify(history)).not.toContain("REDACTED");
   });
 });
+
+// ---- Review fixes: choice renames, type/target changes, free-form keys, history ----
+
+const viewConfig = (patch: Record<string, unknown> = {}) => ({
+  filters: [],
+  filterMode: "and",
+  sorts: [],
+  sortMode: "none",
+  group: { key: null },
+  fields: [],
+  rowHeight: "normal",
+  frozenCount: 1,
+  colorRules: [],
+  ...patch,
+});
+
+describe("custom fields: changes that rewrite values and views", () => {
+  it("renaming a choice rewrites the rows and the views' filters and color rules", async () => {
+    const stub = await freshShow();
+    const [cue, cue2, f, v] = [newId(), newId(), newId(), newId()];
+    ok(
+      await stub.mutate(ctx(), [
+        field("cues", "cam", "select", { choices: [{ value: "A" }, { value: "B" }] }, f),
+        { op: "create", table: "cues", id: cue, fields: { custom: { cam: "A" } } },
+        { op: "create", table: "cues", id: cue2, fields: { custom: { cam: "B" } } },
+        {
+          op: "create",
+          table: "views",
+          id: v,
+          fields: {
+            table: "cues",
+            name: "Cam A",
+            config: viewConfig({
+              filters: [{ key: "custom.cam", op: "anyOf", value: ["A", "B"] }],
+              colorRules: [
+                {
+                  when: [{ key: "custom.cam", op: "is", value: "A" }],
+                  mode: "and",
+                  target: "row",
+                  color: "red",
+                },
+              ],
+            }),
+          },
+        },
+      ]),
+    );
+    ok(
+      await stub.mutate(ctx(), [
+        {
+          op: "update",
+          table: "custom_fields",
+          id: f,
+          fields: {
+            options: { choices: [{ value: "Alpha" }, { value: "B" }] },
+            renames: [{ from: "A", to: "Alpha" }],
+          },
+        },
+      ]),
+    );
+    const snap = await snapshot(stub);
+    expect(snap.tables.cues.find((c) => c.id === cue)?.custom.cam).toBe("Alpha");
+    expect(snap.tables.cues.find((c) => c.id === cue2)?.custom.cam).toBe("B");
+    const config = snap.tables.views.find((x) => x.id === v)?.config as {
+      filters: { value: unknown }[];
+      colorRules: { when: { value: unknown }[] }[];
+    };
+    expect(config.filters[0]?.value).toEqual(["Alpha", "B"]);
+    expect(config.colorRules[0]?.when[0]?.value).toBe("Alpha");
+    // Renames only for select fields.
+    const t = newId();
+    ok(await stub.mutate(ctx(), [field("cues", "t", "text", {}, t)]));
+    fail(
+      await stub.mutate(ctx(), [
+        {
+          op: "update",
+          table: "custom_fields",
+          id: t,
+          fields: { renames: [{ from: "a", to: "b" }] },
+        },
+      ]),
+    );
+  });
+
+  it("a type change keeps select → text values and drops what views can't use any more", async () => {
+    const stub = await freshShow();
+    const [cue, f, ms, v] = [newId(), newId(), newId(), newId()];
+    ok(
+      await stub.mutate(ctx(), [
+        field("cues", "cam", "select", { choices: [{ value: "A" }] }, f),
+        field("cues", "tags", "multiselect", { choices: [{ value: "x" }, { value: "y" }] }, ms),
+        {
+          op: "create",
+          table: "cues",
+          id: cue,
+          fields: { custom: { cam: "A", tags: ["x", "y"] } },
+        },
+        {
+          op: "create",
+          table: "views",
+          id: v,
+          fields: {
+            table: "cues",
+            name: "By cam",
+            config: viewConfig({
+              group: { key: "custom.cam" },
+              filters: [
+                { key: "custom.cam", op: "anyOf", value: ["A"] },
+                { key: "custom.cam", op: "isNotEmpty" },
+              ],
+              sorts: [{ key: "custom.cam", dir: "asc" }],
+            }),
+          },
+        },
+      ]),
+    );
+    ok(
+      await stub.mutate(ctx(), [
+        { op: "update", table: "custom_fields", id: f, fields: { type: "text", options: {} } },
+        { op: "update", table: "custom_fields", id: ms, fields: { type: "longtext", options: {} } },
+      ]),
+    );
+    const snap = await snapshot(stub);
+    expect(snap.tables.cues[0]?.custom).toEqual({ cam: "A", tags: "x, y" });
+    const config = snap.tables.views.find((x) => x.id === v)?.config;
+    // anyOf doesn't apply to text; grouping by text isn't possible; the rest stays.
+    expect(config).toMatchObject({
+      group: { key: null },
+      filters: [{ key: "custom.cam", op: "isNotEmpty" }],
+      sorts: [{ key: "custom.cam", dir: "asc" }],
+    });
+  });
+
+  it("a link's new target clears it; many → one keeps the first", async () => {
+    const stub = await freshShow();
+    const [cue, p1, p2, s1, f, g] = [newId(), newId(), newId(), newId(), newId(), newId()];
+    ok(
+      await stub.mutate(ctx(), [
+        { op: "create", table: "persons", id: p1, fields: { name: "A" } },
+        { op: "create", table: "persons", id: p2, fields: { name: "B" } },
+        { op: "create", table: "scenes", id: s1, fields: { name: "S" } },
+        field("cues", "who", "link", { target: "persons" }, f),
+        field("cues", "crew", "link", { target: "persons" }, g),
+        {
+          op: "create",
+          table: "cues",
+          id: cue,
+          fields: { custom: { who: [p1, p2], crew: [p2, p1] } },
+        },
+      ]),
+    );
+    ok(
+      await stub.mutate(ctx(), [
+        { op: "update", table: "custom_fields", id: f, fields: { options: { target: "scenes" } } },
+        {
+          op: "update",
+          table: "custom_fields",
+          id: g,
+          fields: { options: { target: "persons", multiple: false } },
+        },
+      ]),
+    );
+    expect((await snapshot(stub)).tables.cues[0]?.custom).toEqual({ crew: [p2] });
+    ok(await stub.mutate(ctx(), [setCustom("cues", cue, { who: [s1] })]));
+  });
+
+  it("free-form keys are capped; a field defined over one keeps only fitting values", async () => {
+    const stub = await freshShow();
+    const [a, b] = [newId(), newId()];
+    ok(
+      await stub.mutate(ctx(), [
+        { op: "create", table: "cues", id: a, fields: { custom: { size: "12" } } },
+        { op: "create", table: "cues", id: b, fields: { custom: { size: 12 } } },
+      ]),
+    );
+    const r = fail(await stub.mutate(ctx(), [setCustom("cues", a, { blob: "x".repeat(17_000) })]));
+    expect(r.error).toMatch(/at most 16 KB/);
+    ok(await stub.mutate(ctx(), [field("cues", "size", "number")]));
+    const snap = await snapshot(stub);
+    expect(snap.tables.cues.find((c) => c.id === a)?.custom).toEqual({});
+    expect(snap.tables.cues.find((c) => c.id === b)?.custom).toEqual({ size: 12 });
+  });
+
+  it("values written while sensitive stay hidden in history after the flag is removed", async () => {
+    const stub = await freshShow();
+    const [cue, f] = [newId(), newId()];
+    ok(
+      await stub.mutate(ctx(), [
+        field("cues", "pin", "text", { sensitive: true }, f),
+        { op: "create", table: "cues", id: cue, fields: {} },
+      ]),
+    );
+    ok(await stub.mutate(ctx(), [setCustom("cues", cue, { pin: "1234" })]));
+    ok(
+      await stub.mutate(ctx(), [
+        { op: "update", table: "custom_fields", id: f, fields: { options: {} } },
+      ]),
+    );
+    ok(await stub.mutate(ctx(), [setCustom("cues", cue, { pin: "5678" })]));
+    const history = await stub.history({ table: "cues", id: cue });
+    const text = JSON.stringify(history);
+    expect(text).not.toContain("1234");
+    expect(text).toContain("5678");
+  });
+});
+
+describe("custom tables: import twice", () => {
+  it("a show with custom-table rows counts as having data (409 without append)", async () => {
+    const admin = await loginAdmin();
+    const show = await createShow(admin, "import-twice");
+    const send = (q = "") => {
+      const form = new FormData();
+      form.append("files", new File([networkCsv], "Network-Grid view.csv", { type: "text/csv" }));
+      return api(`/api/shows/${show.id}/import/airtable${q}`, {
+        method: "POST",
+        body: form,
+        cookie: admin,
+        headers: { Origin: ORIGIN },
+      });
+    };
+    expect((await send()).status).toBe(200);
+    expect((await send()).status).toBe(409);
+    expect((await send("?append=1")).status).toBe(200);
+  });
+
+  it("unreadable values of a chosen type are left empty with a warning", async () => {
+    const admin = await loginAdmin();
+    const show = await createShow(admin, "import-unreadable");
+    const form = new FormData();
+    form.append(
+      "files",
+      new File(['Name,Length,Tags\nA,4.5m,"x, y"\nB,soon,z\n'], "Gear-Grid view.csv", {
+        type: "text/csv",
+      }),
+    );
+    form.append(
+      "mapping",
+      JSON.stringify({
+        tables: [
+          { file: "Gear-Grid view.csv", types: { Length: "measurement", Tags: "multiselect" } },
+        ],
+      }),
+    );
+    const res = await api(`/api/shows/${show.id}/import/airtable`, {
+      method: "POST",
+      body: form,
+      cookie: admin,
+      headers: { Origin: ORIGIN },
+    });
+    expect(res.status, await res.clone().text()).toBe(200);
+    const body = (await res.json()) as ImportResponse;
+    expect(body.warnings).toContain(
+      "Gear: Length: 1 value couldn't be read as measurement; left empty",
+    );
+    const snap = await snapshot(env.SHOW.get(env.SHOW.idFromName(show.id)));
+    expect(snap.tables.custom_rows.map((r) => r.custom)).toEqual([
+      { name: "A", length: 4.5, tags: ["x", "y"] },
+      { name: "B", tags: ["z"] },
+    ]);
+  });
+});

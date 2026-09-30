@@ -17,6 +17,7 @@ import {
   guessFieldType,
   isCustomFieldType,
   slugify,
+  splitList,
 } from "../../shared/custom-fields";
 import { newId } from "../../shared/ids";
 import type { FieldValues, ImportResponse, Op } from "../../shared/ops";
@@ -185,6 +186,25 @@ export function buildAirtableImport(
     custom_fields: 0,
   };
 
+  /**
+   * A CSV cell as a custom field value; a non-empty cell that doesn't read as the field's
+   * type (a bad date, "soon" as a duration) is left empty and counted in a warning.
+   */
+  const unreadable = new Map<string, number>();
+  const cellValue = (
+    where: string,
+    c: { column: string; type: CustomFieldType },
+    r: CsvRow,
+  ): unknown => {
+    const raw = r[c.column];
+    const v = csvValue(c.type, raw);
+    if ((v === null || v === undefined) && raw?.trim()) {
+      const k = `${where}: ${c.column}|${c.type}`;
+      unreadable.set(k, (unreadable.get(k) ?? 0) + 1);
+    }
+    return v;
+  };
+
   // ---- custom fields for unmapped columns of core CSVs (created first) ----
   const takenKeys = new Map<string, Set<string>>();
   for (const f of opts.existingFields ?? []) {
@@ -245,8 +265,8 @@ export function buildAirtableImport(
     if (!cols) return undefined;
     const out: Record<string, unknown> = {};
     for (const c of cols) {
-      const v = csvValue(c.type, r[c.column]);
-      if (v !== null && v !== undefined) out[c.key] = c.type === "multiselect" ? [v] : v;
+      const v = cellValue(`${kindFile.get(kind) ?? kind}`, c, r);
+      if (v !== null && v !== undefined) out[c.key] = v;
     }
     return Object.keys(out).length ? out : undefined;
   };
@@ -304,9 +324,9 @@ export function buildAirtableImport(
           if (r[c.column]?.trim()) files++;
           continue;
         }
-        const v = csvValue(c.type, r[c.column]);
+        const v = cellValue(label, c, r);
         if (v === null || v === undefined) continue;
-        custom[c.key] = c.type === "multiselect" ? [v] : v;
+        custom[c.key] = v;
       }
       ops.push({
         op: "create",
@@ -660,6 +680,12 @@ export function buildAirtableImport(
     }
   }
 
+  for (const [k, n] of unreadable) {
+    const [where, type] = k.split("|");
+    warnings.add(
+      `${where}: ${n} ${n === 1 ? "value" : "values"} couldn't be read as ${type}; left empty`,
+    );
+  }
   return { ops, created, warnings: warnings.list() };
 }
 
@@ -677,10 +703,11 @@ export function versionLabel(raw: string | null): string | null {
 function selectChoices(type: CustomFieldType, rows: CsvRow[], column: string): CustomFieldOptions {
   if (type !== "select" && type !== "multiselect") return {};
   const colors = ["blue", "green", "yellow", "purple", "orange", "teal", "pink", "red", "gray"];
-  const distinct = [...new Set(rows.map((r) => r[column]?.trim() ?? "").filter(Boolean))].slice(
-    0,
-    200,
-  );
+  const values = rows.flatMap((r) => {
+    const t = r[column]?.trim() ?? "";
+    return type === "multiselect" ? splitList(t) : t ? [t] : [];
+  });
+  const distinct = [...new Set(values)].slice(0, 200);
   return {
     choices: distinct.map((value, i) => ({ value, color: colors[i % colors.length] as string })),
   };

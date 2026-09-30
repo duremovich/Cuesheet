@@ -143,16 +143,21 @@ Things the first build had to decide; each is easy to change.
   `camera`), so renaming a field breaks formulas that use its old label: key references
   are the stable form.
 - **Changing a field's type** clears the values that don't fit (text ↔ long text ↔ URL
-  keep them), after a confirmation that says how many rows have values. Removing a select
-  choice clears it from the rows.
+  keep them; a single or multiple select becomes text, "A, B"), after a confirmation that
+  says how many rows have values; views drop the filters, sorts, grouping and color rules
+  that no longer apply. **Renaming a select choice** keeps it on its rows and in view
+  filters; removing a used choice asks first (with the count) and clears it. Pointing a
+  link at another table clears its links; turning off "Allow more than one" keeps each
+  row's first link.
 - **Link fields** store ids on the linking side only; the other side shows them read-only
   (a custom row's panel lists who links to it). Two-way editable links (Airtable's
   automatic reverse field) aren't built.
 - **Sensitive fields** are masked for everyone and revealed per panel visit; they're
-  still synced to every member (no per-role hiding), kept out of history, ⌘K and exports
-  (owners can include them in an export).
-- **Custom field values on notes** are editable by editors only (commenters edit their
-  own notes' core fields).
+  still synced to every member (no per-role hiding), kept out of history (values written
+  while a field was sensitive stay hidden after the flag is removed), formulas (`#HIDDEN`),
+  ⌘K and exports (owners can include them in an export).
+- **CSV exports are "Excel-safe"** by default: a cell starting with `=`, `+`, `-` or `@`
+  gets a leading `'` so spreadsheets don't run it (plain numbers are left alone).
 - **Templates** are shows flagged in D1 (`is_template`): you open and edit them like any
   show; they copy scenes (optional), surfaces, custom fields and tables (no rows), shared
   views and the default unit. Personal views, shot lists and core select options aren't
@@ -182,6 +187,10 @@ Things the first build had to decide; each is easy to change.
   framing and status lists with a real shoot).
 
 ## Answered
+
+- **Custom field values on notes** (M5a review): commenters may edit custom values on
+  their own notes, like the notes' core fields. → CLAUDE.md "Custom fields and custom
+  tables"
 
 - **Resolve → Skip** (M4b): leaves the cue unanchored on the new version, per ux.md: a
   guessed (`changed`) anchor is set to `missing` with no position, so the cue shows in

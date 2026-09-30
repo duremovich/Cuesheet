@@ -103,6 +103,8 @@ export interface BatchResult {
 }
 
 const MAX_TEXT = 100_000;
+/** Custom values without a field definition: at most this much JSON per row. */
+export const MAX_FREE_FORM_BYTES = 16 * 1024;
 /** What history records instead of a sensitive custom field's value. */
 export const HIDDEN_VALUE = "(hidden)";
 /** Largest a row may be, as UTF-8 JSON. */
@@ -603,10 +605,13 @@ export class Batch {
       if (def?.options.sensitive) {
         oldV = oldV === undefined ? undefined : HIDDEN_VALUE;
         newV = newV === undefined ? undefined : HIDDEN_VALUE;
+      } else if (oldV !== undefined && this.wasHidden(table, recordId, field)) {
+        // Written while the field was sensitive: stays hidden after the flag is removed.
+        oldV = HIDDEN_VALUE;
       }
     } else if (field === "*") {
-      oldV = this.redactRow(table, oldV);
-      newV = this.redactRow(table, newV);
+      oldV = this.redactRow(table, oldV, recordId);
+      newV = this.redactRow(table, newV, recordId);
     }
     this.sql.exec(
       'INSERT INTO changes (ts, user_id, "table", record_id, field, old, new, client_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
@@ -731,6 +736,7 @@ export class Batch {
       ...cols.map((c) => encodeValue(c === "custom" ? undefined : fieldSpec(table, c), row[c])),
     );
     this.log(table, id, "*", undefined, row);
+    this.checkFreeFormRow(table, row);
     const { id: _id, ...rest } = row;
     this.resolved.push({
       op: "create",
@@ -745,6 +751,12 @@ export class Batch {
     }
     if (table === "content_versions") this.afterVersionWrite(id);
     if (table === "cue_anchors") this.syncCuePage(row);
+    if (table === "custom_fields") {
+      // A field defined over a key rows already use (free-form values): values that don't
+      // fit the field are cleared.
+      this.fieldDefs = null;
+      this.afterCustomFieldUpdate(null, this.mustGet("custom_fields", id));
+    }
   }
 
   /**
@@ -1047,10 +1059,18 @@ export class Batch {
     this.resolved.push({ op: kind, table, id, fields: changed });
   }
 
-  private update(table: TableName, id: string, fields: FieldValues) {
+  private update(table: TableName, id: string, requested: FieldValues) {
     const before = this.mustGet(table, id);
     this.noteViewOwner(table, id, before);
     this.checkRole(table, before);
+    let fields = requested;
+    // A select field's renamed choices: `renames: [{from, to}]` rewrites the stored values
+    // (and views' filters and color rules) in the same batch, before the new choices apply.
+    if (table === "custom_fields" && "renames" in fields) {
+      const { renames, ...rest } = fields;
+      fields = rest;
+      this.renameChoices(before, renames);
+    }
     const changes: WireRow = {};
     for (const [name, value] of Object.entries(fields)) {
       if (name === "custom") {
@@ -1105,6 +1125,7 @@ export class Batch {
       this.fieldDefs = null;
       this.afterCustomFieldUpdate(before, this.mustGet("custom_fields", id));
     }
+    if ("custom" in changes) this.checkFreeForm(table, id);
     if (table === "views") this.afterViewWrite(id);
     if (table === "content_versions") this.afterVersionWrite(id);
     if (table === "cue_anchors") this.syncCuePage(this.mustGet("cue_anchors", id));
@@ -1261,7 +1282,10 @@ export class Batch {
     this.sql.exec(`DELETE FROM ${q(table)} WHERE id = ?`, id);
     this.log(table, id, "*", decodeRow(table, before), undefined);
     this.resolved.push({ op: "delete", table, id });
-    if (table === "custom_fields") this.fieldDefs = null;
+    if (table === "custom_fields") {
+      this.fieldDefs = null;
+      this.resanitizeViews(String(before.table));
+    }
   }
 
   // ---- custom fields and custom tables (R9; src/shared/custom-fields.ts) ----
@@ -1293,15 +1317,35 @@ export class Batch {
   }
 
   /** A logged create/delete row without its sensitive custom values. */
-  private redactRow(table: TableName, v: unknown): unknown {
+  private redactRow(table: TableName, v: unknown, recordId: string): unknown {
     if (!isPlainObject(v) || !isPlainObject(v.custom)) return v;
     const fieldTable = this.fieldTableOf(table, v);
     if (!fieldTable) return v;
-    const hidden = this.fieldsOf(fieldTable).filter((f) => f.options.sensitive);
-    if (!hidden.some((f) => f.key in (v.custom as object))) return v;
+    const sensitive = new Set(
+      this.fieldsOf(fieldTable)
+        .filter((f) => f.options.sensitive)
+        .map((f) => f.key),
+    );
+    const hide = Object.keys(v.custom).filter(
+      (k) => sensitive.has(k) || this.wasHidden(table, recordId, `custom.${k}`),
+    );
+    if (hide.length === 0) return v;
     const custom = { ...(v.custom as Record<string, unknown>) };
-    for (const f of hidden) if (f.key in custom) custom[f.key] = HIDDEN_VALUE;
+    for (const k of hide) custom[k] = HIDDEN_VALUE;
     return { ...v, custom };
+  }
+
+  /** Whether the last logged write of a record's custom value was hidden (sensitive then). */
+  private wasHidden(table: TableName, recordId: string, field: string): boolean {
+    const last = this.sql
+      .exec<{ new: string | null }>(
+        'SELECT new FROM changes WHERE "table" = ? AND record_id = ? AND field = ? ORDER BY version DESC LIMIT 1',
+        table,
+        recordId,
+        field,
+      )
+      .toArray()[0];
+    return last?.new === JSON.stringify(HIDDEN_VALUE);
   }
 
   /**
@@ -1397,15 +1441,16 @@ export class Batch {
    * After a field's type or options changed: values that no longer fit are cleared (a type
    * change between shapes, a removed select choice), as explicit updates.
    */
-  private afterCustomFieldUpdate(before: DbRow, after: DbRow): void {
+  private afterCustomFieldUpdate(before: DbRow | null, after: DbRow): void {
     const def = toFieldDef(after);
-    const oldType = String(before.type);
+    const old = before ? toFieldDef(before) : { type: def.type };
+    const oldType = old.type;
     const typeChanged = oldType !== def.type;
-    if (!typeChanged && before.options === after.options) return;
+    if (before && !typeChanged && before.options === after.options) return;
     for (const { table, row } of this.rowsWithKey(def.table, def.key)) {
       const custom = parseJson<Record<string, unknown>>(row.custom, {});
       const v = custom[def.key];
-      const next = refitValue(oldType, def, v);
+      const next = refitValue(old, def, v);
       if (sameValue(next, v)) continue;
       const merged = { ...custom };
       if (next === null) delete merged[def.key];
@@ -1413,6 +1458,104 @@ export class Batch {
       this.write(table, row.id as string, row, { custom: merged });
     }
     if (typeChanged && oldType === "attachment") this.removeFieldFiles(def.table, def.key);
+    // Views that use the field drop what no longer applies (operators, grouping).
+    if (before && typeChanged) this.resanitizeViews(def.table);
+  }
+
+  /** Every view of a field table, re-checked against its fields now (stale parts dropped). */
+  private resanitizeViews(fieldTable: string): void {
+    if (!isViewTable(fieldTable)) return;
+    const views = this.sql
+      .exec<DbRow>('SELECT * FROM views WHERE "table" = ? ORDER BY id', fieldTable)
+      .toArray();
+    for (const v of views) {
+      const config = parseJson<unknown>(v.config, null);
+      const r = sanitizeViewConfig(
+        fieldTable,
+        config,
+        viewFieldsFor(fieldTable, this.fieldsOf(fieldTable)),
+      );
+      if ("error" in r || sameValue(r.config, config)) continue;
+      this.noteViewOwner("views", v.id as string, v);
+      this.write("views", v.id as string, v, { config: r.config });
+    }
+  }
+
+  /** Renamed select choices: stored values and view filters / color rules follow. */
+  private renameChoices(field: DbRow, raw: unknown): void {
+    const def = toFieldDef(field);
+    if (def.type !== "select" && def.type !== "multiselect") {
+      this.fail("custom_fields.renames: only select fields have choices");
+    }
+    if (!Array.isArray(raw) || raw.length > 200) this.fail("custom_fields.renames must be a list");
+    const map = new Map<string, string>();
+    for (const r of raw) {
+      if (
+        !isPlainObject(r) ||
+        typeof r.from !== "string" ||
+        typeof r.to !== "string" ||
+        !r.to.trim()
+      ) {
+        this.fail("custom_fields.renames entries need {from, to}");
+      }
+      if (r.from !== r.to) map.set(r.from, r.to);
+    }
+    if (map.size === 0) return;
+    const rename = (v: unknown): unknown =>
+      typeof v === "string"
+        ? (map.get(v) ?? v)
+        : Array.isArray(v)
+          ? [...new Set(v.map((x) => (typeof x === "string" ? (map.get(x) ?? x) : x)))]
+          : v;
+    for (const { table, row } of this.rowsWithKey(def.table, def.key)) {
+      const custom = parseJson<Record<string, unknown>>(row.custom, {});
+      const next = rename(custom[def.key]);
+      if (sameValue(next, custom[def.key])) continue;
+      this.write(table, row.id as string, row, { custom: { ...custom, [def.key]: next } });
+    }
+    const key = `custom.${def.key}`;
+    const views = this.sql
+      .exec<DbRow>('SELECT * FROM views WHERE "table" = ? ORDER BY id', def.table)
+      .toArray();
+    for (const v of views) {
+      const config = parseJson<Record<string, unknown>>(v.config, {});
+      const fix = (list: unknown) =>
+        Array.isArray(list)
+          ? list.map((f) =>
+              isPlainObject(f) && f.key === key ? { ...f, value: rename(f.value) } : f,
+            )
+          : list;
+      const next = {
+        ...config,
+        filters: fix(config.filters),
+        colorRules: Array.isArray(config.colorRules)
+          ? config.colorRules.map((r) => (isPlainObject(r) ? { ...r, when: fix(r.when) } : r))
+          : config.colorRules,
+      };
+      if (sameValue(next, config)) continue;
+      this.noteViewOwner("views", v.id as string, v);
+      this.write("views", v.id as string, v, { config: next });
+    }
+  }
+
+  /** Free-form (undefined) custom keys of a row may take at most 16 KB of JSON together. */
+  private checkFreeForm(table: TableName, id: string): void {
+    const row = this.getRow(table, id);
+    if (row) this.checkFreeFormRow(table, decodeRow(table, row));
+  }
+
+  private checkFreeFormRow(table: TableName, row: Record<string, unknown>): void {
+    if (!isPlainObject(row.custom)) return;
+    const fieldTable = this.fieldTableOf(table, row);
+    const defined = new Set(fieldTable ? this.fieldsOf(fieldTable).map((f) => f.key) : []);
+    const free = Object.fromEntries(Object.entries(row.custom).filter(([k]) => !defined.has(k)));
+    const bytes = byteLength(free);
+    if (bytes > MAX_FREE_FORM_BYTES) {
+      console.warn(`custom values without a field on ${table} ${String(row.id)}: ${bytes} bytes`);
+      this.fail(
+        `${table}: custom values without a field may take at most ${MAX_FREE_FORM_BYTES / 1024} KB`,
+      );
+    }
   }
 
   /** Rows of a field table whose `custom` holds `key`. */

@@ -98,11 +98,34 @@ describe("values and options", () => {
 
   it("refit on a type or choice change", () => {
     const sel = f("multiselect", { choices: [{ value: "B" }] });
-    expect(refitValue("multiselect", sel, ["A", "B"])).toEqual(["B"]);
-    expect(refitValue("multiselect", sel, ["A"])).toBeNull();
-    expect(refitValue("text", f("longtext"), "x")).toBe("x");
-    expect(refitValue("text", f("number"), "3")).toBeNull();
-    expect(refitValue("number", f("number", { decimals: 2 }), 3)).toBe(3);
+    const was = (type: string, options = {}) => ({ type, options });
+    expect(refitValue(was("multiselect"), sel, ["A", "B"])).toEqual(["B"]);
+    expect(refitValue(was("multiselect"), sel, ["A"])).toBeNull();
+    expect(refitValue(was("text"), f("longtext"), "x")).toBe("x");
+    expect(refitValue(was("text"), f("number"), "3")).toBeNull();
+    expect(refitValue(was("number"), f("number", { decimals: 2 }), 3)).toBe(3);
+    // Select → text keeps the value; multi-select → text joins the choices.
+    expect(refitValue(was("select"), f("text"), "A")).toBe("A");
+    expect(refitValue(was("multiselect"), f("longtext"), ["A", "B"])).toBe("A, B");
+    // Links: another target clears; many → one keeps the first.
+    expect(
+      refitValue(was("link", { target: "persons" }), f("link", { target: "cues" }), ["a"]),
+    ).toBeNull();
+    const one = f("link", { target: "persons", multiple: false });
+    const id1 = "0190a000-0000-7000-8000-000000000001";
+    const id2 = "0190a000-0000-7000-8000-000000000002";
+    expect(refitValue(was("link", { target: "persons" }), one, [id1, id2])).toEqual([id1]);
+  });
+
+  it("CSV values of every importable type", () => {
+    expect(csvValue("multiselect", 'A, "B, C", A')).toEqual(["A", "B, C"]);
+    expect(csvValue("datetime", "9/30/2026 7:30pm")).toBe("2026-09-30T19:30");
+    expect(csvValue("duration", "90s")).toBe("0:01:30");
+    expect(csvValue("timecode", "01:00:10:12")).toBe("01:00:10:12");
+    expect(csvValue("measurement", "14'9\"")).toBeCloseTo(4.4958, 4);
+    expect(csvValue("pixel_size", "1920x1080")).toEqual({ w: 1920, h: 1080 });
+    expect(csvValue("duration", "soon")).toBeNull();
+    expect(csvValue("date", "2026-02-30")).toBeNull();
   });
 
   it("view kinds", () => {

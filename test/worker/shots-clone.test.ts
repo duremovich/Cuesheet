@@ -138,16 +138,37 @@ describe("clone / templates", () => {
       newId(),
       newId(),
     ];
+    const person = newId();
+    const cfield = (table: string, key: string, type: string, options = {}): AnyOp => ({
+      op: "create",
+      table: "custom_fields",
+      id: newId(),
+      fields: { table, key, label: key, type, options },
+    });
     const ops: AnyOp[] = [
       { op: "meta", fields: { default_unit: "ft-in" } },
-      { op: "create", table: "surfaces", id: surface, fields: { name: "WALL", width: 4 } },
+      { op: "create", table: "persons", id: person, fields: { name: "Ann" } },
+      cfield("scenes", "mood", "text"),
+      cfield("scenes", "who", "link", { target: "persons" }),
+      cfield("surfaces", "mount", "select", { choices: [{ value: "Truss" }] }),
+      {
+        op: "create",
+        table: "surfaces",
+        id: surface,
+        fields: { name: "WALL", width: 4, custom: { mount: "Truss" } },
+      },
       {
         op: "create",
         table: "surfaces",
         id: region,
         fields: { name: "WALL L", parent_id: surface },
       },
-      { op: "create", table: "scenes", id: scene, fields: { number: "101", name: "Open" } },
+      {
+        op: "create",
+        table: "scenes",
+        id: scene,
+        fields: { number: "101", name: "Open", custom: { mood: "dark", who: [person] } },
+      },
       { op: "link", table: "scenes", id: scene, field: "surfaces", targetId: surface },
       { op: "create", table: "cues", id: cue, fields: { number: "1", scene_id: scene } },
       { op: "create", table: "custom_tables", id: table, fields: { label: "Network" } },
@@ -230,6 +251,10 @@ describe("clone / templates", () => {
     expect(wallL?.parent_id).toBe(wall?.id);
     expect(wall?.id).not.toBe(surface);
     expect(snap.tables.scenes.map((s) => s.number)).toEqual(["101"]);
+    // Custom values on scenes/surfaces are copied, except links (their targets aren't).
+    expect(snap.tables.scenes[0]?.custom).toEqual({ mood: "dark" });
+    expect(snap.tables.surfaces[0]?.custom).toEqual({ mount: "Truss" });
+    expect(snap.tables.persons).toHaveLength(0);
     const newScene = snap.tables.scenes[0]?.id ?? "";
     expect(snap.joins.sceneSurfaces[newScene]).toEqual([wall?.id]);
     expect(snap.tables.cues).toHaveLength(0);
@@ -270,6 +295,9 @@ describe("clone / templates", () => {
       await api(`/api/shows/${second.show.id}/snapshot`, { cookie: admin })
     ).json()) as SnapshotResponse;
     expect(snap2.tables.scenes).toHaveLength(0);
+    // Filters on skipped scenes are dropped rather than left dangling.
+    const byCam2 = snap2.tables.views.find((v) => v.name === "By cam");
+    expect(byCam2?.config).toMatchObject({ filters: [], group: { key: "custom.cam" } });
     expect(snap2.tables.surfaces).toHaveLength(2);
   });
 });

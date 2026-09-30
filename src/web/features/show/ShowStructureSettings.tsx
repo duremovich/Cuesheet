@@ -2,9 +2,17 @@
 // reorder, delete), "Export all tables (zip)" (R26) and "Save as template" (R27).
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
+import { customTableRef } from "../../../shared/custom-fields";
+import type { CustomTableRow } from "../../../shared/tables";
 import { api } from "../../lib/api";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
-import { customTablesInOrder, newCustomTableOps } from "../custom/model";
+import { FieldsManager } from "../custom/FieldsManager";
+import {
+  customTablesInOrder,
+  newCustomTableOps,
+  TARGET_LABELS,
+  targetTableLabel,
+} from "../custom/model";
 import { downloadAll } from "../export/exportAll";
 import styles from "./ShowWorkspace.module.css";
 import { customTabKey } from "./tabs";
@@ -53,7 +61,9 @@ function CustomTablesSettings({ close }: { close: () => void }) {
   };
   return (
     <section data-testid="custom-tables-settings">
-      <h3>Custom tables</h3>
+      <h3>Structure</h3>
+      <FieldsOfTable tables={tables} canEdit={ws.canEdit} />
+      <h4 className={styles.subheading}>Custom tables</h4>
       {tables.length === 0 && <p className="muted">None yet.</p>}
       {tables.length > 0 && (
         <ul className={styles.members}>
@@ -107,7 +117,15 @@ function CustomTablesSettings({ close }: { close: () => void }) {
                       aria-label={`Delete ${label}`}
                       onClick={() => {
                         const n = [...rows.values()].filter((r) => r.table_id === t.id).length;
-                        const msg = `Delete the table "${label}"${n ? ` and its ${n} ${n === 1 ? "row" : "rows"}` : ""}? Its fields and views go too.`;
+                        // Link fields elsewhere that point at this table go too: say which.
+                        const data = store.getState();
+                        const ref = customTableRef(t.id);
+                        const links = [...data.tables.custom_fields.values()]
+                          .filter(
+                            (f) => f.type === "link" && f.options.target === ref && f.table !== ref,
+                          )
+                          .map((f) => `${targetTableLabel(data, f.table)} → ${f.label || f.key}`);
+                        const msg = `Delete the table "${label}"${n ? ` and its ${n} ${n === 1 ? "row" : "rows"}` : ""}? Its fields and views go too.${links.length ? ` These link fields on other tables are removed as well: ${links.join(", ")}.` : ""}`;
                         if (!window.confirm(msg)) return;
                         void send(
                           [{ op: "delete", table: "custom_tables", id: t.id }],
@@ -140,6 +158,30 @@ function CustomTablesSettings({ close }: { close: () => void }) {
         </button>
       )}
     </section>
+  );
+}
+
+/** Show settings → Structure: the Fields manager for any table (R9). */
+function FieldsOfTable({ tables, canEdit }: { tables: CustomTableRow[]; canEdit: boolean }) {
+  const [fieldTable, setFieldTable] = useState("cues");
+  const choices = [
+    ...Object.entries(TARGET_LABELS).map(([value, label]) => ({ value, label })),
+    ...tables.map((t) => ({ value: customTableRef(t.id), label: t.label || "Untitled table" })),
+  ];
+  return (
+    <div data-testid="structure-fields">
+      <label className={styles.unitRow}>
+        <span>Fields of</span>
+        <select value={fieldTable} onChange={(e) => setFieldTable(e.target.value)}>
+          {choices.map((c) => (
+            <option key={c.value} value={c.value}>
+              {c.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <FieldsManager key={fieldTable} fieldTable={fieldTable} canEdit={canEdit} />
+    </div>
   );
 }
 

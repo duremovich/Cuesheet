@@ -5,6 +5,20 @@
 export interface CsvOptions {
   /** Start with a UTF-8 BOM (U+FEFF) for Excel. */
   bom?: boolean;
+  /**
+   * Excel-safe: a cell starting with `=`, `+`, `-` or `@` gets a leading `'` so a
+   * spreadsheet shows it as text instead of running it as a formula (CSV injection).
+   */
+  excelSafe?: boolean;
+}
+
+/**
+ * `'` before a cell a spreadsheet would read as a formula (`=`, `+`, `-`, `@`); plain
+ * numbers ("-2.5", measurements below zero) stay numbers.
+ */
+export function excelSafe(value: string): string {
+  if (/^-?\d+(\.\d+)?$/.test(value)) return value;
+  return /^[=+\-@]/.test(value) ? `'${value}` : value;
 }
 
 /** One field, quoted when it needs to be. */
@@ -16,7 +30,8 @@ export function csvField(value: string): string {
 
 /** Rows of text → CSV text (every row CRLF-terminated). */
 export function toCsv(rows: readonly (readonly string[])[], opts: CsvOptions = {}): string {
-  const body = rows.map((r) => `${r.map(csvField).join(",")}\r\n`).join("");
+  const cell = opts.excelSafe ? (v: string) => csvField(excelSafe(v)) : csvField;
+  const body = rows.map((r) => `${r.map(cell).join(",")}\r\n`).join("");
   return (opts.bom ? "﻿" : "") + body;
 }
 

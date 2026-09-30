@@ -95,13 +95,15 @@ test("export a filtered cue view as CSV: the view's rows and columns", async ({ 
   expect(raw).toContain("\r\n");
   const parsed = Papa.parse<string[]>(raw.slice(1), { skipEmptyLines: true });
   const [header, ...data] = parsed.data;
-  expect(header?.slice(0, 4)).toEqual(["Scene", "Cue", "Description", "Trigger"]);
-  expect(data.map((r) => r[1])).toEqual(CUED);
+  // Grouped by scene, but Scene is a visible column: no extra group column.
+  expect(header?.slice(0, 3)).toEqual(["Cue", "Description", "Trigger"]);
+  expect(header?.filter((h) => h === "Scene")).toHaveLength(1);
+  expect(data.map((r) => r[0])).toEqual(CUED);
   expect(data.every((r) => r[header?.indexOf("Status") ?? -1] === "Cued")).toBe(true);
   // Links as labels: the export's content matches the server's.
   const snap = await snapshot(page, showId);
   const cue = snap.tables.cues.find((c) => c.number === "0.10");
-  const row = data.find((r) => r[1] === "0.10");
+  const row = data.find((r) => r[0] === "0.10");
   expect(row?.[header?.indexOf("Description") ?? -1]).toBe(cue?.description ?? "");
 });
 

@@ -3,8 +3,10 @@
 // `custom:<customTableId>`; `key` is a slug unique per table; values live in each row's
 // `custom` JSON under that key. Shared by the op engine (validation) and the client
 // (columns, editors, filters). No runtime dependencies.
+
+import { parseDate, parseDateTime, parseDuration, parseTimecode } from "./custom-values";
 import { isValidId } from "./ids";
-import { isPixelSize, MAX_LENGTH_M } from "./units";
+import { isPixelSize, MAX_LENGTH_M, parseLength, parsePixelSize } from "./units";
 
 export const CUSTOM_FIELD_TYPES = [
   "text",
@@ -345,8 +347,14 @@ export function isSensitive(field: Pick<CustomFieldDef, "options">): boolean {
 
 /** Changing a field's type keeps values only between these (they share a value shape). */
 const TEXT_LIKE = new Set<CustomFieldType>(["text", "longtext", "url"]);
+/**
+ * Does changing a field from `from` to `to` keep its values? Same type; text ↔ long text ↔
+ * URL; a (multi-)select to text / long text (a multi-select's choices joined by ", ").
+ */
 export function keepsValues(from: CustomFieldType, to: CustomFieldType): boolean {
-  return from === to || (TEXT_LIKE.has(from) && TEXT_LIKE.has(to));
+  if (from === to) return true;
+  if (TEXT_LIKE.has(from) && TEXT_LIKE.has(to)) return true;
+  return (from === "select" || from === "multiselect") && (to === "text" || to === "longtext");
 }
 
 /**
@@ -355,13 +363,24 @@ export function keepsValues(from: CustomFieldType, to: CustomFieldType): boolean
  * The engine and the client's optimistic mirror both use this.
  */
 export function refitValue(
-  oldType: string,
+  old: { type: string; options?: CustomFieldOptions | undefined },
   def: Pick<CustomFieldDef, "type" | "options" | "label" | "key">,
   v: unknown,
 ): unknown {
+  const oldType = old.type;
   const typeChanged = oldType !== def.type;
   if (typeChanged && !(isCustomFieldType(oldType) && keepsValues(oldType, def.type))) return null;
   if (!isStoredType(def.type)) return null;
+  if (typeChanged && oldType === "multiselect" && Array.isArray(v)) {
+    const text = v.filter((x) => typeof x === "string").join(", ");
+    return text || null;
+  }
+  if (def.type === "link" && old.options) {
+    // Another target table: the ids mean nothing there.
+    if ((old.options.target ?? "") !== (def.options.target ?? "")) return null;
+    // Many → one: keep the first.
+    if (def.options.multiple === false && Array.isArray(v) && v.length > 1) v = [v[0]];
+  }
   if (def.type === "multiselect" && Array.isArray(v)) {
     const ok = new Set((def.options.choices ?? []).map((c) => c.value));
     const kept = v.filter((x) => typeof x === "string" && ok.has(x));
@@ -483,18 +502,35 @@ export function guessFieldType(header: string, rawValues: readonly string[]): Fi
 export function csvValue(type: CustomFieldType, raw: string | undefined): unknown {
   const t = raw?.trim() ?? "";
   if (!t) return null;
+  const parsed = (r: { value: unknown } | { error: string } | null) =>
+    r && "value" in r ? r.value : null;
   switch (type) {
+    case "multiselect": {
+      const list = splitList(t);
+      return list.length ? list : null;
+    }
+    case "datetime":
+      return parsed(parseDateTime(t));
+    case "duration":
+      return parsed(parseDuration(t));
+    case "timecode":
+      return parsed(parseTimecode(t));
+    case "measurement": {
+      const r = parseLength(t, "m");
+      return r && "m" in r ? r.m : null;
+    }
+    case "pixel_size": {
+      const r = parsePixelSize(t);
+      return r && !("error" in r) ? r : null;
+    }
     case "checkbox":
       return t.toLowerCase() === "checked" || t.toLowerCase() === "true" || t === "1";
     case "number": {
       const n = Number(t.replace(/,/g, ""));
       return Number.isFinite(n) ? n : null;
     }
-    case "date": {
-      if (ISO_DATE.test(t)) return t;
-      const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(t);
-      return m ? `${m[3]}-${(m[1] ?? "").padStart(2, "0")}-${(m[2] ?? "").padStart(2, "0")}` : null;
-    }
+    case "date":
+      return parsed(parseDate(t));
     case "url":
       return /^www\./i.test(t) ? `https://${t}` : t;
     case "select":
@@ -504,4 +540,25 @@ export function csvValue(type: CustomFieldType, raw: string | undefined): unknow
     default:
       return null;
   }
+}
+
+/** A comma-separated cell as values ("A, B", with CSV quotes around values holding commas). */
+export function splitList(cell: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let quoted = false;
+  for (let i = 0; i < cell.length; i++) {
+    const ch = cell[i];
+    if (ch === '"') {
+      if (quoted && cell[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else quoted = !quoted;
+    } else if (ch === "," && !quoted) {
+      out.push(cur);
+      cur = "";
+    } else cur += ch;
+  }
+  out.push(cur);
+  return [...new Set(out.map((x) => x.trim()).filter(Boolean))];
 }
