@@ -72,7 +72,7 @@ src/
     index.ts          Entry: exports the fetch handler and the ShowDO class
     app.ts            Hono app: middleware and route mounting under /api
     routes/           auth.ts, shows.ts (incl. DO proxy + WebSocket), invites.ts
-    auth/             password (scrypt), cookie, session, middleware (requireAuth/Admin, seed)
+    auth/             password (PBKDF2), cookie, session, middleware (requireAuth/Admin, seed)
     do/ShowDO.ts      Per-show Durable Object: SQLite via Drizzle, WebSocket hibernation
     db/d1/            D1 schema, client, migrations/ (applied by wrangler)
     db/do/            ShowDO schema, migrations/ (applied in the DO constructor)

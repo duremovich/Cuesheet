@@ -1,17 +1,15 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import { login } from "./helpers";
 
-const theme = (page: import("@playwright/test").Page) =>
-  page.evaluate(() => document.documentElement.dataset.theme);
-const bodyBg = (page: import("@playwright/test").Page) =>
-  page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+const theme = (page: Page) => page.evaluate(() => document.documentElement.dataset.theme);
+const bodyBg = (page: Page) => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
 
-// Note: Chromium reports "no-preference" as light, so the "default" case is a dark (or
-// unset) system theme. A light system theme is honoured until the user picks one.
-test.describe("with a dark (default) system theme", () => {
-  test.use({ colorScheme: "dark" });
+// Dark is the default whatever the OS says; only the user's own toggle changes it.
+// Run the default case with a *light* system theme to prove the system is ignored.
+test.describe("with a light system theme and no stored choice", () => {
+  test.use({ colorScheme: "light" });
 
-  test("loads dark by default; the toggle switches to light and persists", async ({ page }) => {
+  test("loads dark; the toggle switches to light and persists across reload", async ({ page }) => {
     await page.goto("/login");
     expect(await theme(page)).toBe("dark");
     expect(await bodyBg(page)).toBe("rgb(24, 26, 30)"); // --color-bg (dark)
@@ -29,21 +27,21 @@ test.describe("with a dark (default) system theme", () => {
     expect(await theme(page)).toBe("dark");
   });
 
-  test("the app shell (signed in) is dark too", async ({ page }) => {
+  test("the signed-in app shell is dark and has the toggle in its header", async ({ page }) => {
     await login(page);
     expect(await theme(page)).toBe("dark");
-    await expect(page.getByTestId("theme-toggle")).toBeVisible(); // toggle in the app header
+    await expect(page.locator("header").getByTestId("theme-toggle")).toBeVisible();
   });
 });
 
-test.describe("with a system light preference", () => {
-  test.use({ colorScheme: "light" });
+test.describe("with a dark system theme", () => {
+  test.use({ colorScheme: "dark" });
 
-  test("follows the system until the user chooses", async ({ page }) => {
+  test("a stored light choice still wins", async ({ page }) => {
     await page.goto("/login");
-    expect(await theme(page)).toBe("light");
+    expect(await theme(page)).toBe("dark");
     await page.getByTestId("theme-toggle").click();
     await page.reload();
-    expect(await theme(page)).toBe("dark"); // explicit choice beats the system
+    expect(await theme(page)).toBe("light");
   });
 });

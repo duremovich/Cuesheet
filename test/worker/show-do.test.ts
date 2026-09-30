@@ -42,14 +42,17 @@ async function connect(stub: DurableObjectStub<ShowDO>, userId = "user-1") {
 }
 
 describe("ShowDO", () => {
-  it("applies its migrations and stores meta idempotently", async () => {
+  it("applies its migrations and caches meta, refreshing the name on sync", async () => {
     const stub = stubFor("show-meta");
     expect(await stub.getMeta()).toBeNull();
-    const meta = await stub.init("show-meta", "Some Like It Hot");
+    const meta = await stub.sync("show-meta", "Some Like It Hot");
     expect(meta).toMatchObject({ showId: "show-meta", name: "Some Like It Hot" });
-    // A second init keeps the original row.
-    expect(await stub.init("show-meta", "Other name")).toEqual(meta);
-    expect(await stub.getMeta()).toEqual(meta);
+    // Syncing again with the same name is a no-op.
+    expect(await stub.sync("show-meta", "Some Like It Hot")).toEqual(meta);
+    // A new name (D1 is the source of truth) refreshes the cache; createdAt is kept.
+    const renamed = await stub.sync("show-meta", "Some Like It Hotter");
+    expect(renamed).toEqual({ ...meta, name: "Some Like It Hotter" });
+    expect(await stub.getMeta()).toEqual(renamed);
 
     const tables = await runInDurableObject(stub, (_instance, state) =>
       state.storage.sql
@@ -72,7 +75,7 @@ describe("ShowDO", () => {
 
   it("says hello and broadcasts presence as clients join and leave", async () => {
     const stub = stubFor("show-ws");
-    await stub.init("show-ws", "WS show");
+    await stub.sync("show-ws", "WS show");
 
     const a = await connect(stub, "alice");
     expect(await a.next((m) => m.type === "hello")).toEqual({
@@ -99,7 +102,7 @@ describe("ShowDO", () => {
 
   it("keeps sockets and presence across hibernation", async () => {
     const stub = stubFor("show-hibernate");
-    await stub.init("show-hibernate", "Hibernating show");
+    await stub.sync("show-hibernate", "Hibernating show");
     const a = await connect(stub, "alice");
     await a.next((m) => m.type === "hello");
     const b = await connect(stub, "bob");

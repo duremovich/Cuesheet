@@ -70,14 +70,14 @@ export const showRoutes = new Hono<ShowEnv>()
         .insert(schema.memberships)
         .values({ showId: id, userId: c.var.user.id, role: "editor", createdAt }),
     ]);
-    await showStub(c.env, id).init(id, name);
+    await showStub(c.env, id).sync(id, name);
     const show: ShowSummaryDTO = { id, name, role: "editor", createdAt };
     return c.json({ show }, 201);
   })
   .get("/shows/:id", requireMembership, async (c) => {
-    const stub = showStub(c.env, c.var.show.id);
-    // init() is idempotent; it also repairs a show whose DO init failed after the D1 insert.
-    const meta = (await stub.getMeta()) ?? (await stub.init(c.var.show.id, c.var.show.name));
+    // D1 `shows.name` is the source of truth; opening a show refreshes the DO's cached copy
+    // (and creates it if the DO init failed after the D1 insert).
+    const meta = await showStub(c.env, c.var.show.id).sync(c.var.show.id, c.var.show.name);
     return c.json({ show: meta, role: c.var.role } satisfies ShowResponse);
   })
   .get("/shows/:id/ws", requireMembership, async (c) => {

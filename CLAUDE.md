@@ -49,6 +49,15 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   goes in that show's `ShowDO` SQLite (`src/worker/db/do/schema.ts`). Only cross-show
   things (users, sessions, shows, memberships, invites) go in D1. All writes to show data go
   through the DO, which serialises them and broadcasts to connected sockets.
+- **Show name source of truth.** D1 `shows.name` is authoritative. The ShowDO `meta` row is
+  a cache: the Worker passes the D1 name into `ShowDO.sync(showId, name)` when a show is
+  created and every time it's opened (`GET /api/shows/:id`), and the DO refreshes its copy.
+  A future rename endpoint writes D1 only. Apply the same pattern to any other show-level
+  fields that must be listable across shows.
+- **Passwords.** PBKDF2-HMAC-SHA256 via WebCrypto, 210,000 iterations, 16-byte salt, stored
+  as `pbkdf2$<iterations>$<salt b64>$<hash b64>` (`src/worker/auth/password.ts`). Verify reads
+  the parameters from the stored string, so the cost can be raised later with rehash-on-login.
+- **Rate limiting** of login is deferred to M5 (TODO in `routes/auth.ts`).
 - **DO code.** `src/worker/do/ShowDO.ts`. Expose operations as RPC methods on the class
   (the Worker calls `env.SHOW.get(env.SHOW.idFromName(showId)).method()`); only WebSockets
   go through `fetch`. The Worker checks auth + membership before calling the DO; the DO
@@ -80,10 +89,11 @@ Before finishing any task: `pnpm check && pnpm e2e`.
 
 ## Theme and colors
 
-Dark is the default; `<html data-theme="light">` switches to light. The inline script in
-`index.html` picks the theme before first paint: stored choice (`localStorage`
-`cuesheet.theme`) > system `prefers-color-scheme: light` > dark. `src/web/lib/theme.ts` has
-the same logic plus `useTheme()`; the toggle is `components/ThemeToggle.tsx` in the header.
+Dark is the default **regardless of the system color scheme**; only the user's toggle
+switches to light (`<html data-theme="light">`). The inline script in `index.html` sets the
+theme before first paint from the stored choice (`localStorage` `cuesheet.theme`), falling
+back to dark; `prefers-color-scheme` is deliberately ignored. `src/web/lib/theme.ts` has the
+same logic plus `useTheme()`; the toggle is `components/ThemeToggle.tsx` in the header.
 
 **Never hardcode a color.** Use the variables in `src/web/styles/theme.css`:
 

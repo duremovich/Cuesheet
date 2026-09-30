@@ -1,5 +1,5 @@
 // The /api surface end to end inside workerd (D1 + DO), without a browser.
-import { exports } from "cloudflare:workers";
+import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type {
   CreateInviteResponse,
@@ -101,6 +101,19 @@ describe("API", () => {
       show: { showId: show.id, name: "Some Like It Hot" },
       role: "editor",
     });
+  });
+
+  it("treats D1 shows.name as the source of truth and refreshes the DO cache", async () => {
+    const cookie = await loginAdmin();
+    const { show } = (await (await post("/api/shows", { name: "Before" }, cookie)).json()) as {
+      show: ShowSummaryDTO;
+    };
+    // Rename in D1 only (as a future rename endpoint would), then open the show.
+    await env.DB.prepare("UPDATE shows SET name = ? WHERE id = ?").bind("After", show.id).run();
+    const one = (await (await api(`/api/shows/${show.id}`, { cookie })).json()) as ShowResponse;
+    expect(one.show.name).toBe("After");
+    const stub = env.SHOW.get(env.SHOW.idFromName(show.id));
+    expect((await stub.getMeta())?.name).toBe("After");
   });
 
   it("requires membership for a show and its WebSocket", async () => {

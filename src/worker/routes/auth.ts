@@ -19,6 +19,8 @@ export const authRoutes = new Hono<AppEnv>()
     const email = normalizeEmail(str(body?.email));
     const password = str(body?.password);
     if (!email || !password) return c.json({ error: "Email and password are required" }, 400);
+    // TODO(M5): rate-limit login attempts per email and per IP (e.g. a counter DO or the
+    // Workers Rate Limiting binding) before doing the password check.
 
     const user = await c.var.db
       .select()

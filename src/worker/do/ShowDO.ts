@@ -31,13 +31,21 @@ export class ShowDO extends DurableObject<Env> {
 
   // ---- RPC (called by the Worker via the stub) ----
 
-  /** Record the show's identity. Idempotent: an existing meta row is kept. */
-  async init(showId: string, name: string): Promise<ShowMetaDTO> {
+  /**
+   * Create or refresh the show's meta row. D1 `shows.name` is the source of truth; `meta`
+   * is a cache the Worker refreshes whenever the show is created or opened.
+   */
+  async sync(showId: string, name: string): Promise<ShowMetaDTO> {
     const existing = await this.getMeta();
-    if (existing) return existing;
-    const row = { id: 1, showId, name, createdAt: Date.now() };
-    await this.db.insert(schema.meta).values(row);
-    return { showId, name, createdAt: row.createdAt };
+    if (!existing) {
+      const row = { id: 1, showId, name, createdAt: Date.now() };
+      await this.db.insert(schema.meta).values(row);
+      return { showId, name, createdAt: row.createdAt };
+    }
+    if (existing.name !== name) {
+      await this.db.update(schema.meta).set({ name }).where(eq(schema.meta.id, 1));
+    }
+    return { ...existing, name };
   }
 
   async getMeta(): Promise<ShowMetaDTO | null> {
