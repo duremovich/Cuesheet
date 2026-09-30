@@ -55,6 +55,15 @@ to try on the **Cues** tab:
 - Open the show in a second browser (or a private window) to watch edits arrive live.
 - **Show settings** (⚙): Airtable import, members (the owner adds people who already have
   an account; invite them from the shows page first).
+- **Row panel tabs**: edit any field in **Fields** (same pickers as the grid), see the
+  cue's **Content** as cards, its **Notes**, and its **History** (who changed what,
+  from → to).
+- **Notes**: in a cue's Notes tab type a note and press Enter; click type chips, ⌥1–5 for
+  priority, `@name` to assign; click a note's status to cycle Open → In progress → Done.
+  Start a note with `8.5 ` to put it on cue 8.50 instead, or with `*` for a general note.
+- **Tech mode** (**Tech** in the header, or **T** in the cue list): set the **Session**
+  (e.g. "Tech 2") once, then ↓/↑ (or Space) to move through cues, type, Enter; ⌘/Ctrl+G
+  jumps to a cue number. On a phone, **＋** opens quick add: pick a cue, type, Add note.
 
 Undo (⌘Z / ⌘⇧Z) covers cell edits made in that grid; inserts, moves, deletes and "Sort
 now" aren't undoable yet. Column widths, collapsed groups and the live sort are remembered

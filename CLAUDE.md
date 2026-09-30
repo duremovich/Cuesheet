@@ -2,8 +2,9 @@
 
 The project has left the spec-only phase: M0 (the application scaffold), M1a (the show
 data layer: core tables, ops, sync, history, members, Airtable import), M1b (the generic
-`DataGrid`) and M1c (the show workspace: a grid tab per core table on the live store, ⌘K)
-are built. The stack
+`DataGrid`), M1c (the show workspace: a grid tab per core table on the live store, ⌘K) and
+M2b (notes panel, editable row panel with history, tech mode, phone quick-add, the show's
+current session) are built. The stack
 is decided in `docs/decisions/0005-cloudflare-platform.md`; don't relitigate it without a
 new decision record. Build milestone by milestone; don't pull later-milestone features
 (e.g. the cue grid) into an earlier one.
@@ -67,8 +68,10 @@ Before finishing any task: `pnpm check && pnpm e2e`.
 - **Show name source of truth.** D1 `shows.name` is authoritative. The ShowDO `meta` row is
   a cache: the Worker passes the D1 name into `ShowDO.sync(showId, name)` when a show is
   created and every time it's opened (`GET /api/shows/:id`), and the DO refreshes its copy.
-  A future rename endpoint writes D1 only. Apply the same pattern to any other show-level
-  fields that must be listable across shows.
+  Renames (`PATCH /api/shows/:id`, owner) write D1 only and broadcast `{type:"show"}`;
+  the DO copy refreshes on the next open. `current_session` follows the same pattern (see
+  "Session model"). Apply it to any other show-level fields that must be listable across
+  shows.
 - **Passwords.** PBKDF2-HMAC-SHA256 via WebCrypto, 100,000 iterations, 16-byte salt, stored
   as `pbkdf2$<iterations>$<salt b64>$<hash b64>` (`src/worker/auth/password.ts`).
   **Hosted Cloudflare Workers cap WebCrypto PBKDF2 at 100,000 iterations** (below OWASP's
@@ -270,12 +273,76 @@ cue live sort, `sortCuesNow`, `openImport`).
   (`features/shared/useTableChrome.ts`). Per-browser prefs (`features/shared/prefs.ts`,
   localStorage, until saved views): column widths per show+table, collapsed groups per
   user+show+table, the cue live sort per show.
-- **Row panel** (`RowPanel`): Space / expand icon; read-only; follows the active row.
-  The panel is focusable (`tabIndex=-1`, so clicks inside keep focus there): ↑/↓ in it
-  move the grid's active row (`grid.stepRow`), Escape or × closes it and refocuses the
-  active cell. Escape in the grid closes it too when the grid has nothing else to cancel
-  (the grid's `onEscape`: not editing, no range/selection, no held row that would move). Grid undo covers cell edits only; inserts,
-  moves, deletes and Sort now aren't undoable yet.
+- **Row panel** (`features/shared/RowPanel.tsx`, R18): Space / expand icon; follows the
+  active row. Props: `table`, `recordId`, the grid's `columns`, and `onEdit(key, value)`
+  (the tab's own grid `onEdit` for that row, so the panel writes exactly the grid's ops;
+  omit it for read-only). Tabs: **Fields** (`FieldEditor`: one editor per column type,
+  reusing the grid's value shapes, `parseText` and `RecordPicker`; `panelFields.ts`
+  decides editability from `column.editable` and skips unchanged or unparsable values; a
+  text draft is local while focused, so remote edits don't clobber it; Enter or blur
+  commits, Escape reverts), **Notes** (cues, content, scenes: `NotesPanel`), **Content**
+  (cues: `CueContentCards`, link/unlink through the content picker) and **History**
+  (`PanelHistory`: `GET /history?table=&id=&limit=`, newest first, formatted by
+  `history.ts`; "Load more" raises the limit by 50 up to the server's 1000; refetches
+  400 ms after the store's version changes while open). The panel handles keys with React
+  `onKeyDown` (so child editors can `stopPropagation`): ↑/↓ outside text fields and tabs
+  move the grid's active row (`grid.stepRow`); Escape in a field leaves it (the field
+  reverts), Escape elsewhere or × closes it and refocuses the active cell; ←/→ move
+  between tabs. Field labels are plain `<dt>` text (inputs use `aria-label`), so clicking
+  a label keeps focus on the panel (`tabIndex=-1`). Width: drag the left edge or ←/→ on
+  it (300–900 px), stored per user (`cuesheet.panelWidth.<userId>`). At ≤ 760 px it's a
+  bottom sheet at 60% height whose handle (click, or drag up/down) toggles full height.
+  Escape in the grid closes the panel too when the grid has nothing else to cancel (the
+  grid's `onEscape`). Grid undo covers cell edits only; inserts, moves, deletes and Sort
+  now aren't undoable yet.
+- **Notes panel** (`features/notes/`, R6): `NotesPanel({subject})` = `NoteList` (open
+  first, newest first; `notesFor` in `compose.ts`: a cue's linked notes, content's
+  `content_id` notes, a scene's `scene_id` notes plus notes on its cues) + `NoteCompose`.
+  Cards: a status chip button (click cycles Open → In progress → Done via `nextStatus`;
+  the server sets `completed_by/at`), type chips, `P<n>`, assignee initials, session,
+  author · time; ✎ or double-click edits the body in place (Enter saves, Escape cancels),
+  × deletes. Editability is `canEditNote` (editors: all notes; commenters: their own;
+  viewers: none), mirroring the server; viewers get no compose box.
+- **Compose grammar** (`parseNoteText` in `features/notes/compose.ts`): Enter saves,
+  Shift+Enter is a newline. A leading cue number and a space (`8.5 needs a fade`; matched
+  with `cueNumberKey`, so 8.5 = 8.50; several matches → the one nearest the current cue
+  in show order) links that cue instead of the panel's record; a number that isn't a cue
+  stays text. A leading `*` makes a general note (no cue, content or scene). `@name`
+  tokens naming a person (full name without spaces, or a unique first name) assign them
+  and drop out of the body; typing `@` at a word start opens the person picker (Escape
+  puts the `@` back). A live "→ Cue 14.20" line shows where the note will go. Type chips
+  toggle (default: the types you used last, per user: `cuesheet.noteTypes.<userId>`);
+  ⌥1–5 (read from `KeyboardEvent.code`) or the P select sets priority. A new note is one
+  batch (`noteCreateOps`: create with status Open and the show's current session, then
+  `link` ops for cues and assignees); links come from `subjectLinks` / `resolveLinks` (a
+  cue brings its content when it has exactly one, and its scene).
+- **Session model**: `shows.current_session` in D1 (show-level and shared, like the
+  name). `PATCH /api/shows/:id {name?, current_session?}` (name: owner; session: editors
+  and owner; `""`/null clears; ≤ 100 chars) writes D1, then `ShowDO.notifyShow({name,
+  currentSession})` broadcasts `{type:"show", name, currentSession}` (the DO stores
+  nothing). `GET /api/shows/:id` returns `show.currentSession`; `ShowStoreProvider` takes
+  it as `show`, and the store keeps `state.show` (updated by `show` messages, and by
+  `store.setShow` right after your own PATCH). The header shows `SessionControl` (an
+  input with suggestions for editors, a label for others); it hides at ≤ 600 px, where
+  tech mode and quick-add show their own.
+- **Tech mode** (`features/tech/`, R7), `/shows/:id/tech?cue=<id>`: the header's "Tech"
+  link, ⌘K "Tech mode", or `T` in the cue list when not editing (`useTechShortcut`,
+  capture phase; a cell value starting with "t" then needs Enter/F2 first). Left: a
+  compact, virtualized cue list (`techRows`: scene headers with open-note counts, section
+  dividers, rows with number, description, trigger, status dot, open-note count); right:
+  the current cue's notes, or "Scene open notes", or "Content", above a compose box that
+  keeps focus. Keys in the compose box: ↓/↑ and Space/Shift+Space move the current cue
+  **only while the box is empty**; ⌘/Ctrl+G opens a "Go to cue" prompt (`goToCue`: exact
+  number, else prefix); Enter saves on the current cue; Tab / Shift+Tab cycle a single
+  type chip; ⌥1–5, `@`, `*` and `8.5 ` as in the compose grammar. Keys reaching the page
+  elsewhere (viewers; after clicking a note) move the cue too, and a typed character
+  refocuses the compose box. "Follow" (per user) keeps the current cue scrolled to the
+  middle. The current cue is `?cue=` (replace), the cue list's own parameter, so "Cue
+  list" / "Tech" round-trip it. Viewers: list only; commenters: compose.
+- **Quick-add** (`features/quick/QuickAddPage.tsx`), `/shows/:id/quick?cue=<id>`: the
+  header's "＋" link on phones, ⌘K "Quick add a note". Cue search (recent picks first,
+  per user and show), the compose box, the session control, and a disabled camera button
+  ("Attachments arrive in M3"); saving shows "Saved to Cue …" and keeps the cue.
 - **E2E**: set up data through the API (`apiLogin`, `apiCreateShow`, `importExamples` in
   `e2e/helpers.ts`); the grid virtualizes rows, so open a far-down row with `?cue=<id>`
   instead of expecting it in the DOM.
