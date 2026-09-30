@@ -75,10 +75,31 @@ export interface ShowMetaDTO {
   createdAt: number;
 }
 
+/** GET /api/shows/:id: the DO's meta plus show-level fields kept in D1. */
+export interface ShowInfoDTO extends ShowMetaDTO {
+  /** The session new notes are stamped with ("Tech 2"); null when unset. */
+  currentSession: string | null;
+}
+
 export interface ShowResponse {
-  show: ShowMetaDTO;
+  show: ShowInfoDTO;
   role: Role;
 }
+
+/**
+ * PATCH /api/shows/:id. `name`: owner only. `current_session`: editors and the owner; ""
+ * or null clears it. The change is broadcast to the show's sockets (`{type:"show"}`).
+ */
+export interface UpdateShowRequest {
+  name?: string;
+  current_session?: string | null;
+}
+
+export interface UpdateShowResponse {
+  show: { id: string; name: string; currentSession: string | null };
+}
+
+export const MAX_SESSION_LENGTH = 100;
 
 export interface CreateInviteRequest {
   email: string;

@@ -36,6 +36,8 @@ export const shows = sqliteTable("shows", {
     .notNull()
     .references(() => users.id),
   createdAt: integer("created_at").notNull().default(now),
+  /** The rehearsal/session new notes are stamped with ("Tech 2"); shared by the team. */
+  currentSession: text("current_session"),
 });
 
 export const memberships = sqliteTable(

@@ -13,7 +13,6 @@ import {
 import { type ShowState, useShowStore, useShowStoreInstance } from "../../lib/show-store";
 import { groupOrder, placementFor } from "../shared/ops";
 import { cueItem, personItem, sceneItem } from "../shared/pickers";
-import styles from "../shared/TableFrame.module.css";
 import { TableGrid } from "../shared/TableGrid";
 import { useWorkspace } from "../show/workspace";
 import { type ContentView, contentColumns, contentEditOps } from "./columns";
@@ -164,28 +163,6 @@ export function ContentGrid() {
               </>
             ),
           })),
-        },
-        {
-          title: "Notes",
-          empty: "No notes on this content.",
-          items: (notesByContent.get(v.id) ?? []).flatMap((id) => {
-            const n = tables.notes.get(id);
-            return n
-              ? [
-                  {
-                    id,
-                    content: (
-                      <>
-                        {n.body}
-                        <div className={styles.noteMeta}>
-                          {[n.status, ...n.type].filter(Boolean).join(" · ")}
-                        </div>
-                      </>
-                    ),
-                  },
-                ]
-              : [];
-          }),
         },
       ]}
     />

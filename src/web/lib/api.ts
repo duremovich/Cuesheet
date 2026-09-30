@@ -15,6 +15,8 @@ import type {
   ShowSummaryDTO,
   ShowsResponse,
   UpdateMemberRequest,
+  UpdateShowRequest,
+  UpdateShowResponse,
 } from "../../shared/api";
 import type {
   HistoryResponse,
@@ -75,6 +77,9 @@ export const api = {
   createShow: (body: CreateShowRequest) =>
     request<{ show: ShowSummaryDTO }>("POST", "/shows", body),
   getShow: (id: string) => request<ShowResponse>("GET", `/shows/${encodeURIComponent(id)}`),
+  /** Rename (owner) / set the current session (editors). Broadcast as `{type:"show"}`. */
+  updateShow: (id: string, body: UpdateShowRequest) =>
+    request<UpdateShowResponse>("PATCH", showPath(id), body),
   createInvite: (body: CreateInviteRequest) =>
     request<CreateInviteResponse>("POST", "/invites", body),
   getInvite: (token: string) =>

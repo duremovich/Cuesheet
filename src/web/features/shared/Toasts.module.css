@@ -39,6 +39,13 @@
   overflow-wrap: anywhere;
 }
 
+.action {
+  flex-shrink: 0;
+  padding: 2px var(--space-3);
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .close {
   flex-shrink: 0;
   padding: 0 var(--space-2);

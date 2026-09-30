@@ -372,4 +372,23 @@ describe("snapshot refetch (structural sharing)", () => {
     expect(again.tables.cues).toBe(after.tables.cues);
     expect(again.fieldOptions).toBe(after.fieldOptions);
   });
+
+  it("keeps show-level fields from `show` messages and setShow", async () => {
+    const { store } = setup();
+    const withShow = new ShowStoreImpl(
+      { snapshot: async () => new FakeServer().snapshot(), mutate: async () => ({}) as never },
+      { show: { name: "A", currentSession: null } },
+    );
+    expect(withShow.getState().show).toEqual({ name: "A", currentSession: null });
+    expect(store.getState().show).toBeNull();
+    const listener = vi.fn();
+    store.subscribe(listener);
+    store.handleServerMessage({ type: "show", name: "B", currentSession: "Tech 2" });
+    expect(store.getState().show).toEqual({ name: "B", currentSession: "Tech 2" });
+    expect(listener).toHaveBeenCalledTimes(1);
+    // The same values again (our own PATCH, then its broadcast): no re-render.
+    const before = store.getState();
+    store.setShow({ name: "B", currentSession: "Tech 2" });
+    expect(store.getState()).toBe(before);
+  });
 });

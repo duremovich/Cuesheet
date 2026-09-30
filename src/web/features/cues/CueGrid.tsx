@@ -4,7 +4,7 @@ import { useCallback, useMemo, useRef } from "react";
 import { newId } from "../../../shared/ids";
 import type { Op } from "../../../shared/ops";
 import { DataGrid, sortRows } from "../../components/grid";
-import type { CellDecoration, InsertPosition, MenuItem } from "../../components/grid/types";
+import type { CellDecoration, Column, InsertPosition, MenuItem } from "../../components/grid/types";
 import { sceneIdForGroup, UNASSIGNED, ViewCache } from "../../lib/show-selectors";
 import type { ShowState } from "../../lib/show-store";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
@@ -281,6 +281,7 @@ export function CueGrid() {
             columns={chrome.columns}
             onClose={chrome.closePanel}
             onStep={chrome.stepPanel}
+            onEdit={(key, value) => onEdit(panelView.id, key, value)}
           />
         ) : null
       }
@@ -315,21 +316,14 @@ function CuePanel({
   columns,
   onClose,
   onStep,
+  onEdit,
 }: {
   view: CueView;
-  columns: import("../../components/grid/types").Column<CueView>[];
+  columns: Column<CueView>[];
   onClose: () => void;
   onStep: (delta: number) => void;
+  onEdit: (key: string, value: unknown) => Promise<void> | undefined;
 }) {
-  const notes = useShowStore((s) => s.tables.notes);
-  const noteCues = useShowStore((s) => s.joins.noteCues);
-  const cueNotes = useMemo(
-    () =>
-      [...notes.values()]
-        .filter((n) => noteCues.get(n.id)?.includes(view.id))
-        .sort((a, b) => a.created_at - b.created_at),
-    [notes, noteCues, view.id],
-  );
   const title = view.cue.is_section
     ? `Section: ${view.cue.description ?? ""}`
     : view.cue.number
@@ -340,40 +334,11 @@ function CuePanel({
       title={title}
       row={view}
       columns={columns}
+      table="cues"
+      recordId={view.id}
+      onEdit={onEdit}
       onClose={onClose}
       onStep={onStep}
-      sections={[
-        {
-          title: "Content",
-          empty: "No content linked.",
-          items: view.content.map((c) => ({
-            id: c.id,
-            content: (
-              <>
-                <strong>{c.label}</strong>
-                {c.secondary ? <div className="muted">{c.secondary}</div> : null}
-              </>
-            ),
-          })),
-        },
-        {
-          title: "Notes",
-          empty: "No notes on this cue.",
-          items: cueNotes.map((n) => ({
-            id: n.id,
-            content: (
-              <>
-                {n.body}
-                <div className={styles.noteMeta}>
-                  {[n.status, n.priority ? `P${n.priority}` : null, ...n.type]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </div>
-              </>
-            ),
-          })),
-        },
-      ]}
     />
   );
 }

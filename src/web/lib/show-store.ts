@@ -54,6 +54,17 @@ export interface ShowState extends ShowData {
    * null until then (use the role the show was opened with).
    */
   role: Role | null;
+  /**
+   * Show-level fields that can change while the show is open (`{type:"show"}` messages,
+   * or `setShow` after a PATCH): the name and the current session label.
+   */
+  show: ShowMeta | null;
+}
+
+/** Show-level fields kept in D1 and relayed live. */
+export interface ShowMeta {
+  name: string;
+  currentSession: string | null;
 }
 
 export type Listener = () => void;
@@ -73,6 +84,8 @@ export interface ShowStore {
   readonly clientId: string;
   /** Refetch the snapshot. */
   refresh(): Promise<void>;
+  /** Replace the show-level fields (after a PATCH, before its broadcast arrives). */
+  setShow(show: ShowMeta): void;
 }
 
 /** How the store talks to the server (injectable for tests). */
@@ -101,6 +114,8 @@ export interface StoreOptions {
   userId?: string;
   clientId?: string;
   now?: () => number;
+  /** Initial show-level fields (from GET /api/shows/:id). */
+  show?: ShowMeta;
 }
 
 export class ShowStoreImpl implements ShowStore {
@@ -110,6 +125,7 @@ export class ShowStoreImpl implements ShowStore {
   private loadStatus: StoreStatus = "loading";
   private error: string | null = null;
   private role: Role | null = null;
+  private show: ShowMeta | null = null;
   private pending: Pending[] = [];
   private inflight: Pending | null = null;
   private sendChain: Promise<unknown> = Promise.resolve();
@@ -128,7 +144,14 @@ export class ShowStoreImpl implements ShowStore {
     this.clientId = opts.clientId ?? newId();
     this.userId = opts.userId ?? "";
     this.now = opts.now ?? Date.now;
-    this.visible = { ...this.confirmed, status: "loading", error: null, role: null };
+    this.show = opts.show ?? null;
+    this.visible = {
+      ...this.confirmed,
+      status: "loading",
+      error: null,
+      role: null,
+      show: this.show,
+    };
   }
 
   // ---- ShowStore ----
@@ -182,6 +205,13 @@ export class ShowStoreImpl implements ShowStore {
     return this.refetch();
   }
 
+  setShow = (show: ShowMeta): void => {
+    const cur = this.show;
+    if (cur && cur.name === show.name && cur.currentSession === show.currentSession) return;
+    this.show = { name: show.name, currentSession: show.currentSession };
+    this.recompute();
+  };
+
   dispose(): void {
     this.disposed = true;
     this.listeners.clear();
@@ -193,6 +223,10 @@ export class ShowStoreImpl implements ShowStore {
     if (msg.type === "role") {
       this.role = msg.role;
       this.recompute();
+      return;
+    }
+    if (msg.type === "show") {
+      this.setShow(msg);
       return;
     }
     if (msg.type !== "ops" && msg.type !== "version") return;
@@ -293,7 +327,13 @@ export class ShowStoreImpl implements ShowStore {
   private recompute(): void {
     let data = this.confirmed;
     for (const p of this.pending) data = applyResolved(data, p.acked?.ops ?? p.local);
-    this.visible = { ...data, status: this.loadStatus, error: this.error, role: this.role };
+    this.visible = {
+      ...data,
+      status: this.loadStatus,
+      error: this.error,
+      role: this.role,
+      show: this.show,
+    };
     for (const l of [...this.listeners]) l();
   }
 }
@@ -307,16 +347,24 @@ const SocketContext = createContext<ShowSocketState>({ status: "connecting", cli
 export function ShowStoreProvider({
   showId,
   userId,
+  show,
   children,
 }: {
   showId: string;
   userId?: string;
+  /** Initial show-level fields (name, current session). */
+  show?: ShowMeta;
   children: ReactNode;
 }) {
   const [store, setStore] = useState<ShowStoreImpl | null>(null);
   const storeRef = useRef<ShowStoreImpl | null>(null);
+  const initialShow = useRef(show);
+  initialShow.current = show;
   useEffect(() => {
-    const s = new ShowStoreImpl(httpTransport(showId), userId ? { userId } : {});
+    const s = new ShowStoreImpl(httpTransport(showId), {
+      ...(userId ? { userId } : {}),
+      ...(initialShow.current ? { show: initialShow.current } : {}),
+    });
     storeRef.current = s;
     setStore(s);
     void s.load();

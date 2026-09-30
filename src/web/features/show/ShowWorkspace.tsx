@@ -1,7 +1,7 @@
 // The show workspace (/shows/:id/<tab>): header with presence + theme, the tab bar
 // (Cues, Scenes, Content, Notes, People), Show settings, ⌘K, toasts, and the active tab.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
+import { Link, NavLink, Outlet, useLocation, useNavigate, useSearchParams } from "react-router";
 import type { MemberDTO, ShowResponse } from "../../../shared/api";
 import {
   AirtableImport,
@@ -17,10 +17,12 @@ import { useShowSocketState, useShowStore, useShowStoreInstance } from "../../li
 import { setTheme } from "../../lib/theme";
 import pageStyles from "../../pages/pages.module.css";
 import { planSortNow } from "../cues/sortNow";
+import { SessionControl } from "../notes/SessionControl";
 import { CommandPalette, goToCommands, type PaletteCommand } from "../search/CommandPalette";
 import { prefKey, readPref, writePref } from "../shared/prefs";
 import { Toasts, useToasts } from "../shared/Toasts";
 import type { FocusState } from "../shared/useTableChrome";
+import { TECH_SHORTCUT_LABEL, techUrl, useTechShortcut } from "../tech/useTechShortcut";
 import { ShowSettingsButton } from "./ShowSettings";
 import styles from "./ShowWorkspace.module.css";
 import { rowUrl, TABS, type TabKey } from "./tabs";
@@ -54,6 +56,12 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
   // this user's sockets and the store keeps it; editability follows without a reload.
   const role = useShowStore((s) => s.role) ?? data.role;
   const canEdit = role === "owner" || role === "editor";
+  // Name and session can change while the show is open (`{type:"show"}`).
+  const showName = useShowStore((s) => s.show?.name) ?? data.show.name;
+  const [searchParams] = useSearchParams();
+  const currentCue = searchParams.get("cue");
+  // ⌘/Ctrl+Shift+. anywhere in the show: tech mode at the current cue.
+  useTechShortcut(showId, currentCue);
 
   // Members (for note authors, and Show settings).
   const [members, setMembers] = useState<MemberDTO[] | null>(null);
@@ -124,7 +132,7 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
   const workspace = useMemo<Workspace>(
     () => ({
       showId,
-      showName: data.show.name,
+      showName,
       role,
       userId: user?.id ?? "",
       canEdit,
@@ -139,7 +147,7 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
     }),
     [
       showId,
-      data,
+      showName,
       role,
       user,
       canEdit,
@@ -203,6 +211,20 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
         : []),
       ...goToCommands(go),
       {
+        id: "tech",
+        label: "Tech mode",
+        hint: TECH_SHORTCUT_LABEL,
+        run: () => navigate(techUrl(showId, currentCue)),
+      },
+      {
+        id: "quick",
+        label: "Quick add a note",
+        run: () =>
+          navigate(
+            `/shows/${encodeURIComponent(showId)}/quick${currentCue ? `?cue=${encodeURIComponent(currentCue)}` : ""}`,
+          ),
+      },
+      {
         id: "theme",
         label: "Toggle theme",
         run: () => setTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light"),
@@ -211,7 +233,7 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
         ? [{ id: "import", label: IMPORT_LABEL, run: () => workspace.openImport() }]
         : []),
     ],
-    [canEdit, go, workspace],
+    [canEdit, go, workspace, navigate, showId, currentCue],
   );
   const onPick = useCallback(
     (tab: TabKey, id: string) => {
@@ -225,10 +247,12 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
     <WorkspaceContext.Provider value={workspace}>
       <div className={styles.workspace}>
         <AppHeader>
-          <h1 className={pageStyles.showTitle} data-testid="show-name" title={data.show.name}>
-            {data.show.name}
+          <h1 className={pageStyles.showTitle} data-testid="show-name" title={showName}>
+            {showName}
           </h1>
           <PresenceIndicator {...socket} />
+          {/* Tech mode and quick-add have their own session control. */}
+          {!/\/(tech|quick)$/.test(pathname) && <SessionControl compact />}
         </AppHeader>
         <nav className={styles.nav} aria-label="Show">
           <div className={styles.tabs} ref={tabStrip}>
@@ -245,6 +269,24 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
             ))}
           </div>
           <div className={styles.navActions}>
+            <Link
+              className={styles.navButton}
+              to={`/shows/${encodeURIComponent(showId)}/quick${currentCue ? `?cue=${encodeURIComponent(currentCue)}` : ""}`}
+              data-small-only=""
+              aria-label="Quick add a note"
+              title="Quick add a note"
+            >
+              <span aria-hidden="true">＋</span>
+            </Link>
+            <Link
+              className={styles.navButton}
+              to={techUrl(showId, currentCue)}
+              aria-current={pathname.endsWith("/tech") ? "page" : undefined}
+              title={`Tech mode (${TECH_SHORTCUT_LABEL})`}
+              aria-keyshortcuts="Control+Shift+Period Meta+Shift+Period"
+            >
+              Tech
+            </Link>
             <button
               type="button"
               className={styles.navButton}

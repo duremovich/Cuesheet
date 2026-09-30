@@ -43,8 +43,6 @@ example base: 17 inferred, 28 left Unassigned). See CLAUDE.md, "Airtable import"
   shot-list or calculation sheet would help.
 - **Note types.** Is the list in the base (Content, Programming, Director, Prod Mtg,
   Admin, Technical, Artistic, R&D, Stage Management) the right starting set?
-- **Sessions.** Do you label notes by rehearsal ("Tech 3", "Preview 1") today, or is
-  date enough?
 
 ## Grid
 
@@ -112,5 +110,24 @@ Things the first build had to decide; each is easy to change.
 - **Content versions**: version history per content item. → ContentVersion
 - **Audience**: video team edits; SM, director and other designers view/comment. → R23
 - **Tech entry**: laptop at the tech table and phone/tablet. → R7
+- **Sessions** (M2b): one current session per show, shared by the team and set by
+  editors; new notes are stamped with it, and any note's session can be edited on its
+  own. → data model (Note.session), CLAUDE.md "Session model"
+- **Cue prefix in notes** (M2b): only explicit prefixes link a cue: `q8.5 `, `Q8.5 `,
+  `#8.5 `, `8.5: ` (whitespace required after each, so `10:30 …` and `2:1 …` are text).
+  A bare leading number is text; `*` makes a general note.
+  → CLAUDE.md "Compose grammar"
+- **Tech mode shortcut** (M2b): no bare `T` (type-to-edit wins); the header link, ⌘K and
+  ⌘/Ctrl+Shift+. open it. ⌘/Ctrl+G "go to cue" inside tech mode is fine.
+- **Follow** (M2b): keeps the current cue in view. Following the SM's cue (or OSC from
+  the show control system) is a later feature.
+- **A scene's notes** (M2b): notes linked to the scene or to any of its cues (Notes tab,
+  tab count, tech mode's "Scene open notes").
+- **History paging** (M2b): by limit (50 more at a time, up to 1000) is fine.
+- **Row panel width** (M2b): per user (per browser).
+- **Deleting a note** (M2b): immediate, with an Undo toast (8 s) instead of a confirm.
+- **Tech mode without `?cue=`** (M2b): opens at the last tech cue of the show.
+- **`@name`** (M2b): a full name without spaces or a unique first name; the picker that
+  typing `@` opens is the reliable way; unknown `@words` stay in the text.
 - **Also needed**: script view with cue placement and version re-anchoring (R20), shot
   lists (R14), calculations and unit conversion (R11, R12), images on surfaces (R13).

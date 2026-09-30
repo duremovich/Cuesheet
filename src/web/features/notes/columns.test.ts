@@ -33,6 +33,13 @@ describe("notes", () => {
     expect(noteEditOps(view, "body", "")).toEqual([
       { op: "update", table: "notes", id: "n1", fields: { body: null } },
     ]);
+    // A note's session is editable on its own (it defaults to the show's current session).
+    expect(noteEditOps(view, "session", "Preview 1")).toEqual([
+      { op: "update", table: "notes", id: "n1", fields: { session: "Preview 1" } },
+    ]);
+    expect(noteEditOps(view, "session", " ")).toEqual([
+      { op: "update", table: "notes", id: "n1", fields: { session: null } },
+    ]);
     expect(noteEditOps(view, "type", ["Content"])).toEqual([
       { op: "update", table: "notes", id: "n1", fields: { type: ["Content"] } },
     ]);

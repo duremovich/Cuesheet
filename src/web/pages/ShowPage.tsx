@@ -53,7 +53,11 @@ export function ShowPage() {
 function LoadedShow({ data }: { data: ShowResponse }) {
   const { user } = useAuth();
   return (
-    <ShowStoreProvider showId={data.show.showId} {...(user ? { userId: user.id } : {})}>
+    <ShowStoreProvider
+      showId={data.show.showId}
+      show={{ name: data.show.name, currentSession: data.show.currentSession }}
+      {...(user ? { userId: user.id } : {})}
+    >
       <ShowWorkspace data={data} />
     </ShowStoreProvider>
   );

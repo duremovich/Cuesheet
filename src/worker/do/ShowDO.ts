@@ -163,6 +163,17 @@ export class ShowDO extends DurableObject<Env> {
     return sockets.length;
   }
 
+  /**
+   * Show-level fields changed in D1 (name, current session): tell every open socket
+   * (`{type:"show"}`). Nothing is stored here; D1 is the source of truth and the meta name
+   * refreshes when the show is opened. Returns how many sockets were told.
+   */
+  async notifyShow(show: { name: string; currentSession: string | null }): Promise<number> {
+    const n = this.openSockets().length;
+    this.broadcast({ type: "show", name: show.name, currentSession: show.currentSession });
+    return n;
+  }
+
   async disconnectUser(userId: string): Promise<number> {
     const sockets = this.ctx.getWebSockets(userId);
     for (const ws of sockets) {
