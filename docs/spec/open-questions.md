@@ -1,27 +1,63 @@
 # Open questions
 
-Move a question into the relevant spec file once it's answered.
+Answered questions move into the spec; this is what's still open. Answers so far are
+summarized at the bottom.
 
-## People and scale
+## About the example data
 
-- Who uses it: just the video/projection team, or also stage management,
-  directors, other departments (read-only)?
-- How many simultaneous editors? Is real-time sync needed (e.g. during tech)?
-- How many shows active at once, and how large is a typical show? Archiving or
-  reusing content from past shows?
+- The exported *Cue List* view has no Scene column, but the team groups by scene. Is there
+  a hidden Scene link field, or is it derived from Content → Scene? (The spec assumes a
+  direct Cue → Scene link.)
+- Duplicate cue numbers in the export (49.00 ×2, 54.00 ×2, 51.50 ×2) and 51.50 sitting near
+  the top: leftovers, or does the team intentionally keep duplicates sometimes?
+- LX column values like `x`, `?` and `.5`: what do these mean? Is `x` "no LX, taken
+  manually"?
+- Is AE Time a property of the cue (position in the comp when this cue fires) or of the
+  content? The spec puts it on the cue.
+- The Personnel table has a *Scenes* link: is that "which scenes this cast member is in"?
+  Does it need to be core, or is a custom field fine?
 
-## Where it runs
+## Product
 
-- Web app, desktop app, or something local at the tech table?
-- Must it work offline / on unreliable venue networks?
-- Any existing hosting, or should it be as low-maintenance as possible?
+- **Script formats.** What do scripts usually arrive as: text PDF, scanned PDF, Word,
+  Google Doc? How often do new versions come during rehearsal, and are the changes usually
+  cuts/rewrites or reformatting? Scanned PDFs need OCR and anchor less reliably.
+- **Whose cues on the script?** Video only, or should SM be able to put LX/SQ cues on the
+  same script for a full calling script?
+- **Where do files live?** Reference images, content thumbnails and script PDFs: uploaded
+  to the app's own storage (simplest, costs a little), or links into Google Drive?
+  Full-res media stays out of the app either way.
+- **Which calculations matter** beyond PPI, screen dimensions and unit conversion: throw
+  distance / lens ratio, LED pixel pitch, content duration and timecode math? A past
+  shot-list or calculation sheet would help.
+- **Note types.** Is the list in the base (Content, Programming, Director, Prod Mtg,
+  Admin, Technical, Artistic, R&D, Stage Management) the right starting set?
+- **Sessions.** Do you label notes by rehearsal ("Tech 3", "Preview 1") today, or is
+  date enough?
 
-## Features
+## Infrastructure
 
-- Day-one must-haves beyond cue list, content library, linking, filtered views,
-  and conditional formatting?
-- Biggest Airtable frustrations besides the paywall?
-- Integrations: Airtable/CSV import-export, show control (Disguise, QLab,
-  Watchout, Millumin), media thumbnails/file paths, printable tech paperwork?
-- How much schema flexibility do users need (free-form tables/fields like
-  Airtable vs. a fixed cue/content structure)?
+- **Sign-in.** Google sign-in for the team? Do SM/director need accounts or is a
+  read-only link enough?
+- **Hosting.** Any preference or budget (a small VPS, a managed platform)? Who maintains
+  it once it's running?
+- **Offline.** Not v1, but how bad is venue Wi-Fi in practice? If tech regularly happens
+  without internet, the architecture should plan for a local-first mode early.
+
+## Validation
+
+- A second show's base would confirm the model generalizes (especially scenes, surfaces
+  and naming conventions).
+- A shot list example for the Shot table.
+
+## Answered
+
+- **Platform**: hosted web app. → overview
+- **Team size**: 2–5 editors, simultaneously in tech. → overview, R22
+- **Schema**: fixed core + custom fields and tables. → data model
+- **Blank rows in the cue list**: the team groups by scene; grouping is essential. → R4
+- **Content versions**: version history per content item. → ContentVersion
+- **Audience**: video team edits; SM, director and other designers view/comment. → R23
+- **Tech entry**: laptop at the tech table and phone/tablet. → R7
+- **Also needed**: script view with cue placement and version re-anchoring (R20), shot
+  lists (R14), calculations and unit conversion (R11, R12), images on surfaces (R13).

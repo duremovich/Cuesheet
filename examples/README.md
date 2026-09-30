@@ -2,18 +2,38 @@
 
 Reference material from past shows, used to design the data model.
 
-Put each show in its own folder, e.g. `examples/show-name/`:
+## Some Like It Hot (Olney Theatre Center)
 
-- **CSV exports** — one per table. In Airtable, open the table's view menu →
-  *Download CSV*. Use an unfiltered view with all fields visible, since the
-  export only includes what the view shows.
-- **Screenshots** — grid view of each table, field settings for formulas /
-  rollups / lookups / single-selects, and any views used during tech.
-- **Notes** (optional) — a `notes.md` on anything the exports don't show: how
-  the base is used day to day, what's awkward, what you'd change.
+The CSVs in this folder are one Airtable base, exported table by table. Each file is named
+`<Table>-<View>.csv`; the view name matters because Airtable only exports the fields and
+rows visible in that view.
 
-Trim or anonymize anything sensitive; structure and a few dozen realistic rows
-per table are what matter.
+| File | Rows | What it is |
+| --- | --- | --- |
+| `Cue List-Video Cue List View.csv` | 122 | The video cue list: number, page, SM call, LX, timecode, AE time, measure, description, status, assignee, content |
+| `Notes-NOTES.csv` | 319 | Tech notes, typed by department, with priority, done/in-progress, assignee, and links to scene, cue and content |
+| `Content-Grid view.csv` | 42 | Pieces of content (`SSS-NNN-NAME`), version, scene, cues that use it, creator, loop points |
+| `Breakdown-Grid view.csv` | 28 | Scenes: name, location, time of day, song, stage direction, description, video overview, content, surfaces |
+| `Surfaces-Gallery.csv` | 16 | Projection surfaces with Millumin channel names and dimensions in meters |
+| `Personnel-Grid view.csv` | 28 | Production team and cast |
+| `Calendar-Grid view.csv` | 8 | Milestones |
+| `Reference Links-Grid view.csv` | 11 | Moodboards and research links |
+| `Directory-Grid view.csv` | 6 | Shared drives |
+| `Network-Grid view.csv` | 10 | Devices, IPs and logins |
+| `Millumin-Grid view.csv` | 13 | Keyboard shortcuts in the Millumin project |
 
-To upload from GitHub: *Add file → Upload files*, then set the path to
-`examples/show-name/`.
+Note: the cue list export has no Scene column even though the team groups by scene, so
+the field is presumably hidden in that view. Two blank rows and a few duplicate cue numbers
+are in the export as-is.
+
+## Adding another show
+
+Put each further show in its own folder, `examples/<show-name>/`:
+
+- **CSV exports**, one per table, from an unfiltered view with all fields visible.
+- **Screenshots** of field settings for formulas, rollups, lookups and single-selects,
+  and of the views used during tech.
+- **`notes.md`** (optional) on how the base was used and what was awkward.
+
+Trim or anonymize anything sensitive. Structure and a few dozen realistic rows per table
+are what matter.

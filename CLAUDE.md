@@ -7,3 +7,5 @@
 - `examples/` contains real show data exported from Airtable. Treat it as
   reference for how the team structures cues and content; don't rewrite it.
 - Record settled decisions in `docs/decisions/` using the template there.
+- Requirements have IDs (R1, S1, L1) in `docs/spec/requirements.md`; refer to them by ID.
+- The example base in `examples/` is *Some Like It Hot*; `examples/README.md` describes each CSV.
