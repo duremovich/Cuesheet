@@ -60,6 +60,14 @@ import {
 import { filterGroups, groupRows, isGroupable } from "./grouping";
 import { clearLegacyPrefs, collapsedKey, lastViewKey, layoutKey, readLegacyPrefs } from "./legacy";
 import { colorPresets } from "./presets";
+import {
+  hasMeasurements,
+  resolveUnit,
+  UnitToggle,
+  useUserUnit,
+  withUnit,
+  withUnitFields,
+} from "./units";
 import { ViewBar } from "./ViewBar";
 
 /** Personal views save this long after the last change (typing in a filter value). */
@@ -630,15 +638,23 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
     }
   });
 
-  const columns = useMemo(() => layoutColumns(setup.columns, config), [setup.columns, config]);
-  const sortKey = JSON.stringify(gridSort(config, setup.columns) ?? null);
+  // --- Units (R11): the view's override, else yours, else the show's default ---
+  const userUnit = useUserUnit(userId);
+  const showUnit = useShowStore((s) => s.meta.default_unit);
+  const unit = resolveUnit(config.unit, userUnit, showUnit);
+  const allColumns = useMemo(() => withUnit(setup.columns, unit), [setup.columns, unit]);
+  const unitFields = useMemo(() => withUnitFields(fields, unit), [fields, unit]);
+  const showUnits = useMemo(() => hasMeasurements(setup.columns), [setup.columns]);
+
+  const columns = useMemo(() => layoutColumns(allColumns, config), [allColumns, config]);
+  const sortKey = JSON.stringify(gridSort(config, allColumns) ?? null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on the sort's value
-  const sort = useMemo(() => gridSort(config, setup.columns), [sortKey]);
+  const sort = useMemo(() => gridSort(config, allColumns), [sortKey]);
   const colorRules = useMemo(
-    () => gridColorRules(config.colorRules, fields),
-    [config.colorRules, fields],
+    () => gridColorRules(config.colorRules, unitFields),
+    [config.colorRules, unitFields],
   );
-  const presets = useMemo(() => colorPresets(table, fields), [table, fields]);
+  const presets = useMemo(() => colorPresets(table, unitFields), [table, unitFields]);
 
   const onColumnResize = useCallback(
     (key: string, width: number) =>
@@ -664,8 +680,8 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
   const rowIdRef = useRef(setup.rowId);
   rowIdRef.current = setup.rowId;
   const predicate = useMemo(
-    () => compileFilters(config.filters, config.filterMode, fields, true),
-    [config.filters, config.filterMode, fields],
+    () => compileFilters(config.filters, config.filterMode, unitFields, true),
+    [config.filters, config.filterMode, unitFields],
   );
   /** Rows shown although the filter hides them: the active row, inserts, reveals. */
   const held = useRef(new Set<string>());
@@ -685,7 +701,7 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
   );
 
   const groupKey = config.group.key;
-  const groupField = groupKey ? fields.get(groupKey) : undefined;
+  const groupField = groupKey ? unitFields.get(groupKey) : undefined;
   const useNative = !!groupKey && groupKey === setup.nativeGroupKey && !!setup.groups;
   const useGeneric = !!groupKey && !useNative && !!groupField && isGroupable(groupField);
   const out = useMemo(() => {
@@ -887,30 +903,35 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
   const filtered = config.filters.some(isComplete) && shownCount < setup.rows.length;
 
   const toolbar = (
-    <ViewBar
-      table={table}
-      current={current}
-      shared={shared}
-      mine={mine}
-      config={config}
-      dirty={dirty}
-      conflict={conflict}
-      canEdit={canEdit}
-      columns={setup.columns}
-      fields={fields}
-      rows={setup.rows}
-      presets={presets}
-      actions={actions}
-      sortPresets={setup.sortPresets}
-      sortNow={canEdit ? setup.sortNow : undefined}
-    />
+    <>
+      <ViewBar
+        table={table}
+        current={current}
+        shared={shared}
+        mine={mine}
+        config={config}
+        dirty={dirty}
+        conflict={conflict}
+        canEdit={canEdit}
+        columns={allColumns}
+        fields={unitFields}
+        rows={setup.rows}
+        presets={presets}
+        actions={actions}
+        sortPresets={setup.sortPresets}
+        sortNow={canEdit ? setup.sortNow : undefined}
+      />
+      {showUnits && (
+        <UnitToggle unit={unit} onChange={(u) => actions.update((c) => ({ ...c, unit: u }))} />
+      )}
+    </>
   );
 
   return {
     columns,
     ...(out.rows ? { rows: out.rows } : { groups: out.groups ?? [] }),
     sort,
-    sortColumns: setup.columns,
+    sortColumns: allColumns,
     rowHeight: config.rowHeight,
     colorRules,
     collapsed,

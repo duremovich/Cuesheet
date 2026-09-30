@@ -143,7 +143,10 @@ export const surfaces = sqliteTable(
     lens_ratio: real("lens_ratio"),
     description: text("description"),
   },
-  (t) => [index("surfaces_order_idx").on(t.order_key), index("surfaces_parent_idx").on(t.parent_id)],
+  (t) => [
+    index("surfaces_order_idx").on(t.order_key),
+    index("surfaces_parent_idx").on(t.parent_id),
+  ],
 );
 
 // Join tables for many-to-many links. `position` keeps chip order stable.

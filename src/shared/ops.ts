@@ -10,6 +10,7 @@ import type {
   RowTypes,
   TableName,
 } from "./tables";
+import type { Unit } from "./units";
 
 /** Values for a create/update. Keys are field names; `custom` is merged key by key. */
 export type FieldValues = Record<string, unknown>;
@@ -52,7 +53,7 @@ export interface MoveOp extends Placement {
   id: string;
 }
 
-/** Many-to-many: `table.field` is one of LINKS (cues.content, cues.assignees, notes.cues, notes.assignees). */
+/** Many-to-many: `table.field` is one of LINKS (cues.content, notes.cues, scenes.surfaces, …). */
 export interface LinkOp {
   op: "link";
   table: TableName;
@@ -71,7 +72,30 @@ export interface UnlinkOp {
   targetId: string;
 }
 
+/**
+ * Show-level settings kept in the ShowDO `meta` row (not a table): `default_unit`, the
+ * display unit for measurements when neither the view nor the user picks one (a Unit from
+ * ./units.ts, or null for meters). Editors and owners. Resolves to itself.
+ */
+export interface MetaOp {
+  op: "meta";
+  fields: MetaFields;
+}
+
+export interface MetaFields {
+  default_unit?: Unit | null;
+}
+
+/** The `meta` part of the snapshot. */
+export interface ShowSettings {
+  default_unit: Unit | null;
+}
+
+/** An op on a table row. */
 export type Op = CreateOp | UpdateOp | DeleteOp | MoveOp | LinkOp | UnlinkOp;
+
+/** Anything a batch may hold: row ops and the show-level `meta` op. */
+export type AnyOp = Op | MetaOp;
 
 // ---- Resolved ops (what the server applied; what clients replay) ----
 
@@ -115,19 +139,26 @@ export interface ResolvedLink {
  */
 export type ResolvedOp = ResolvedCreate | ResolvedUpdate | DeleteOp | ResolvedLink | UnlinkOp;
 
+/** What a batch resolves to: row ops and `meta` ops (which resolve to themselves). */
+export type AnyResolvedOp = ResolvedOp | MetaOp;
+
+export function isMetaOp(op: { op: string }): op is MetaOp {
+  return op.op === "meta";
+}
+
 // ---- HTTP ----
 
 export interface MutateRequest {
   /** Identifies the sending store instance so it can recognise its own echoes. */
   clientId: string;
-  ops: Op[];
+  ops: AnyOp[];
 }
 
 export interface MutateResponse {
   /** Version before this batch; equals `version` when the batch changed nothing. */
   prevVersion: number;
   version: number;
-  ops: ResolvedOp[];
+  ops: AnyResolvedOp[];
 }
 
 export interface MutateError {
@@ -141,6 +172,8 @@ export type Joins = {
   cueAssignees: Record<string, string[]>;
   noteCues: Record<string, string[]>;
   noteAssignees: Record<string, string[]>;
+  sceneSurfaces: Record<string, string[]>;
+  contentSurfaces: Record<string, string[]>;
 };
 
 export interface SnapshotResponse {
@@ -150,6 +183,8 @@ export interface SnapshotResponse {
   /** From-id → target ids, in chip order. */
   joins: Joins;
   fieldOptions: FieldOptions;
+  /** Show-level settings from the DO `meta` row. */
+  meta: ShowSettings;
 }
 
 export interface HistoryEntry {
@@ -173,7 +208,14 @@ export interface HistoryResponse {
 }
 
 export interface ImportResponse {
-  created: { scenes: number; cues: number; content: number; notes: number; persons: number };
+  created: {
+    scenes: number;
+    cues: number;
+    content: number;
+    notes: number;
+    persons: number;
+    surfaces: number;
+  };
   warnings: string[];
 }
 

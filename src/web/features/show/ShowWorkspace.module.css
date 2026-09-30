@@ -144,6 +144,20 @@
   margin-bottom: var(--space-2);
 }
 
+.unitRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  font-size: 13px;
+}
+
+.unitRow select {
+  min-width: 0;
+  max-width: 60%;
+}
+
 .members {
   list-style: none;
   margin: 0 0 var(--space-3);

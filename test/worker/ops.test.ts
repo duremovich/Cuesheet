@@ -76,7 +76,7 @@ describe("ops: create and order", () => {
         updated_by: "u-editor",
       },
     });
-    expect(op && "fields" in op && typeof op.fields.order_key).toBe("string");
+    expect(op && "table" in op && "fields" in op && typeof op.fields.order_key).toBe("string");
   });
 
   it("moves a row by rewriting only its key", async () => {
@@ -271,7 +271,7 @@ describe("ops: links and deletes", () => {
       ]),
     );
     const del = ok(await stub.mutate(ctx(), [{ op: "delete", table: "scenes", id: s }]));
-    expect(del.ops.map((o) => `${o.op}:${o.table}`)).toEqual([
+    expect(del.ops.map((o) => `${o.op}:${"table" in o ? o.table : "meta"}`)).toEqual([
       "update:cues",
       "update:content",
       "update:notes",
@@ -298,6 +298,8 @@ describe("ops: links and deletes", () => {
       cueAssignees: {},
       noteCues: {},
       noteAssignees: {},
+      sceneSurfaces: {},
+      contentSurfaces: {},
     });
 
     // Deleting a person nulls content.creator_id.

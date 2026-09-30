@@ -5,9 +5,10 @@
 import { type ReactNode, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Chip, type CloseReason, type PickerItem, RecordPicker } from "../../components/grid";
 import { optionColor } from "../../components/grid/Chip";
+import { CellContent } from "../../components/grid/cells";
 import type { Column } from "../../components/grid/types";
 import { formatValue, NOT_PARSED } from "../../components/grid/values";
-import { isFieldEditable, panelCommit, textOf, valueFromText } from "./panelFields";
+import { editorText, isFieldEditable, panelCommit, valueFromText } from "./panelFields";
 import styles from "./RowPanel.module.css";
 
 export function FieldEditor<Row>({
@@ -34,6 +35,8 @@ export function FieldEditor<Row>({
     case "text":
     case "number":
     case "longtext":
+    case "measurement":
+    case "pixelsize":
       return <TextField col={col} value={value} onCommit={commit} />;
     case "checkbox":
       return (
@@ -56,6 +59,15 @@ export function FieldEditor<Row>({
 }
 
 function ReadValue<Row>({ col, value }: { col: Column<Row>; value: unknown }) {
+  if (col.type === "formula" || col.type === "measurement") {
+    // Error styling and unit labels as in the grid.
+    if (value === null || value === undefined || value === "") return <Empty />;
+    return (
+      <span className={styles.value}>
+        <CellContent col={col} value={value} editable={false} onToggle={() => {}} />
+      </span>
+    );
+  }
   const chips = chipsOf(col, value);
   if (chips) return chips.length ? <span className={styles.chips}>{chips}</span> : <Empty />;
   const text = formatValue(col, value);
@@ -112,7 +124,7 @@ function TextField<Row>({
   const [invalid, setInvalid] = useState(false);
   const ref = useRef<HTMLInputElement & HTMLTextAreaElement>(null);
   const multiline = col.type === "longtext";
-  const shown = draft ?? textOf(value);
+  const shown = draft ?? editorText(col, value);
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -146,7 +158,7 @@ function TextField<Row>({
     value: shown,
     onFocus: () => {
       reverted.current = false;
-      setDraft(textOf(value));
+      setDraft(editorText(col, value));
     },
     onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
       setDraft(e.target.value),
@@ -170,7 +182,18 @@ function TextField<Row>({
   return multiline ? (
     <textarea rows={1} {...common} />
   ) : (
-    <input type="text" inputMode={col.type === "number" ? "decimal" : undefined} {...common} />
+    <input
+      type="text"
+      inputMode={col.type === "number" ? "decimal" : undefined}
+      placeholder={
+        col.type === "measurement"
+          ? `e.g. 4.5 m, 14' 9"`
+          : col.type === "pixelsize"
+            ? "e.g. 1920x1080"
+            : undefined
+      }
+      {...common}
+    />
   );
 }
 

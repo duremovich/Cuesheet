@@ -2,15 +2,19 @@
 
 import type { Op } from "../../../shared/ops";
 import type { FieldOptions, SceneRow } from "../../../shared/tables";
-import type { Column } from "../../components/grid/types";
+import type { Column, PickerItem } from "../../components/grid/types";
+import type { ShowStore } from "../../lib/show-store";
 import { selectOptions } from "../cues/columns";
 import { textField } from "../shared/ops";
+import { surfaceLinkColumn, surfaceLinkOps } from "../surfaces/columns";
 
 export interface SceneView {
   id: string;
   scene: SceneRow;
   cueCount: number;
   contentCount: number;
+  /** Linked surfaces (scenes.surfaces), in chip order. */
+  surfaces: PickerItem[];
 }
 
 const TEXT = [
@@ -23,7 +27,11 @@ const TEXT = [
   "video_overview",
 ] as const;
 
-export function sceneColumns(fieldOptions: FieldOptions, editable: boolean): Column<SceneView>[] {
+export function sceneColumns(
+  fieldOptions: FieldOptions,
+  editable: boolean,
+  store: ShowStore,
+): Column<SceneView>[] {
   const text = (key: (typeof TEXT)[number]) => (v: SceneView) => v.scene[key] ?? "";
   const cols: Column<SceneView>[] = [
     {
@@ -74,6 +82,7 @@ export function sceneColumns(fieldOptions: FieldOptions, editable: boolean): Col
       width: 80,
       getValue: (v) => v.contentCount,
     },
+    surfaceLinkColumn<SceneView>({ store, getValue: (v) => v.surfaces }),
   ];
   return editable ? cols : cols.map((c) => ({ ...c, editable: false }));
 }
@@ -81,6 +90,9 @@ export function sceneColumns(fieldOptions: FieldOptions, editable: boolean): Col
 export function sceneEditOps(view: SceneView, key: string, value: unknown): Op[] {
   if ((TEXT as readonly string[]).includes(key)) {
     return [{ op: "update", table: "scenes", id: view.id, fields: { [key]: textField(value) } }];
+  }
+  if (key === "surfaces") {
+    return surfaceLinkOps("scenes", view.id, view.surfaces, value as PickerItem[]);
   }
   if (key === "act") {
     return [

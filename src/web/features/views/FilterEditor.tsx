@@ -197,7 +197,14 @@ export function FilterEditor<V>({
             className={styles.input}
             aria-label={`${label} value`}
             list={choices.length ? listId : undefined}
-            value={typeof filter.value === "string" ? filter.value : ""}
+            placeholder={kind === "measurement" ? `e.g. 4 m, 14' 6"` : undefined}
+            value={
+              typeof filter.value === "string"
+                ? filter.value
+                : typeof filter.value === "number"
+                  ? String(filter.value)
+                  : ""
+            }
             onChange={(e) => setValue(e.target.value)}
           />
           {choices.length > 0 && (

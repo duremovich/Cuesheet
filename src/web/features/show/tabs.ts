@@ -5,6 +5,7 @@ export const TABS = [
   { key: "cues", label: "Cues", table: "cues", param: "cue", noun: "cue" },
   { key: "scenes", label: "Scenes", table: "scenes", param: "scene", noun: "scene" },
   { key: "content", label: "Content", table: "content", param: "content", noun: "content item" },
+  { key: "surfaces", label: "Surfaces", table: "surfaces", param: "surface", noun: "surface" },
   { key: "notes", label: "Notes", table: "notes", param: "note", noun: "note" },
   { key: "people", label: "People", table: "persons", param: "person", noun: "person" },
 ] as const satisfies readonly {

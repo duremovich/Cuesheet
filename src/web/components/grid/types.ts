@@ -1,4 +1,5 @@
 // Public types for the generic DataGrid. See ./README.md for how to wire a real table.
+import type { Unit } from "../../../shared/units";
 
 export type ColumnType =
   | "text"
@@ -9,7 +10,13 @@ export type ColumnType =
   | "multiselect"
   | "link"
   | "multilink"
-  | "readonly";
+  | "readonly"
+  /** A length in meters (`number | null`), shown and typed in `Column.unit`. */
+  | "measurement"
+  /** `{w, h} | null`, shown as 1920×1080. */
+  | "pixelsize"
+  /** A computed value (shared/formula `Value`); read-only; errors show red. */
+  | "formula";
 
 /** Names of the `--option-<name>-bg/fg` theme palettes. */
 export const OPTION_COLORS = [
@@ -72,8 +79,15 @@ export interface Column<Row> {
   format?: (v: unknown) => string;
   /** Sort comparator for two non-empty values; defaults to `compareValues`. */
   compare?: (a: unknown, b: unknown) => number;
-  /** Defaults to true for everything but readonly. */
+  /** Defaults to true for everything but readonly and formula. */
   editable?: boolean | ((row: Row) => boolean);
+  /**
+   * measurement (and formula lengths): the display/input unit (default m). Views set it
+   * from the active unit (view → user → show), see features/views/units.ts.
+   */
+  unit?: Unit;
+  /** formula: what the result is, for filters and sorting (default text). */
+  resultType?: "number" | "text" | "measurement";
 }
 
 export interface Group<Row> {

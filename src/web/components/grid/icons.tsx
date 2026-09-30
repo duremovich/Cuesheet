@@ -24,6 +24,9 @@ const TYPE_PATHS: Record<ColumnType, string> = {
   multilink:
     "M6.5 9.5l3-3M7 4.5l1-1a2.8 2.8 0 0 1 4 4l-1 1M9 11.5l-1 1a2.8 2.8 0 0 1-4-4l1-1M13 13h1.5",
   readonly: "M4.5 7V5a3.5 3.5 0 0 1 7 0v2M3.5 7h9v6.5h-9z",
+  measurement: "M2 6h12v4H2zM5 6v2M8 6v2.5M11 6v2",
+  pixelsize: "M2.5 3.5h11v9h-11zM5.5 6.5h2M5.5 6.5v2",
+  formula: "M11.5 3h-3a1.5 1.5 0 0 0-1.5 1.5v7A1.5 1.5 0 0 1 5.5 13h-1M4.5 7.5h5",
 };
 
 export function TypeIcon({ type }: { type: ColumnType }) {

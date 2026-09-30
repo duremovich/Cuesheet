@@ -12,6 +12,7 @@ const FILES = [
   "Content-Grid view.csv",
   "Cue List-Video Cue List View.csv",
   "Notes-NOTES.csv",
+  "Surfaces-Gallery.csv",
 ];
 
 function devVars(): Record<string, string> {

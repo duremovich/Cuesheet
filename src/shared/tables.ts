@@ -3,25 +3,46 @@
 // Field names are the storage names (snake_case), as in docs/spec/data-model.md.
 // Adding a field: see "Adding a field to a core table" in CLAUDE.md.
 
-export const TABLE_NAMES = ["scenes", "cues", "content", "notes", "persons", "views"] as const;
+export const TABLE_NAMES = [
+  "scenes",
+  "cues",
+  "content",
+  "notes",
+  "persons",
+  "surfaces",
+  "views",
+] as const;
 export type TableName = (typeof TABLE_NAMES)[number];
 
 /**
  * The show's data tables: every table but `views` (which holds saved view definitions for
  * them). What import checks for emptiness and what a saved view can be for.
  */
-export const DATA_TABLES = ["scenes", "cues", "content", "notes", "persons"] as const;
+export const DATA_TABLES = ["scenes", "cues", "content", "notes", "persons", "surfaces"] as const;
 export type DataTableName = (typeof DATA_TABLES)[number];
 
 export function isDataTable(t: unknown): t is DataTableName {
   return typeof t === "string" && (DATA_TABLES as readonly string[]).includes(t);
 }
 
-export const ORDERED_TABLES = ["scenes", "cues", "content"] as const;
+export const ORDERED_TABLES = ["scenes", "cues", "content", "surfaces"] as const;
 export type OrderedTableName = (typeof ORDERED_TABLES)[number];
 
-/** `json`: any JSON value stored as text, validated per field by the op engine. */
-export type FieldType = "text" | "number" | "bool" | "select" | "multiselect" | "ref" | "json";
+/**
+ * `json`: any JSON value stored as text, validated per field by the op engine.
+ * `measurement`: a length in meters (REAL, ≥ 0; displayed in the active unit, see
+ * ./units.ts). `pixel_size`: `{w, h}` positive whole pixels, stored as JSON text.
+ */
+export type FieldType =
+  | "text"
+  | "number"
+  | "bool"
+  | "select"
+  | "multiselect"
+  | "ref"
+  | "json"
+  | "measurement"
+  | "pixel_size";
 
 export interface FieldSpec {
   type: FieldType;
@@ -39,6 +60,7 @@ const bool: FieldSpec = { type: "bool" };
 const select: FieldSpec = { type: "select" };
 const multiselect: FieldSpec = { type: "multiselect" };
 const ref = (table: TableName): FieldSpec => ({ type: "ref", ref: table });
+const measurement: FieldSpec = { type: "measurement" };
 
 /** Writable (and auto) data fields per table. Excludes the common columns below. */
 export const FIELDS = {
@@ -101,6 +123,23 @@ export const FIELDS = {
     phone: text,
     organization: text,
     user_id: text,
+  },
+  /**
+   * data-model.md §Surface. PPI, pixel pitch, aspect and throw width are computed columns
+   * (formulas on the client). TODO(M3a): `images` (attachment, many) once that type exists.
+   */
+  surfaces: {
+    name: text,
+    channel: text,
+    /** A surface this one is a region of; the op engine refuses cycles. */
+    parent_id: ref("surfaces"),
+    width: measurement,
+    height: measurement,
+    pixel_width: number,
+    pixel_height: number,
+    throw_distance: measurement,
+    lens_ratio: number,
+    description: text,
   },
   /** Saved views (R16): src/shared/views.ts, CLAUDE.md "Saved views". */
   views: {
@@ -227,6 +266,23 @@ export interface PersonRow extends CommonRow {
   user_id: string | null;
 }
 
+export interface SurfaceRow extends CommonRow, Ordered {
+  name: string | null;
+  channel: string | null;
+  parent_id: string | null;
+  /** Meters. */
+  width: number | null;
+  /** Meters. */
+  height: number | null;
+  pixel_width: number | null;
+  pixel_height: number | null;
+  /** Meters. */
+  throw_distance: number | null;
+  /** Throw ratio: distance ÷ image width. */
+  lens_ratio: number | null;
+  description: string | null;
+}
+
 export interface ViewRow extends CommonRow {
   table: DataTableName;
   name: string | null;
@@ -243,6 +299,7 @@ export interface RowTypes {
   content: ContentRow;
   notes: NoteRow;
   persons: PersonRow;
+  surfaces: SurfaceRow;
   views: ViewRow;
 }
 
@@ -282,6 +339,22 @@ export const LINKS = {
     to: "persons",
     toCol: "person_id",
     key: "noteAssignees",
+  },
+  "scenes.surfaces": {
+    join: "scene_surfaces",
+    from: "scenes",
+    fromCol: "scene_id",
+    to: "surfaces",
+    toCol: "surface_id",
+    key: "sceneSurfaces",
+  },
+  "content.surfaces": {
+    join: "content_surfaces",
+    from: "content",
+    fromCol: "content_id",
+    to: "surfaces",
+    toCol: "surface_id",
+    key: "contentSurfaces",
   },
 } as const satisfies Record<
   string,

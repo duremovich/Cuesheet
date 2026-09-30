@@ -60,7 +60,14 @@ describe("Airtable import", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as ImportResponse;
     // 122 cue rows minus the 2 blank spacer rows.
-    expect(body.created).toEqual({ scenes: 28, cues: 120, content: 42, notes: 319, persons: 31 });
+    expect(body.created).toEqual({
+      scenes: 28,
+      cues: 120,
+      content: 42,
+      notes: 319,
+      persons: 31,
+      surfaces: 0,
+    });
     expect(body.warnings).toEqual(
       expect.arrayContaining([
         expect.stringMatching(/cue number 49.00 is used 2 times/),

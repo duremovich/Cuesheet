@@ -2,7 +2,7 @@
 // time, so column definitions don't depend on the data; creates go through `mutate`.
 
 import { newId } from "../../../shared/ids";
-import type { ContentRow, CueRow, PersonRow, SceneRow } from "../../../shared/tables";
+import type { ContentRow, CueRow, PersonRow, SceneRow, SurfaceRow } from "../../../shared/tables";
 import type { PickerItem } from "../../components/grid/types";
 import { sceneTitle } from "../../lib/show-selectors";
 import type { ShowData } from "../../lib/show-state";
@@ -43,6 +43,16 @@ export function cueItem(c: CueRow): PickerItem {
     id: c.id,
     label: num ? num : desc ? desc.slice(0, 40) : "(unnumbered cue)",
     ...(num && desc ? { secondary: desc.slice(0, 60) } : {}),
+  };
+}
+
+export function surfaceItem(s: SurfaceRow): PickerItem {
+  const name = s.name?.trim();
+  const channel = s.channel?.trim();
+  return {
+    id: s.id,
+    label: name || channel || "(unnamed surface)",
+    ...(name && channel ? { secondary: channel, aliases: [channel] } : {}),
   };
 }
 
@@ -126,6 +136,26 @@ export function parseSceneName(typed: string): { number: string | null; name: st
   const m = /^(\d+[A-Za-z]?)(?:\s*[-:–.]?\s+|$)(.*)$/.exec(t);
   if (!m) return { number: null, name: t || null };
   return { number: m[1] ?? null, name: m[2]?.trim() || null };
+}
+
+/** Surfaces by name and channel, in show order; `exclude` drops ids (a surface's own regions). */
+export function searchSurfaces(
+  data: ShowData,
+  q: string,
+  exclude?: ReadonlySet<string>,
+): PickerItem[] {
+  const all = ordered(data.order.surfaces, data.tables.surfaces).filter((s) => !exclude?.has(s.id));
+  return rankItems(all, q, (s) => [s.name, s.channel], { limit: LIMIT }).map(surfaceItem);
+}
+
+/** New surface from a picker ("L PRO", or a channel "CH02.1"), at the end. */
+export async function createSurface(store: ShowStore, typed: string): Promise<PickerItem> {
+  const id = newId();
+  const t = typed.trim();
+  const fields = /^CH\d/i.test(t) ? { channel: t } : { name: t };
+  await store.mutate([{ op: "create", table: "surfaces", id, fields }]);
+  const row = store.getState().tables.surfaces.get(id);
+  return row ? surfaceItem(row) : { id, label: t };
 }
 
 /** New scene from a picker, at the end of show order. */

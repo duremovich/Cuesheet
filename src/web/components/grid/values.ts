@@ -1,6 +1,16 @@
 // Value helpers for the DataGrid: empty values per type, display text, parsing typed or
 // pasted text, TSV (clipboard) encoding, and the grid's undo stack.
 
+import { formatFormulaValue } from "../../../shared/formula";
+import {
+  editLength,
+  formatLength,
+  formatPixelSize,
+  isPixelSize,
+  lengthsEqual,
+  parseLength,
+  parsePixelSize,
+} from "../../../shared/units";
 import type { Column, ColumnType, PickerItem } from "./types";
 
 export function emptyValue(type: ColumnType): unknown {
@@ -38,9 +48,26 @@ export function formatValue<Row>(col: Column<Row>, v: unknown): string {
       return (v as PickerItem).label;
     case "multilink":
       return (v as PickerItem[]).map((x) => x.label).join(", ");
+    case "measurement":
+      return typeof v === "number" ? formatLength(v, col.unit ?? "m") : "";
+    case "pixelsize":
+      return isPixelSize(v) ? formatPixelSize(v) : "";
+    case "formula":
+      return formatFormulaValue(v as never, col.unit ?? "m");
     default:
       return Array.isArray(v) ? v.join(", ") : String(v);
   }
+}
+
+/**
+ * The text an editor starts with for a value: numbers as typed, lengths precise (so an
+ * unchanged commit is a no-op) in the column's unit, the rest as displayed.
+ */
+export function editTextOf<Row>(col: Column<Row>, v: unknown): string {
+  if (v === null || v === undefined) return "";
+  if (col.type === "number") return String(v);
+  if (col.type === "measurement" && typeof v === "number") return editLength(v, col.unit ?? "m");
+  return formatValue(col, v);
 }
 
 export const NOT_PARSED: unique symbol = Symbol("not parsed");
@@ -61,6 +88,16 @@ export function parseText<Row>(col: Column<Row>, text: string): unknown {
       const n = Number(t);
       return Number.isFinite(n) ? n : NOT_PARSED;
     }
+    case "measurement": {
+      const r = parseLength(text, col.unit ?? "m");
+      if (r === null) return null;
+      return "m" in r ? r.m : NOT_PARSED;
+    }
+    case "pixelsize": {
+      const r = parsePixelSize(text);
+      if (r === null) return null;
+      return "error" in r ? NOT_PARSED : r;
+    }
     case "select": {
       const t = text.trim().toLowerCase();
       if (t === "") return null;
@@ -74,8 +111,16 @@ export function parseText<Row>(col: Column<Row>, text: string): unknown {
   }
 }
 
-export function valuesEqual(a: unknown, b: unknown): boolean {
+/**
+ * Cell values equal for undo and "did this edit change anything". With `type`
+ * "measurement", lengths within LENGTH_EPSILON are equal.
+ */
+export function valuesEqual(a: unknown, b: unknown, type?: ColumnType): boolean {
   if (a === b) return true;
+  if (type === "measurement" && typeof a === "number" && typeof b === "number") {
+    return lengthsEqual(a, b);
+  }
+  if (isPixelSize(a) && isPixelSize(b)) return a.w === b.w && a.h === b.h;
   if ((a === null || a === undefined || a === "") && (b === null || b === undefined || b === ""))
     return true;
   if (Array.isArray(a) && Array.isArray(b)) {

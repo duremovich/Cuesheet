@@ -6,7 +6,12 @@ import { eq } from "drizzle-orm";
 import { type DrizzleSqliteDODatabase, drizzle } from "drizzle-orm/durable-sqlite";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import type { Role, ShowMetaDTO } from "../../shared/api";
-import type { HistoryEntry, MutateResponse, ResolvedOp, SnapshotResponse } from "../../shared/ops";
+import type {
+  AnyResolvedOp,
+  HistoryEntry,
+  MutateResponse,
+  SnapshotResponse,
+} from "../../shared/ops";
 import { DATA_TABLES, type FieldOptions } from "../../shared/tables";
 import { PING_FRAME, PONG_FRAME, type ServerMessage } from "../../shared/ws";
 import migrations from "../db/do/migrations/migrations.js";
@@ -124,7 +129,8 @@ export class ShowDO extends DurableObject<Env> {
     ctx: MutationContext,
     viewOwners: ReadonlyMap<string, string>,
   ): void {
-    const ownerOf = (op: ResolvedOp) => (op.table === "views" ? viewOwners.get(op.id) : undefined);
+    const ownerOf = (op: AnyResolvedOp) =>
+      "table" in op && op.table === "views" ? viewOwners.get(op.id) : undefined;
     const textFor = (userId: string | undefined): string | null => {
       const msg: ServerMessage = {
         type: "ops",

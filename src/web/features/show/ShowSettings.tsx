@@ -2,9 +2,12 @@
 // owner adds, changes and removes).
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { GRANTABLE_ROLES, type MemberDTO, type Role } from "../../../shared/api";
+import { isUnit, UNIT_LABELS, UNITS } from "../../../shared/units";
 import { IMPORT_LABEL } from "../../components/AirtableImport";
 import { api } from "../../lib/api";
 import { useApiErrorHandler } from "../../lib/auth";
+import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
+import { setUserUnit, useUserUnit } from "../views/units";
 import styles from "./ShowWorkspace.module.css";
 import { useWorkspace } from "./workspace";
 
@@ -108,6 +111,7 @@ function SettingsBody({
 
   return (
     <div className={styles.settingsBody}>
+      <UnitSettings />
       {ws.canEdit && (
         <section>
           <h3>Data</h3>
@@ -194,5 +198,61 @@ function SettingsBody({
         )}
       </section>
     </div>
+  );
+}
+
+/**
+ * Measurement units (R11): the show's default (editors; stored in the ShowDO via the
+ * `meta` op) and your own preference in this browser, which wins over it. A view's unit
+ * toggle wins over both.
+ */
+function UnitSettings() {
+  const ws = useWorkspace();
+  const store = useShowStoreInstance();
+  const showUnit = useShowStore((s) => s.meta.default_unit);
+  const myUnit = useUserUnit(ws.userId);
+  return (
+    <section>
+      <h3>Units</h3>
+      <div className={styles.unitRow}>
+        <label htmlFor="show-default-unit">Show default</label>
+        <select
+          id="show-default-unit"
+          value={showUnit ?? "m"}
+          disabled={!ws.canEdit}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (!isUnit(v)) return;
+            store
+              .mutate([{ op: "meta", fields: { default_unit: v } }])
+              .catch((err: unknown) => ws.reportError(err, "change the default unit"));
+          }}
+        >
+          {UNITS.map((u) => (
+            <option key={u} value={u}>
+              {UNIT_LABELS[u]}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className={styles.unitRow}>
+        <label htmlFor="my-unit">My unit</label>
+        <select
+          id="my-unit"
+          value={myUnit ?? ""}
+          onChange={(e) => {
+            const v = e.target.value;
+            setUserUnit(ws.userId, isUnit(v) ? v : null);
+          }}
+        >
+          <option value="">Show default</option>
+          {UNITS.map((u) => (
+            <option key={u} value={u}>
+              {UNIT_LABELS[u]}
+            </option>
+          ))}
+        </select>
+      </div>
+    </section>
   );
 }

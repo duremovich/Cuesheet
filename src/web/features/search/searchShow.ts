@@ -1,5 +1,5 @@
 // Global search (R5b, ⌘K): cues by number / description / SM call, content by name, scenes
-// by number + name, notes by body, people by name. Pure; the palette renders the result.
+// by number + name, surfaces by name / channel, notes by body, people by name. Pure; the palette renders the result.
 
 import { sceneTitle } from "../../lib/show-selectors";
 import type { ShowData } from "../../lib/show-state";
@@ -83,6 +83,15 @@ export function searchShow(data: ShowData, q: string, limit = 8): SearchGroup[] 
     detail: sceneTitle(c.scene_id ? tables.scenes.get(c.scene_id) : null),
   }));
   if (contentHits.length) groups.push({ tab: "content", label: "Content", hits: contentHits });
+
+  const surfaces = order.surfaces.map((id) => tables.surfaces.get(id)).filter((s) => !!s);
+  const surfaceHits = rankItems(surfaces, q, (s) => [s.name, s.channel], { limit }).map((s) => ({
+    tab: "surfaces" as const,
+    id: s.id,
+    title: s.name || s.channel || "(unnamed surface)",
+    detail: clip(s.channel),
+  }));
+  if (surfaceHits.length) groups.push({ tab: "surfaces", label: "Surfaces", hits: surfaceHits });
 
   const notes = [...tables.notes.values()];
   const noteHits = rankItems(notes, q, (n) => [n.body], { limit }).map((n) => ({

@@ -12,7 +12,7 @@ import { useWorkspace } from "../show/workspace";
 import type { FieldDef } from "../views/evaluate";
 import { DATE_FIELDS, NATIVE_GROUP_KEY } from "../views/tableDefaults";
 import { useViewConfig } from "../views/useViewConfig";
-import { type PanelSection, RowPanel } from "./RowPanel";
+import { type PanelSection, type PanelTab, RowPanel } from "./RowPanel";
 import { TableFrame, ToolbarButton } from "./TableFrame";
 import { GRID_ACTIONS, useTableChrome } from "./useTableChrome";
 
@@ -49,6 +49,8 @@ export interface TableConfig<V> {
   deleteOps?: (views: V[]) => Op[] | string;
   panelTitle: (v: V) => string;
   panelSections?: (v: V) => PanelSection[];
+  /** Extra row panel tabs after Fields (e.g. a surface's Calculator). */
+  panelTabs?: (v: V) => PanelTab[];
   toolbar?: ReactNode;
   empty?: ReactNode;
   /** Native groups collapsed until the user expands them (a constant array). */
@@ -203,11 +205,12 @@ export function TableGrid<V>(config: TableConfig<V>) {
           <RowPanel
             title={config.panelTitle(panelView)}
             row={panelView}
-            columns={chrome.columns}
+            columns={view.sortColumns}
             table={tabInfo(config.tab).table}
             recordId={config.rowId(panelView)}
             onEdit={(key, value) => onEdit(config.rowId(panelView), key, value)}
             sections={config.panelSections?.(panelView) ?? []}
+            extraTabs={config.panelTabs?.(panelView)}
             onClose={chrome.closePanel}
             onStep={chrome.stepPanel}
           />

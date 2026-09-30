@@ -41,6 +41,7 @@ import type {
 } from "./types";
 import {
   type EditRecord,
+  editTextOf,
   emptyValue,
   formatValue,
   NOT_PARSED,
@@ -59,7 +60,7 @@ const DEFAULT_WIDTH = 160;
 const MIN_WIDTH = 60;
 const MOVED_MS = 2400;
 const SLIDE_MS = 320;
-const PASTE_TYPES = new Set(["text", "longtext", "number", "select"]);
+const PASTE_TYPES = new Set(["text", "longtext", "number", "select", "measurement", "pixelsize"]);
 const PICKER_TYPES = new Set(["select", "multiselect", "link", "multilink"]);
 const GHOST_TYPES = new Set(["text", "longtext", "number"]);
 const MRU_SIZE = 5;
@@ -92,16 +93,13 @@ type Edit = { rowId: string; key: string; value: unknown };
 const isMod = (e: { metaKey: boolean; ctrlKey: boolean }) => e.metaKey || e.ctrlKey;
 
 function isEditable<Row>(col: Column<Row>, row: Row): boolean {
-  if (col.type === "readonly") return false;
+  if (col.type === "readonly" || col.type === "formula") return false;
   if (col.editable === undefined) return true;
   return typeof col.editable === "function" ? col.editable(row) : col.editable;
 }
 
 /** Value → editable text for text/number editors. */
-function editText<Row>(col: Column<Row>, v: unknown): string {
-  if (v === null || v === undefined) return "";
-  return col.type === "number" ? String(v) : formatValue(col, v);
-}
+const editText = editTextOf;
 
 const prefersReducedMotion = () =>
   typeof window !== "undefined" &&
@@ -722,7 +720,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     focusPending.current = true;
     if (col && entry) {
       const value = parseText(col, draftOverride ?? e.draft);
-      if (value !== NOT_PARSED && !valuesEqual(value, col.getValue(entry.row))) {
+      if (value !== NOT_PARSED && !valuesEqual(value, col.getValue(entry.row), col.type)) {
         applyEdits([{ rowId: e.rowId, key: e.key, value }]);
       }
     }
@@ -786,7 +784,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     const value = col.type === "select" ? item.id : link(item);
     if (col.type === "link") pushMru(col.key, link(item));
     const entry = ref.current.allRows.get(e.rowId);
-    if (!entry || !valuesEqual(value, col.getValue(entry.row)))
+    if (!entry || !valuesEqual(value, col.getValue(entry.row), col.type))
       applyEdits([{ rowId: e.rowId, key: e.key, value }]);
     cancelEdit();
     if (via === "tab") move("right", { wrap: true });
@@ -1331,7 +1329,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
         if (!col || raw === undefined || !PASTE_TYPES.has(col.type) || !isEditable(col, item.row))
           continue;
         const value = parseText(col, raw);
-        if (value === NOT_PARSED || valuesEqual(value, col.getValue(item.row))) continue;
+        if (value === NOT_PARSED || valuesEqual(value, col.getValue(item.row), col.type)) continue;
         edits.push({ rowId: item.id, key: col.key, value });
       }
     };
@@ -1390,7 +1388,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
         ref.current = { ...ref.current, editing: null };
         if (col && entry) {
           const value = parseText(col, e.draft);
-          if (value !== NOT_PARSED && !valuesEqual(value, col.getValue(entry.row))) {
+          if (value !== NOT_PARSED && !valuesEqual(value, col.getValue(entry.row), col.type)) {
             applyEdits([{ rowId: e.rowId, key: e.key, value }]);
           }
         }
