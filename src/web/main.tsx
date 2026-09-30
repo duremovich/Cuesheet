@@ -12,8 +12,11 @@ import { ContentGrid } from "./features/content/ContentGrid";
 import { CueGrid } from "./features/cues/CueGrid";
 import { NotesGrid } from "./features/notes/NotesGrid";
 import { PeopleGrid } from "./features/people/PeopleGrid";
+import { CallingScriptPrint } from "./features/print/CallingScriptPrint";
+import { TablePrintRoute } from "./features/print/TablePrintRoute";
 import { QuickAddPage } from "./features/quick/QuickAddPage";
 import { SceneGrid } from "./features/scenes/SceneGrid";
+import { ScriptPage } from "./features/script/ScriptPage";
 import { SurfaceGrid } from "./features/surfaces/SurfaceGrid";
 import { TechPage } from "./features/tech/TechPage";
 import { AuthProvider, RequireAuth } from "./lib/auth";
@@ -23,6 +26,16 @@ import { LoginPage } from "./pages/LoginPage";
 import { ShowPage } from "./pages/ShowPage";
 import { ShowsPage } from "./pages/ShowsPage";
 import "./styles/global.css";
+
+/** Each table tab's component (also rendered in print mode by /print/<tab>). */
+const GRIDS = {
+  cues: CueGrid,
+  scenes: SceneGrid,
+  content: ContentGrid,
+  surfaces: SurfaceGrid,
+  notes: NotesGrid,
+  people: PeopleGrid,
+};
 
 const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -39,6 +52,9 @@ const router = createBrowserRouter([
       { path: "surfaces", element: <SurfaceGrid /> },
       { path: "notes", element: <NotesGrid /> },
       { path: "people", element: <PeopleGrid /> },
+      { path: "script", element: <ScriptPage /> },
+      { path: "script/print", element: <CallingScriptPrint /> },
+      { path: "print/:table", element: <TablePrintRoute grids={GRIDS} /> },
       { path: "tech", element: <TechPage /> },
       { path: "quick", element: <QuickAddPage /> },
       { path: "*", element: <ToCues /> },

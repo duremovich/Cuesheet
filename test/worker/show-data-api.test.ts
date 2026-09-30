@@ -40,6 +40,7 @@ describe("show data API", () => {
       "In process",
       "Rendered",
       "Cued",
+      "Cut",
     ]);
     expect(snap.fieldOptions["notes.priority"]).toHaveLength(5);
 

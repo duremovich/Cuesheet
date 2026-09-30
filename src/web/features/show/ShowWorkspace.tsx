@@ -23,6 +23,9 @@ import pageStyles from "../../pages/pages.module.css";
 import { AttachmentsHost } from "../attachments/Attachments";
 import { planSortNow } from "../cues/sortNow";
 import { SessionControl } from "../notes/SessionControl";
+import { printViewUrl } from "../print/PrintTable";
+import { scriptPrintUrl, scriptUrl } from "../script/links";
+import { ScriptSourceProvider } from "../script/source";
 import { CommandPalette, goToCommands, type PaletteCommand } from "../search/CommandPalette";
 import { Toasts, useToasts } from "../shared/Toasts";
 import type { FocusState } from "../shared/useTableChrome";
@@ -31,6 +34,13 @@ import { ShowSettingsButton } from "./ShowSettings";
 import styles from "./ShowWorkspace.module.css";
 import { rowUrl, TABS, type TabKey } from "./tabs";
 import { errorMessage, type Workspace, WorkspaceContext } from "./workspace";
+
+/** The tab strip: the table tabs, with Script after Cues. */
+const NAV: { key: string; label: string }[] = [
+  ...TABS.slice(0, 1),
+  { key: "script", label: "Script" },
+  ...TABS.slice(1),
+];
 
 const SHORTCUT =
   typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘K" : "Ctrl K";
@@ -181,6 +191,30 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
   const commands = useMemo<PaletteCommand[]>(
     () => [
       ...viewCommands,
+      ...(currentCue
+        ? [
+            {
+              id: "show-in-script",
+              label: "Show in script",
+              run: () => navigate(scriptUrl(showId, currentCue)),
+            },
+          ]
+        : []),
+      { id: "go-script", label: "Go to Script", run: () => navigate(scriptUrl(showId)) },
+      {
+        id: "print-script",
+        label: "Print calling script",
+        run: () => navigate(scriptPrintUrl(showId)),
+      },
+      ...(pathTab
+        ? [
+            {
+              id: "print-view",
+              label: `Print this view (${pathTab.label})`,
+              run: () => navigate(printViewUrl(showId, pathTab.key, searchParams.get("view"))),
+            },
+          ]
+        : []),
       ...(canEdit
         ? [
             {
@@ -214,7 +248,7 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
         ? [{ id: "import", label: IMPORT_LABEL, run: () => workspace.openImport() }]
         : []),
     ],
-    [canEdit, go, workspace, navigate, showId, currentCue, viewCommands],
+    [canEdit, go, workspace, navigate, showId, currentCue, viewCommands, pathTab, searchParams],
   );
   const onPick = useCallback(
     (tab: TabKey, id: string) => {
@@ -224,81 +258,96 @@ export function ShowWorkspace({ data }: { data: ShowResponse }) {
     [navigate, showId],
   );
 
+  // Print layouts (/print/…, /script/print) render alone: no header, tabs or palette.
+  if (/\/print(\/|$)/.test(pathname)) {
+    return (
+      <WorkspaceContext.Provider value={workspace}>
+        <ScriptSourceProvider store={store} showId={showId}>
+          <Outlet />
+          <Toasts items={toasts} dismiss={dismiss} />
+        </ScriptSourceProvider>
+      </WorkspaceContext.Provider>
+    );
+  }
+
   return (
     <WorkspaceContext.Provider value={workspace}>
-      <div className={styles.workspace}>
-        <AppHeader>
-          <h1 className={pageStyles.showTitle} data-testid="show-name" title={showName}>
-            {showName}
-          </h1>
-          <PresenceIndicator {...socket} />
-          {/* Tech mode and quick-add have their own session control. */}
-          {!/\/(tech|quick)$/.test(pathname) && <SessionControl compact />}
-        </AppHeader>
-        <nav className={styles.nav} aria-label="Show">
-          <div className={styles.tabs} ref={tabStrip}>
-            {TABS.map((t) => (
-              <NavLink
-                key={t.key}
-                to={t.key}
-                className={({ isActive }) =>
-                  isActive ? `${styles.tab} ${styles.activeTab}` : styles.tab
-                }
+      <ScriptSourceProvider store={store} showId={showId}>
+        <div className={styles.workspace}>
+          <AppHeader>
+            <h1 className={pageStyles.showTitle} data-testid="show-name" title={showName}>
+              {showName}
+            </h1>
+            <PresenceIndicator {...socket} />
+            {/* Tech mode and quick-add have their own session control. */}
+            {!/\/(tech|quick)$/.test(pathname) && <SessionControl compact />}
+          </AppHeader>
+          <nav className={styles.nav} aria-label="Show">
+            <div className={styles.tabs} ref={tabStrip}>
+              {NAV.map((t) => (
+                <NavLink
+                  key={t.key}
+                  to={t.key}
+                  className={({ isActive }) =>
+                    isActive ? `${styles.tab} ${styles.activeTab}` : styles.tab
+                  }
+                >
+                  {t.label}
+                </NavLink>
+              ))}
+            </div>
+            <div className={styles.navActions}>
+              <Link
+                className={styles.navButton}
+                to={`/shows/${encodeURIComponent(showId)}/quick${currentCue ? `?cue=${encodeURIComponent(currentCue)}` : ""}`}
+                data-small-only=""
+                aria-label="Quick add a note"
+                title="Quick add a note"
               >
-                {t.label}
-              </NavLink>
-            ))}
-          </div>
-          <div className={styles.navActions}>
-            <Link
-              className={styles.navButton}
-              to={`/shows/${encodeURIComponent(showId)}/quick${currentCue ? `?cue=${encodeURIComponent(currentCue)}` : ""}`}
-              data-small-only=""
-              aria-label="Quick add a note"
-              title="Quick add a note"
-            >
-              <span aria-hidden="true">＋</span>
-            </Link>
-            <Link
-              className={styles.navButton}
-              to={techUrl(showId, currentCue)}
-              aria-current={pathname.endsWith("/tech") ? "page" : undefined}
-              title={`Tech mode (${TECH_SHORTCUT_LABEL})`}
-              aria-keyshortcuts="Control+Shift+Period Meta+Shift+Period"
-            >
-              Tech
-            </Link>
-            <button
-              type="button"
-              className={styles.navButton}
-              onClick={() => setPaletteOpen(true)}
-              aria-keyshortcuts="Control+K Meta+K"
-              title="Search (⌘K / Ctrl+K)"
-              aria-label="Search"
-            >
-              <span aria-hidden="true">⌕</span> <span className={styles.navButtonText}>Search</span>{" "}
-              <kbd className={styles.kbd}>{SHORTCUT}</kbd>
-            </button>
-            <ShowSettingsButton members={members} onMembersChanged={loadMembers} />
-          </div>
-        </nav>
-        {canEdit && (
-          <div className={styles.importRow}>
-            <AirtableImport showId={showId} ref={importer} />
-          </div>
-        )}
-        <main className={styles.main}>
-          <Outlet />
-        </main>
-        <CommandPalette
-          open={paletteOpen}
-          onClose={() => setPaletteOpen(false)}
-          commands={commands}
-          onPick={onPick}
-        />
-        <AttachmentsHost />
-        <Toasts items={toasts} dismiss={dismiss} />
-      </div>
+                <span aria-hidden="true">＋</span>
+              </Link>
+              <Link
+                className={styles.navButton}
+                to={techUrl(showId, currentCue)}
+                aria-current={pathname.endsWith("/tech") ? "page" : undefined}
+                title={`Tech mode (${TECH_SHORTCUT_LABEL})`}
+                aria-keyshortcuts="Control+Shift+Period Meta+Shift+Period"
+              >
+                Tech
+              </Link>
+              <button
+                type="button"
+                className={styles.navButton}
+                onClick={() => setPaletteOpen(true)}
+                aria-keyshortcuts="Control+K Meta+K"
+                title="Search (⌘K / Ctrl+K)"
+                aria-label="Search"
+              >
+                <span aria-hidden="true">⌕</span>{" "}
+                <span className={styles.navButtonText}>Search</span>{" "}
+                <kbd className={styles.kbd}>{SHORTCUT}</kbd>
+              </button>
+              <ShowSettingsButton members={members} onMembersChanged={loadMembers} />
+            </div>
+          </nav>
+          {canEdit && (
+            <div className={styles.importRow}>
+              <AirtableImport showId={showId} ref={importer} />
+            </div>
+          )}
+          <main className={styles.main}>
+            <Outlet />
+          </main>
+          <CommandPalette
+            open={paletteOpen}
+            onClose={() => setPaletteOpen(false)}
+            commands={commands}
+            onPick={onPick}
+          />
+          <AttachmentsHost />
+          <Toasts items={toasts} dismiss={dismiss} />
+        </div>
+      </ScriptSourceProvider>
     </WorkspaceContext.Provider>
   );
 }

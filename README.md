@@ -74,6 +74,15 @@ to try on the **Cues** tab:
   (e.g. "Tech 2") once, then ↓/↑ (or Space) to move through cues, type, Enter; ⌘/Ctrl+G
   jumps to a cue number. On a phone, **＋** opens quick add: pick a cue, type, Add note;
   📷 takes (or picks) a photo that's attached to the note.
+- **Script** tab: **Choose a file…** (or drop a PDF, DOCX or TXT; in a
+  `VITE_SCRIPT_MOCK=1` build only TXT/MD, e.g. `e2e/fixtures/script-v1.txt`), give it a
+  label, **Import**. Select a line → **New cue on this line** (the number is suggested
+  from the cues around it) or **Attach existing cue**; click the right margin to place an
+  LX / timecode / visual cue at a line. Click a marker to open the cue; drag it to move
+  it. j/k page, `/` find, `g` go to a page. In the cue list, a row's menu (right-click)
+  → **Show in script**. **Import new version** (try `script-v2.txt`) shows what
+  re-anchored and a **Resolve** screen for the rest. **Print calling script** (or a
+  grid's **Print**) opens a light print layout.
 - **Content versions**: open a content item's panel (Content tab, Space) → **Versions** →
   **+ Add version** (next Vnn, today, current). The cue list's content chips show the
   current version (`105-001-VAMP · V03`); **Set current** switches it.

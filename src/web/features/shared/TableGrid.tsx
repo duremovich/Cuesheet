@@ -10,6 +10,8 @@ import { DataGrid } from "../../components/grid";
 import type { Column, Group, InsertPosition } from "../../components/grid/types";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
 import { openLightbox } from "../attachments/state";
+import { usePrintMode } from "../print/PrintShell";
+import { PrintTable, PrintViewLink } from "../print/PrintTable";
 import { type TabKey, tabInfo } from "../show/tabs";
 import { useWorkspace } from "../show/workspace";
 import type { FieldDef } from "../views/evaluate";
@@ -80,6 +82,7 @@ export function TableGrid<V>(config: TableConfig<V>) {
   const ws = useWorkspace();
   const store = useShowStoreInstance();
   const status = useShowStore((s) => s.status);
+  const print = usePrintMode();
   const all = useMemo(
     () => config.rows ?? config.groups?.flatMap((g) => g.rows) ?? [],
     [config.rows, config.groups],
@@ -202,6 +205,20 @@ export function TableGrid<V>(config: TableConfig<V>) {
     [onActiveRowChange],
   );
 
+  if (print) {
+    return (
+      <PrintTable<V>
+        tab={config.tab}
+        columns={view.columns}
+        rows={view.rows}
+        groups={view.groups}
+        colorRules={view.colorRules}
+        rowId={config.rowId}
+        viewId={view.viewId}
+      />
+    );
+  }
+
   return (
     <TableFrame
       title={config.title}
@@ -214,6 +231,7 @@ export function TableGrid<V>(config: TableConfig<V>) {
           </span>
           {view.toolbar}
           {config.toolbar}
+          <PrintViewLink tab={config.tab} viewId={view.viewId} />
           {canInsert && <ToolbarButton onClick={addAtEnd}>+ Add {config.noun}</ToolbarButton>}
         </>
       }

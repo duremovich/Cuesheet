@@ -5,8 +5,10 @@ data layer: core tables, ops, sync, history, members, Airtable import), M1b (the
 `DataGrid`), M1c (the show workspace: a grid tab per core table on the live store, ⌘K),
 M2a (saved views and conditional formatting), M2b (notes panel, editable row panel with
 history, tech mode, phone quick-add, the show's current session), M3a (content versions,
-attachments in R2 with thumbnails, the gallery layout) and M3b (surfaces, measurement /
-pixel-size / formula fields with unit conversion, the surface calculator) are built. The
+attachments in R2 with thumbnails, the gallery layout), M3b (surfaces, measurement /
+pixel-size / formula fields with unit conversion, the surface calculator) and M4b (the
+script reader UI, the calling-script print and the generic Print view; see "Script view"
+and "Print layouts") are built. The
 stack is decided in `docs/decisions/0005-cloudflare-platform.md`; don't relitigate it without a
 new decision record. Build milestone by milestone; don't pull later-milestone features
 (e.g. the cue grid) into an earlier one.
@@ -244,7 +246,8 @@ the keyboard map and an integration example. The grid never fetches or persists;
 
 The show page (`/shows/:id`) is a workspace (`features/show/ShowWorkspace.tsx`): header
 (title, presence, theme), tabs (`features/show/tabs.ts`: Cues, Scenes, Content, Surfaces,
-Notes, People → `/shows/:id/<tab>`; `/shows/:id` and unknown tabs redirect to `cues`), Show
+Notes, People → `/shows/:id/<tab>`; `/shows/:id` and unknown tabs redirect to `cues`; the
+**Script** tab after Cues is not a table tab, see "Script view"), Show
 settings (import, members), the ⌘K palette (`features/search/`) and toasts. Tabs read
 `useWorkspace()` (role, `canEdit`/`canComment`, member names, `toast(message, kind,
 {action?, actions?, duration?})`/`reportError`, `sortCuesNow`, `openImport`). Everything about how a grid is
@@ -745,6 +748,101 @@ views" below).
   view's override wins. Projector: throw distance + lens ratio →
   image width, plus the distance / ratio that fills the surface's width. A region shows
   its parent's canvas and its share of it.
+
+## Script view (`src/web/features/script/`, R20)
+
+- **Contract with the data/anchoring engine (M4a).** Everything here imports script types
+  and engine helpers from `contract.ts` only (`ScriptText` = blocks + pages, `Anchor`,
+  `AnchorState`, `ReanchorResult`, the `scripts` / `script_versions` / `cue_anchors` row
+  types, `makeAnchor`, `extractScript`). Until M4a is merged it declares them itself and
+  uses stand-ins in `mock/` (`anchorText.ts`: `makeAnchor`, a crude `reanchor`;
+  `extractText.ts`: TXT/MD only, pages split on form feeds, a lone number as the page
+  label). Wiring the real engine is an edit to `contract.ts` (re-export from
+  `src/shared/script.ts` / `script-anchor`, `import("./extract")`).
+- **Data access** (`source.ts`): a `ScriptSource` (`getSnapshot` → scripts / versions /
+  anchors maps; `apply(cueOps, anchorOps)` = one batch; `importVersion`; `setOriginal`;
+  `fetchText`). `ScriptSourceProvider` is mounted once in `ShowWorkspace`. **Live**: the
+  store's tables (read through a cast, so it compiles before M4a adds them to
+  `TABLE_NAMES`) and `POST /api/shows/:id/script/versions {versionId, label, text}` →
+  `{versionId, results}`, `GET …/versions/:vid/text`. Anchor ops are store ops on
+  `cue_anchors`; the client never sends `page` (the server derives `cue_anchors.page` and
+  `cues.page` from `block`). **Mock** (`VITE_SCRIPT_MOCK=1` at build time): the same data
+  in localStorage (`cuesheet.scriptmock.<showId>`) with the stand-in re-anchoring; cue ops
+  still go to the real store and the mock sets `cues.page` itself. Hooks: `data.ts`
+  (`useScriptText`, `useVersionAnchors`, import results kept in sessionStorage for the
+  Resolve screen).
+- **Import** (`ImportPanel.tsx`): pick/drop → `extractScript` in the browser → preview
+  (pages, blocks, confidence, first page; OCR or confidence < 0.8 shows a warning with
+  guidance) → label → Import: POST the version first (the server creates it, current,
+  and re-anchors the previous version's cues), then upload the original through the
+  attachments pipeline (`{table: "script_versions", recordId: versionId, field:
+  "source_file"}`) and `update script_versions {attachment_id}`. A failed upload leaves
+  the version without its original ("Attach original…" / "Retry with a file…").
+- **Reader** (`Reader.tsx`, `ScriptBlocks.tsx`): pages virtualized (react-virtual), each
+  a grid of gutter (page label) | text column (~70ch) | margin. Blocks render by kind;
+  each is `[data-block=<i>]` with its text alone in `[data-text]` (selection offsets rely
+  on it). Keys outside inputs: j / PageDown, k / PageUp, `/` find, `g` go to a page label.
+  A sticky header shows the page; the navigator lists headings and pages (a "Pages"
+  toggle below 900 px). At ≤ 600 px: one column, markers become badges in the text that
+  expand on tap (Open / Show in list).
+- **Markers** (`Marker.tsx`, `markers.ts`): `Q 14.22` + trigger badge (`triggerBadge`:
+  LINE, LX 117, SQ 12, TC 1:00:00, VISUAL, FOLLOW, MANUAL) + text (`markerText`), fixed
+  height (`MARKER_HEIGHT`), positioned at their block's measured top and pushed down when
+  they'd overlap (`stackMarkers`). Color: status by default, or trigger type / none
+  (per user and show, localStorage). Open-notes dot, ⚠ for `changed` / `missing`. Line
+  anchors underline their quote (`segmentText`; hovering a marker highlights it);
+  positional ones (length 0) get a tick. `missing` anchors aren't drawn. The filter bar
+  (status / assignee / trigger) is `?filter=` (`filters.ts`), shared with the print; the
+  LX/SQ toggle adds faint labels for the cue's `lx_cue` / `sq_cue`.
+- **Placing** (`PlacePopover.tsx`, `placement.ts`; editors on the current version only):
+  a text selection (`rangeToSpan` → `makeAnchor`) or a click in the margin (a position at
+  the start of the block at that height) opens the popover: **New cue** (number from
+  `suggestCueNumber` between the nearest anchored cues before/after in script order;
+  scene of the cue before, else after; created right after it in show order, else before
+  the next; trigger Line + the selection, or LX / Timecode / Visual for positions) or
+  **Attach existing cue** (RecordPicker over cues; moves the cue's anchor if it has one;
+  a cue with no trigger type gets one). Dragging a marker onto another block updates its
+  anchor (the quote if that block contains it, else a position). All placements are
+  state `manual`, one batch with their cue ops.
+- **URL state**: `?cue=` scrolls to the marker and flashes it (the cue list's parameter,
+  so "Show in script" / "Show in list" round-trip; clicking a marker writes it);
+  `?version=` reads an older version read-only (its own anchors); `?resolve=1` is the
+  Resolve screen. "Show in script": the cue grid's row menu, the cue panel's **Script**
+  tab (`ScriptTab.tsx`: state, page, quote in context), ⌘K. A marker's ⋯ menu: Open cue,
+  Show in list, Remove from script.
+- **New version** (`resolve.ts`, `ResolveScreen.tsx`): the import's results give the
+  report ("1 matched · 0 moved · 1 changed · 2 missing") and the Resolve list
+  (`buildResolveItems`: results when this tab imported it, else the anchor rows); each
+  item shows the old text around the old anchor and the new page at the best guess
+  (other guesses as chips). Accept / Place (select text, or click a line for its start) →
+  anchor state `manual`; Cut → cue status "Cut" (seeded by DO migration
+  `0006_cue_status_cut`, to fold into M4a's 0006) and its anchor deleted; Skip → no
+  change. Cues still without a placed anchor are the reader's **Unplaced** tray; the cue
+  list's number cell warns about `changed` / `missing` anchors (`anchorWarnings`).
+- **Roles**: viewers and commenters read (no popover, no drag, no import / resolve).
+- **Tests**: `markers`, `placement`, `resolve` (unit), `Reader`, `rangeToSpan`,
+  `ResolveScreen`, `mockSource` (dom), `mock/anchorText` (fixtures), `e2e/script.spec.ts`
+  (TXT fixtures in `e2e/fixtures/`; against the mock until M4a is merged; the viewer test
+  copies the mock's localStorage to the viewer's browser).
+
+## Print layouts (`src/web/features/print/`, R21)
+
+- Routes under `/shows/:id` that render without the workspace chrome (ShowWorkspace
+  returns just the outlet for paths containing `/print`). `PrintShell` forces the light
+  theme by setting `<html data-theme="light">` while mounted (restored on leave, never
+  stored), adds a screen-only toolbar (Back, Print / Save as PDF → `window.print()`) and
+  the header (show, title, version / view, date).
+- **Calling script** (`CallingScriptPrint.tsx`), `/shows/:id/script/print?version=&filter=`:
+  every page, each block beside its markers (status colors), page breaks between pages.
+  From the script header's **Print calling script** (keeps the filter) or ⌘K.
+- **Print view** (`PrintTable.tsx`), `/shows/:id/print/<tab>?view=<id>`: `TablePrintRoute`
+  renders the tab's own component inside `PrintModeContext`; `TableGrid` and `CueGrid`
+  build their saved view as usual (`useViewConfig`, which now also returns `viewId`) and
+  return `<PrintTable>` instead of the grid: the view's visible columns
+  (`formatValue`), groups, filters, sorts and color rules (`rowColors`). Each group is its
+  own table with the group title and column headers in `<thead>`, so they repeat on every
+  printed page. The toolbar's **Print** link and ⌘K "Print this view". New built-in
+  layouts (SM cue sheet, notes by person…) should reuse `PrintShell` + `PrintTable`.
 
 ## Theme and colors
 
