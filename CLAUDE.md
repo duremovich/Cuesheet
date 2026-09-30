@@ -158,12 +158,15 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   headers; the five core tables are imported, others skipped with a warning. The import is
   one op batch (so history and broadcast work; `allowCreatedAt` lets it keep note
   `Created Time`). CSV order becomes show order. Links resolve by primary text among the
-  imported rows; multi-value cells are CSV-parsed (Airtable quotes values with commas);
-  unresolved links, duplicate cue numbers (first match wins), dropped extra scene/content
-  links on notes, and cues without a scene are reported as `warnings`. The Cue List export
-  has no Scene column: a cue's scene comes from its linked content's scene when all agree,
-  and content's scene from its Scene column or its `SSS-` name prefix. Note `created by`
-  names go to `custom.created_by_name`.
+  imported rows; multi-value cells are CSV-parsed (Airtable quotes values with commas).
+  Assignee/creator names missing from Personnel get a new person (name only), reused on
+  later matches. Created people, unresolved links, duplicate cue numbers (first match
+  wins), dropped extra scene/content links on notes, and scene inference are reported as
+  `warnings`. The Cue List export has no Scene column: a cue's scene comes from its linked
+  content's scene when all agree (content's scene: its Scene column, else its `SSS-` name
+  prefix); a cue still without one takes the scene when the nearest scene-bearing cues
+  before and after it (CSV order) agree, else stays Unassigned. Note `created by` names go
+  to `custom.created_by_name`; `Created Time` is read as UTC.
 - **Writing an e2e test.** Add `e2e/<feature>.spec.ts`. Use helpers in `e2e/helpers.ts`
   (`login`, `createShow`, `uniqueName`). Tests run in parallel against one server whose DB
   persists for the run, so make data unique (`uniqueName`) and don't assume an empty DB.

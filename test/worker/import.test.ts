@@ -60,11 +60,12 @@ describe("Airtable import", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as ImportResponse;
     // 122 cue rows minus the 2 blank spacer rows.
-    expect(body.created).toEqual({ scenes: 28, cues: 120, content: 42, notes: 319, persons: 28 });
+    expect(body.created).toEqual({ scenes: 28, cues: 120, content: 42, notes: 319, persons: 31 });
     expect(body.warnings).toEqual(
       expect.arrayContaining([
         expect.stringMatching(/cue number 49.00 is used 2 times/),
-        expect.stringMatching(/person "Casey Brennan" not in Personnel/),
+        "Created person 'Casey Brennan' (not in Personnel)",
+        expect.stringMatching(/cues without content took their scene from the cues around them/),
         expect.stringMatching(/cues have no scene/),
       ]),
     );
@@ -80,7 +81,7 @@ describe("Airtable import", () => {
     expect(snap.version).toBe(bump.version);
     const { scenes, cues, content: items, notes: noteRows, persons } = snap.tables;
     expect([scenes.length, cues.length, items.length, noteRows.length, persons.length]).toEqual([
-      28, 120, 42, 319, 28,
+      28, 120, 42, 319, 31,
     ]);
     // CSV order is show order.
     expect(cues.slice(0, 6).map((c) => c.number)).toEqual([
@@ -104,6 +105,20 @@ describe("Airtable import", () => {
     const scene105 = scenes.find((s) => s.number === "105");
     expect(cue1420?.scene_id).toBe(scene105?.id);
     expect(vamp?.scene_id).toBe(scene105?.id);
+    // Its assignee isn't in Personnel, so the importer created that person.
+    const mark = persons.find((p) => p.name === "Morgan Ellis");
+    expect(mark).toMatchObject({ group: null, email: null });
+    expect(snap.joins.cueAssignees[cue1420?.id ?? ""]).toEqual([mark?.id]);
+    expect(persons.filter((p) => p.name === "Morgan Ellis")).toHaveLength(1);
+
+    // 2.10 has no content; the cues around it are both in the Overture, so it is too.
+    const overture = scenes.find((s) => s.number === "100");
+    expect(overture?.name).toBe("Overture");
+    expect(cues.find((c) => c.number === "2.00")?.scene_id).toBe(overture?.id);
+    expect(cues.find((c) => c.number === "2.10")?.scene_id).toBe(overture?.id);
+    // Cues at the very top have nothing before them and stay Unassigned.
+    expect(cues.find((c) => c.number === "0.10")?.scene_id).toBeNull();
+
     expect(cue1420).toMatchObject({
       page: "17",
       timecode: "4:00:00.00",
@@ -137,7 +152,7 @@ describe("Airtable import", () => {
     const hist = (await (
       await api(`/api/shows/${show.id}/history?table=cues&id=${cue1420?.id}`, { cookie })
     ).json()) as HistoryResponse;
-    expect(hist.changes.map((h) => h.field)).toEqual(["content", "*"]);
+    expect(hist.changes.map((h) => h.field)).toEqual(["assignees", "content", "*"]);
     expect(hist.changes[0]?.userName).toBe("Admin");
   });
 

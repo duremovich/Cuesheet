@@ -28,7 +28,7 @@ test("import the example Airtable CSVs; cues appear grouped by scene", async ({ 
   await createShow(page, uniqueName("Some Like It Hot"));
   await page.getByLabel("Import Airtable CSVs…").setInputFiles(EXAMPLES);
   await expect(page.getByTestId("import-result")).toContainText(
-    "Imported 28 scenes, 120 cues, 42 content, 319 notes, 28 people.",
+    "Imported 28 scenes, 120 cues, 42 content, 319 notes, 31 people.",
   );
   await expect(page.getByTestId("cue-row")).toHaveCount(120);
 

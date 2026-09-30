@@ -3,7 +3,7 @@
 // docs/spec/data-model.md §"Mapping from the Airtable base". Pure: no I/O.
 import Papa from "papaparse";
 import { newId } from "../../shared/ids";
-import type { ImportResponse, Op } from "../../shared/ops";
+import type { FieldValues, ImportResponse, Op } from "../../shared/ops";
 import type { FieldOptions, TableName } from "../../shared/tables";
 
 export type ImportKind = "scenes" | "persons" | "content" | "cues" | "notes";
@@ -151,10 +151,16 @@ export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions
   }
   if (skippedPhotos)
     warnings.add(`Personnel: ${skippedPhotos} photos not imported (attachments come later)`);
-  const person = (name: string, what: string): string | null => {
-    const id = personByName.get(name.toLowerCase());
-    if (!id) warnings.add(`${what}: person "${name}" not in Personnel; link skipped`);
-    return id ?? null;
+  /** Resolve a person by name; names not in Personnel get a new person (name only). */
+  const person = (name: string): string => {
+    const existing = personByName.get(name.toLowerCase());
+    if (existing) return existing;
+    const id = newId();
+    personByName.set(name.toLowerCase(), id);
+    ops.push({ op: "create", table: "persons", id, fields: { name } });
+    created.persons++;
+    warnings.add(`Created person '${name}' (not in Personnel)`);
+    return id;
   };
 
   // ---- scenes ----
@@ -212,7 +218,7 @@ export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions
       fields: {
         name,
         scene_id: sceneId,
-        creator_id: creator ? person(creator, "Content creator") : null,
+        creator_id: creator ? person(creator) : null,
         loop_in: clean(r["LOOP IN"]),
         loop_out: clean(r["LOOP OUT"]),
       },
@@ -230,7 +236,7 @@ export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions
   // ---- cues ----
   const cueIdsByNumber = new Map<string, string[]>();
   const cueRows = byKind.get("cues") ?? [];
-  let noScene = 0;
+  const cueFields: FieldValues[] = [];
   const CUE_TEXT_COLUMNS = [
     "PG",
     "SM Call",
@@ -260,37 +266,53 @@ export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions
     // content when all of it agrees.
     const scenes = new Set(contentIds.map((c) => contentScene.get(c)).filter(Boolean));
     const sceneId = scenes.size === 1 ? ([...scenes][0] as string) : null;
-    if (!sceneId) noScene++;
-    ops.push({
-      op: "create",
-      table: "cues",
-      id,
-      fields: {
-        number,
-        scene_id: sceneId,
-        page: clean(r.PG),
-        sm_call: clean(r["SM Call"]),
-        lx_cue: clean(r.LX),
-        timecode: clean(r.Timecode),
-        ae_time: clean(r["AE Time"]),
-        measure: clean(r.MSR),
-        description: clean(r.Description),
-        status: option("cues", "status", clean(r.STATUS)),
-        is_section: !number,
-      },
-    });
+    const fields: FieldValues = {
+      number,
+      scene_id: sceneId,
+      page: clean(r.PG),
+      sm_call: clean(r["SM Call"]),
+      lx_cue: clean(r.LX),
+      timecode: clean(r.Timecode),
+      ae_time: clean(r["AE Time"]),
+      measure: clean(r.MSR),
+      description: clean(r.Description),
+      status: option("cues", "status", clean(r.STATUS)),
+      is_section: !number,
+    };
+    cueFields.push(fields); // scene_id may still be filled in by the pass below
+    ops.push({ op: "create", table: "cues", id, fields });
     created.cues++;
     contentIds.forEach((targetId) => {
       ops.push({ op: "link", table: "cues", id, field: "content", targetId });
     });
     for (const name of splitMulti(r.Assignee)) {
-      const p = person(name, "Cue assignee");
-      if (p) ops.push({ op: "link", table: "cues", id, field: "assignees", targetId: p });
+      const p = person(name);
+      ops.push({ op: "link", table: "cues", id, field: "assignees", targetId: p });
     }
+  }
+  // Second pass: a cue still without a scene takes it when the nearest scene-bearing cues
+  // before and after it (CSV order, content-derived scenes only) agree.
+  const derived = cueFields.map((f) => f.scene_id as string | null);
+  let inferred = 0;
+  derived.forEach((sceneId, i) => {
+    if (sceneId) return;
+    const before = derived.slice(0, i).findLast((s) => s !== null);
+    const after = derived.slice(i + 1).find((s) => s !== null);
+    const fields = cueFields[i];
+    if (before && before === after && fields) {
+      fields.scene_id = before;
+      inferred++;
+    }
+  });
+  const noScene = cueFields.filter((f) => !f.scene_id).length;
+  if (inferred) {
+    warnings.add(
+      `Cue List: ${inferred} cues without content took their scene from the cues around them`,
+    );
   }
   if (noScene) {
     warnings.add(
-      `Cue List: ${noScene} cues have no scene (the export has no Scene column; scene comes from linked content when unambiguous) and show as Unassigned`,
+      `Cue List: ${noScene} cues have no scene (the export has no Scene column; scene comes from linked content or neighbouring cues) and show as Unassigned`,
     );
   }
   for (const [number, ids] of cueIdsByNumber) {
@@ -345,8 +367,8 @@ export function buildAirtableImport(files: CsvFile[], fieldOptions: FieldOptions
       ops.push({ op: "link", table: "notes", id, field: "cues", targetId: ids[0] });
     }
     for (const name of splitMulti(r["Assigned To"])) {
-      const p = person(name, "Note assignee");
-      if (p) ops.push({ op: "link", table: "notes", id, field: "assignees", targetId: p });
+      const p = person(name);
+      ops.push({ op: "link", table: "notes", id, field: "assignees", targetId: p });
     }
   }
 
