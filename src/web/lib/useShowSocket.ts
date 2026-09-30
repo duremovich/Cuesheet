@@ -1,7 +1,7 @@
 // One WebSocket per open show page. Reconnects with backoff after network drops; stops for
 // good if the server refuses the upgrade (signed out, not a member, show gone, bad origin).
-import { useEffect, useState } from "react";
-import { PING_FRAME, parseServerMessage } from "../../shared/ws";
+import { useEffect, useRef, useState } from "react";
+import { PING_FRAME, parseServerMessage, type ServerMessage } from "../../shared/ws";
 import { ApiError, api, showSocketUrl } from "./api";
 
 export type SocketStatus = "connecting" | "connected" | "disconnected" | "unauthorized";
@@ -29,8 +29,17 @@ async function upgradeWasRefused(showId: string): Promise<boolean> {
   }
 }
 
-export function useShowSocket(showId: string): ShowSocketState {
+/**
+ * `onMessage` receives every server message (the show store feeds on `ops`/`version`).
+ * It's read through a ref, so passing a new function doesn't reconnect.
+ */
+export function useShowSocket(
+  showId: string,
+  onMessage?: (msg: ServerMessage) => void,
+): ShowSocketState {
   const [state, setState] = useState<ShowSocketState>({ status: "connecting", clients: 0 });
+  const onMessageRef = useRef(onMessage);
+  onMessageRef.current = onMessage;
 
   useEffect(() => {
     let ws: WebSocket | null = null;
@@ -51,6 +60,7 @@ export function useShowSocket(showId: string): ShowSocketState {
       };
       ws.onmessage = (e) => {
         const msg = parseServerMessage(e.data);
+        if (msg) onMessageRef.current?.(msg);
         if (msg?.type === "hello" || msg?.type === "presence") {
           attempt = 0;
           setState({ status: "connected", clients: msg.clients });

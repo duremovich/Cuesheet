@@ -122,14 +122,10 @@
   gap: var(--space-4);
 }
 
-.gridPlaceholder {
-  border: 1px dashed var(--color-border-strong);
-  border-radius: var(--radius-lg);
-  background: var(--color-surface);
-  min-height: 320px;
-  display: grid;
-  place-items: center;
-  color: var(--color-text-muted);
-  text-align: center;
-  padding: var(--space-6);
+.showToolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-3);
 }

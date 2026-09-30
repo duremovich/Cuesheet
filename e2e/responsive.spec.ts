@@ -52,7 +52,7 @@ test("long unbroken show names ellipsize in the shows list at 390px", async ({ p
   const truncated = await nameSpan.evaluate((el) => el.scrollWidth > el.clientWidth);
   expect(truncated).toBe(true);
   const itemBox = await box(item);
-  expect(intersects(await box(nameSpan), await box(item.getByText("editor")))).toBe(false);
+  expect(intersects(await box(nameSpan), await box(item.getByText("owner")))).toBe(false);
   expect(itemBox.x + itemBox.width).toBeLessThanOrEqual(390);
   await noHorizontalScroll(page);
 });
