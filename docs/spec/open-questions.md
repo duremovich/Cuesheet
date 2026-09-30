@@ -93,6 +93,40 @@ Things the first build had to decide; each is easy to change.
   each top-level config key you changed (all filters, all color rules, …), not a merge
   within a key.
 
+## Units, formulas and surfaces (M3b decisions to confirm)
+
+- **ft-in rounding.** Feet and inches display to the nearest 1/8" (`14' 9 1/8"`),
+  configurable in code (`FT_IN_DENOMINATOR`), not yet per show. Editing shows the exact
+  value (`14' 9.165"`), so committing it unchanged writes nothing. Is 1/8" right for set
+  measurements, or should it be 1/16"?
+- **Default unit.** Meters when nothing is set. The show default lives in the ShowDO
+  `meta` row (M3a owned D1 migrations this round); move it to D1 `shows` if it ever needs
+  to be listed across shows. Is ft-in the better default for US shows?
+- **The toolbar unit toggle changes the view.** It's the view's unit override, so on a
+  shared view it's a draft (Save/Discard) for editors and a personal copy for viewers.
+  Your own preference (Show settings → My unit, or the calculator's toggle) applies when
+  the view has no override. Should the toggle be a per-browser overlay instead, like
+  column widths?
+- **A bare number in ft-in** is decimal feet (`14.75` = 14' 9"). A bare number in a
+  filter value is in the view's active unit.
+- **Negative lengths** are refused (input and server). Offsets (a surface's position)
+  might need them later.
+- **Pixels are plain numbers** in formulas, so `pixel_width / width` is a `#UNIT` error
+  and pixels-per-length goes through `PPI()`; length × length (areas) is an error too.
+- **Surfaces import.** Surfaces-Gallery.csv has 16 rows, the last one blank: 15 surfaces
+  are imported. A region's parent comes from its channel (`CH02.1` → `CH02`). The
+  export's Breakdown.Surfaces column is empty; links resolve by surface name or channel
+  when it has values. `content.resolution` stays text (M3a owns content); the
+  `pixel_size` field type exists for it and for custom fields.
+- **Calculator.** The default lock is the physical size, or the pixel size for a region
+  of a parent with a pixel canvas (ux.md asks for "pixel size read-only" there: it's the
+  default lock rather than read-only). The aspect lock starts off. The region diagram
+  shows the region's share, not its position (surfaces have no offsets yet).
+- **Custom formula columns** ("Add formula column" behind a flag, a `computed_fields`
+  table) weren't built: view configs validate column keys against a fixed per-table list
+  (`VIEW_FIELDS`), which custom columns need to extend first. They come with custom
+  fields (M5); the engine is ready.
+
 ## Infrastructure
 
 - **Sign-in for SM/director.** Do they need accounts, or is a read-only link enough?

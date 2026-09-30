@@ -124,7 +124,9 @@ function TextField<Row>({
   const [invalid, setInvalid] = useState(false);
   const ref = useRef<HTMLInputElement & HTMLTextAreaElement>(null);
   const multiline = col.type === "longtext";
-  const shown = draft ?? editorText(col, value);
+  // Lengths show rounded in the unit until focused, then precisely (so an unchanged commit is a no-op).
+  const shown =
+    draft ?? (col.type === "measurement" ? formatValue(col, value) : editorText(col, value));
 
   useLayoutEffect(() => {
     const el = ref.current;

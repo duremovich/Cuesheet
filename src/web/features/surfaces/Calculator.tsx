@@ -408,7 +408,14 @@ export function SurfaceCalculator({
               : ""}
           </p>
           {share.width !== null && share.height !== null && (
-            <div className={styles.canvas} aria-hidden="true">
+            <div
+              className={styles.canvas}
+              aria-hidden="true"
+              style={{
+                aspectRatio:
+                  parent.width && parent.height ? `${parent.width} / ${parent.height}` : "16 / 9",
+              }}
+            >
               <div
                 className={styles.region}
                 style={{

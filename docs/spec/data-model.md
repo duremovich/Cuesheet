@@ -75,7 +75,7 @@ One per production. All other records belong to a show.
 | `name` | text | "Some Like It Hot" |
 | `venue` | text | "Olney Theatre Center" |
 | `status` | select | Prep / Rehearsal / Tech / Running / Closed / Archived |
-| `default_unit` | select | m, cm, ft-in… default display unit for measurement fields |
+| `default_unit` | select | m, cm, mm, ft-in, ft, in: default display unit for measurement fields. Kept in the ShowDO `meta` row (the `meta` op), not D1 |
 | `default_frame_rate` | number | for timecode fields |
 | `dates` | date range | first rehearsal, first preview, opening, closing (from Calendar) |
 
@@ -202,13 +202,13 @@ Millumin channel/layer.
 | --- | --- | --- |
 | `name` | text | "L PRO TOP" |
 | `channel` | text | "CH02.1" |
-| `parent` | link → Surface | CH02.1 and CH02.2 are regions of CH02 |
+| `parent` | link → Surface | CH02.1 and CH02.2 are regions of CH02. Stored as `parent_id`; no cycles |
 | `width`, `height` | measurement | stored in meters, displayed in the show/view unit |
 | `pixel_width`, `pixel_height` | number | |
-| `ppi` | formula | `pixel_width / width_in_inches` — built in |
-| `pixel_pitch` | formula | for LED |
-| `aspect_ratio` | formula | |
-| `throw_distance`, `lens_ratio` | measurement / number | optional projector fields |
+| `ppi` | formula | `PPI(pixel_width, width)`: pixels per inch — built in |
+| `pixel_pitch` | formula | `PITCH(width, pixel_width)`: mm per pixel, for LED |
+| `aspect_ratio` | formula | of the pixel size, else the physical size ("16:9", "1.78:1") |
+| `throw_distance`, `lens_ratio` | measurement / number | optional projector fields; `throw_width` (formula) = distance ÷ ratio |
 | `images` | attachment (many) | set photos or renders with this surface's coverage marked; first image is the grid thumbnail |
 | `description` | long text | |
 | `scenes`, `content` | reverse links | |
@@ -338,15 +338,32 @@ Available on core and custom tables.
 
 A small expression language, deliberately smaller than Airtable's:
 
-- Arithmetic, comparison, `IF`, `AND/OR/NOT`, `ROUND`, `MIN/MAX`.
-- Text: `CONCAT`, `LEFT/RIGHT/MID`, `UPPER/LOWER`, `TRIM`, `FIND`.
-- Dates and durations: difference, add, format.
-- **Units**: measurement values carry their unit through arithmetic. `pixel_width / width`
-  yields pixels-per-meter; `IN(width)` converts; `PPI(pixel_width, width)` is a helper.
-  Mixing incompatible units is an error shown in the cell.
-- Links: `LOOKUP(field)`, `COUNT(link)`, `SUM(link.field)`, `JOIN(link.field, ", ")`.
+- Arithmetic (`+ - * / % ^`, unary `-`), comparison (`= != <> < <= > >=`), `&` joins
+  text, `IF(c, a, b?)`, `AND/OR/NOT`, `ROUND(x, digits?)`, `MIN/MAX`, `ABS`.
+- Text: `CONCAT`, `LEFT/RIGHT/MID`, `UPPER/LOWER`, `TRIM`, `FIND` (1-based, 0 = not
+  found), `LEN`. Strings in `"…"` or `'…'`; field names with spaces in `{…}`.
+- Dates and durations: difference, add, format. *(Not built yet: arrives with the date and
+  timecode field types.)*
+- **Units** (built, M3b): measurement fields evaluate to lengths (meters inside) and carry
+  their dimension through arithmetic: length ± length, length × number and length ÷ number
+  are lengths; length ÷ length is a number; anything else with a length (length ×
+  length, number ÷ length such as `pixel_width / width`, length + number, comparing a
+  length with a number) is a `#UNIT` error. Pixels are plain numbers, so pixels per
+  length goes through `PPI(pixels, length)`; `PITCH(length, pixels)` is mm per pixel,
+  `ASPECT(w, h)` gives "16:9" (or "1.78:1"). `M/CM/MM/IN/FT(x)` convert: a length → a
+  plain number in that unit (`IN(width)`), a number → a length in that unit (`IN(12)`).
+  A blank input makes arithmetic blank (a surface with no pixel size has no PPI).
+- Links: `LOOKUP(link.field)` (one value, or the list), `COUNT(link)`,
+  `SUM(link.field)`, `JOIN(link.field, ", ")`; `link.field` on a many-link is a list.
+  A pixel size field reads `.w` / `.h`.
+- Errors are values (`#UNIT`, `#DIV/0`, `#VALUE`, `#NAME`, `#ERROR`) that propagate
+  (except through the branch `IF` doesn't take) and show as a red cell with the message
+  on hover.
 
-Formulas recompute live and can drive conditional formatting.
+Formulas recompute live (on the client, per row) and can drive filters, sorting and
+conditional formatting. In M3b they're the built-in computed columns on Surfaces (`ppi`,
+`pixel_pitch`, `aspect_ratio`, `throw_width` = throw distance ÷ lens ratio); user-defined
+formula fields come with custom fields (M5). The engine is `src/shared/formula/`.
 
 ## Mapping from the Airtable base
 
