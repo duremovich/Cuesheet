@@ -195,7 +195,6 @@
 }
 
 .row[data-moved] {
-  transition: transform 350ms ease;
   z-index: 2;
 }
 
@@ -507,4 +506,78 @@
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
+}
+
+/* --- Group header as a navigable row --- */
+
+.groupCell:focus {
+  outline: none;
+}
+
+.groupCell[data-active] {
+  box-shadow: inset 0 0 0 2px var(--color-border-strong);
+}
+
+.root:focus-within .groupCell[data-active] {
+  box-shadow: inset 0 0 0 2px var(--color-focus-ring);
+}
+
+/* --- Decorations --- */
+
+.cell[data-warning] .text,
+.cell[data-warning] .number,
+.cell[data-warning] .longtext {
+  text-decoration: underline wavy var(--color-warning);
+  text-underline-offset: 3px;
+}
+
+.ghost {
+  color: var(--color-text-muted);
+  font-style: italic;
+  pointer-events: none;
+}
+
+.editor::placeholder {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+/* --- Multi-row delete confirmation --- */
+
+.confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--color-border-strong);
+  background: var(--color-danger-subtle);
+  color: var(--color-text);
+}
+
+.confirm > span {
+  flex: 1 1 200px;
+}
+
+.danger {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: var(--color-bg);
+  font-weight: 600;
+}
+
+.danger:hover:not(:disabled) {
+  background: var(--color-danger);
+  opacity: 0.9;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row[data-moved] .cell,
+  .row[data-moved] .rownum {
+    animation: none;
+  }
+}
+
+.resizer:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
 }

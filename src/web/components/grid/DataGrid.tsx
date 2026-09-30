@@ -14,23 +14,28 @@ import {
   useCallback,
   useEffect,
   useId,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
 } from "react";
 import { Chip, optionColor } from "./Chip";
-import { ContextMenu, type MenuItem } from "./ContextMenu";
+import { ContextMenu } from "./ContextMenu";
 import { CellContent, TextEditor } from "./cells";
 import styles from "./DataGrid.module.css";
 import { ChevronIcon, ExpandIcon, GripIcon, PlusIcon, TypeIcon } from "./icons";
-import { buildLayout, type FlatItem, type Hold } from "./ordering";
+import { buildLayout, type FlatItem, type Hold, isEmptyValue } from "./ordering";
 import { type CloseReason, type PickVia, RecordPicker } from "./RecordPicker";
 import type {
+  CellDecoration,
   ColorRule,
   Column,
   DataGridProps,
+  GridAction,
   InsertPosition,
+  MenuItem,
   PickerItem,
   RowHeight,
 } from "./types";
@@ -53,13 +58,18 @@ export const ROWNUM_WIDTH = 76;
 const DEFAULT_WIDTH = 160;
 const MIN_WIDTH = 60;
 const MOVED_MS = 2400;
+const SLIDE_MS = 320;
 const PASTE_TYPES = new Set(["text", "longtext", "number", "select"]);
 const PICKER_TYPES = new Set(["select", "multiselect", "link", "multilink"]);
+const GHOST_TYPES = new Set(["text", "longtext", "number"]);
 const MRU_SIZE = 5;
+const GROUP_COL = "__group";
 
+/** The active cell: a row cell, or a group header (`group: true`, `rowId` = group id). */
 interface CellRef {
   rowId: string;
   key: string;
+  group?: boolean;
 }
 
 type Editing =
@@ -77,6 +87,7 @@ interface ColLayout<Row> {
 }
 
 type RowItem<Row> = Extract<FlatItem<Row>, { kind: "row" }>;
+type Edit = { rowId: string; key: string; value: unknown };
 
 const isMod = (e: { metaKey: boolean; ctrlKey: boolean }) => e.metaKey || e.ctrlKey;
 
@@ -91,6 +102,10 @@ function editText<Row>(col: Column<Row>, v: unknown): string {
   if (v === null || v === undefined) return "";
   return col.type === "number" ? String(v) : formatValue(col, v);
 }
+
+const prefersReducedMotion = () =>
+  typeof window !== "undefined" &&
+  !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
 /** Interface the memoized rows call back into (stable identity; reads the latest state). */
 interface RowApi {
@@ -108,10 +123,8 @@ interface RowApi {
 export function DataGrid<Row>(props: DataGridProps<Row>) {
   const {
     columns,
-    rowId,
     rows,
     groups,
-    isSection,
     onInsert,
     onMove,
     onDelete,
@@ -128,28 +141,50 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
   const sortOn = !!sort && sort.length > 0;
   const rh = ROW_HEIGHTS[rowHeight];
 
+  // rowId / isSection are usually inline lambdas: read them through refs so a parent
+  // re-render doesn't rebuild the layout (and re-render every row).
+  const rowIdRef = useRef(props.rowId);
+  rowIdRef.current = props.rowId;
+  const isSectionRef = useRef(props.isSection);
+  isSectionRef.current = props.isSection;
+  const rowId = useCallback((r: Row) => rowIdRef.current(r), []);
+  const isSection = useCallback((r: Row) => !!isSectionRef.current?.(r), []);
+
   // --- State ---
   const [active, setActive] = useState<CellRef | null>(null);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [range, setRange] = useState<{ anchor: CellRef; focus: CellRef } | null>(null);
   const [internalSelection, setInternalSelection] = useState<string[]>([]);
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+  const [internalCollapsed, setInternalCollapsed] = useState<string[]>([]);
   const [hold, setHold] = useState<Hold | null>(null);
   const [moved, setMoved] = useState<ReadonlySet<string>>(() => new Set());
   const [widths, setWidths] = useState<Record<string, number>>({});
   const [menu, setMenu] = useState<{ x: number; y: number; rowId: string } | null>(null);
   const [drag, setDrag] = useState<{ rowId: string; gap: number | null } | null>(null);
+  const [confirm, setConfirm] = useState<string[] | null>(null);
   const [hint, setHint] = useState<string>("");
   const [viewportWidth, setViewportWidth] = useState(0);
   const [pickerAnchor, setPickerAnchor] = useState<HTMLElement | null>(null);
+  const [, bump] = useReducer((x: number) => x + 1, 0);
   const undo = useRef(new UndoStack());
   const mru = useRef(new Map<string, PickerItem[]>());
   const focusPending = useRef(false);
-  const pendingInsert = useRef<string | null>(null);
+  /** A row to activate once it appears (inserted rows, `focusRow`). */
+  const pendingFocus = useRef<{ id: string; key?: string | undefined; focus: boolean } | null>(
+    null,
+  );
+  const pendingScroll = useRef<string | null>(null);
+  const scrollActive = useRef(false);
+  const afterDelete = useRef<string | null>(null);
+  const lastSeen = useRef<{ flat: number; groupId: string | undefined } | null>(null);
+  const flip = useRef<{ id: string; from: number } | null>(null);
   const selectionAnchor = useRef<string | null>(null);
+  const hintTimer = useRef<number | undefined>(undefined);
 
   const selected = props.selectedRowIds ?? internalSelection;
   const selectedSet = useMemo(() => new Set(selected), [selected]);
+  const collapsedList = props.collapsed ?? internalCollapsed;
+  const collapsed = useMemo<ReadonlySet<string>>(() => new Set(collapsedList), [collapsedList]);
 
   // --- Derived layout ---
   const holds = useMemo(() => (hold ? [hold] : []), [hold]);
@@ -164,15 +199,21 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     else for (const r of rows ?? []) m.set(rowId(r), { row: r, groupId: undefined });
     return m;
   }, [rows, groups, rowId]);
-  const indexById = useMemo(() => {
-    const m = new Map<string, number>();
+  const { indexById, groupIndexById } = useMemo(() => {
+    const rowsM = new Map<string, number>();
+    const groupsM = new Map<string, number>();
     items.forEach((it, i) => {
-      if (it.kind === "row") m.set(it.id, i);
+      if (it.kind === "row") rowsM.set(it.id, i);
+      else groupsM.set(it.group.id, i);
     });
-    return m;
+    return { indexById: rowsM, groupIndexById: groupsM };
   }, [items]);
-  /** Flat indices of row items, for up/down navigation. */
+  /** Flat indices of row items (paste, ranges, select all). */
   const navRows = useMemo(() => items.flatMap((it, i) => (it.kind === "row" ? [i] : [])), [items]);
+  const groupIndexes = useMemo(
+    () => items.flatMap((it, i) => (it.kind === "group" ? [i] : [])),
+    [items],
+  );
   const offsets = useMemo(() => {
     const o = new Array<number>(items.length + 1);
     o[0] = 0;
@@ -213,29 +254,20 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     [columns, props.sectionLabelKey],
   );
 
+  const indexOfRef = (a: CellRef | null | undefined) =>
+    a ? (a.group ? groupIndexById.get(a.rowId) : indexById.get(a.rowId)) : undefined;
+
   // --- Virtualization ---
-  const activeIndex = active ? (indexById.get(active.rowId) ?? -1) : -1;
+  const activeIndex = indexOfRef(active) ?? -1;
   const dragIndex = drag ? (indexById.get(drag.rowId) ?? -1) : -1;
-  const groupIndexes = useMemo(
-    () => items.flatMap((it, i) => (it.kind === "group" ? [i] : [])),
-    [items],
-  );
-  const stickyRef = useRef(-1);
-  // Always render the active and dragged rows (so focus and pointer tracking survive
-  // scrolling) and the group header stuck to the top.
+  // Always render the active and dragged rows, so focus and pointer tracking survive scrolling.
   const rangeExtractor = useCallback(
     (r: Range) => {
       const base = defaultRangeExtractor(r);
-      let stuck = -1;
-      for (const g of groupIndexes) {
-        if (g <= r.startIndex) stuck = g;
-        else break;
-      }
-      stickyRef.current = stuck;
-      const extra = [activeIndex, dragIndex, stuck].filter((i) => i >= 0 && i < r.count);
-      return [...new Set([...base, ...extra])].sort((a, b) => a - b);
+      const extra = [activeIndex, dragIndex].filter((i) => i >= 0 && i < r.count);
+      return extra.length ? [...new Set([...base, ...extra])].sort((a, b) => a - b) : base;
     },
-    [groupIndexes, activeIndex, dragIndex],
+    [activeIndex, dragIndex],
   );
   const virtualizer = useVirtualizer({
     count: items.length,
@@ -247,7 +279,27 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     rangeExtractor,
   });
   const virtualItems = virtualizer.getVirtualItems();
-  const sticky = groups ? stickyRef.current : -1;
+
+  // The stuck group header names the group of the first item visible below it: the item
+  // at body offset scrollTop + GROUP_HEIGHT (just under the column header and the stuck
+  // header itself), or that item's own group header.
+  const scrollTop = virtualizer.scrollOffset ?? 0;
+  let sticky = -1;
+  if (groups && items.length) {
+    const probe = scrollTop + GROUP_HEIGHT;
+    let lo = 0;
+    let hi = items.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if ((offsets[mid] as number) <= probe) lo = mid;
+      else hi = mid - 1;
+    }
+    for (const g of groupIndexes) {
+      if (g <= lo) sticky = g;
+      else break;
+    }
+  }
+  const stickyTop = HEADER_HEIGHT;
 
   useLayoutEffect(() => {
     const el = scrollRef.current;
@@ -265,6 +317,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     items,
     allRows,
     indexById,
+    groupIndexById,
     navRows,
     offsets,
     cols,
@@ -275,27 +328,72 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     selected,
     hold,
     sortOn,
-    rh,
     frozenWidth,
     labelKey,
     drag,
+    collapsed,
   };
   const ref = useRef(S);
   ref.current = S;
+  // Whether focus was inside the grid when this render started (see the focus effect).
+  const hadFocus = useRef(false);
+  hadFocus.current =
+    typeof document !== "undefined" && !!rootRef.current?.contains(document.activeElement);
 
   // --- Helpers ---
   const colOf = (key: string) => S.cols[S.colIndex.get(key) ?? -1]?.col;
   const rowItemAt = (i: number): RowItem<Row> | undefined => {
-    const it = S.items[i];
+    const it = ref.current.items[i];
     return it?.kind === "row" ? it : undefined;
   };
-  const rowItem = (id: string) => rowItemAt(S.indexById.get(id) ?? -1);
+  const rowItem = (id: string) => rowItemAt(ref.current.indexById.get(id) ?? -1);
   const firstEditableKey = (row: Row | undefined) =>
     (row ? S.cols.find((c) => isEditable(c.col, row)) : undefined)?.key ?? S.cols[0]?.key ?? "";
+  const refAt = (i: number, key: string): CellRef | null => {
+    const it = ref.current.items[i];
+    if (!it) return null;
+    return it.kind === "row" ? { rowId: it.id, key } : { rowId: it.group.id, key, group: true };
+  };
+
+  const showHint = (text: string) => {
+    setHint(text);
+    window.clearTimeout(hintTimer.current);
+    hintTimer.current = window.setTimeout(() => setHint(""), 4000);
+  };
+
+  /** Runs a consumer callback, reporting sync throws and async rejections. */
+  const guard = (action: GridAction, fn: () => unknown) => {
+    const report = (err: unknown) => {
+      (ref.current.props.onError ?? ((e: unknown) => console.error(e)))(err, action);
+      showHint(`Couldn't ${action === "edit" ? "save the change" : `${action} the row`}.`);
+    };
+    try {
+      const r = fn();
+      if (r && typeof (r as Promise<unknown>).then === "function")
+        (r as Promise<unknown>).catch(report);
+    } catch (err) {
+      report(err);
+    }
+  };
 
   const setSelected = (ids: string[]) => {
+    if (ref.current.selected.length === 0 && ids.length === 0) return;
     if (props.selectedRowIds === undefined) setInternalSelection(ids);
     props.onSelectionChange?.(ids);
+  };
+
+  const setCollapsed = (update: (s: Set<string>) => Set<string>) => {
+    const next = [...update(new Set(ref.current.collapsed))];
+    if (props.collapsed === undefined) setInternalCollapsed(next);
+    ref.current = { ...ref.current, collapsed: new Set(next) };
+    props.onCollapsedChange?.(next);
+  };
+  const expandGroup = (id: string | undefined) => {
+    if (id !== undefined && ref.current.collapsed.has(id))
+      setCollapsed((s) => {
+        s.delete(id);
+        return s;
+      });
   };
 
   const flashMoved = (id: string) => {
@@ -309,9 +407,8 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     }, MOVED_MS);
   };
 
-  /** Ends the current hold; the row settles into its sorted place with a highlight. */
   /**
-   * Ends the current hold; the row settles into its sorted place with a highlight.
+   * Ends the current hold; the row slides (FLIP) into its sorted place with a highlight.
    * Returns the settled layout (null if nothing was held).
    */
   const releaseHold = (): FlatItem<Row>[] | null => {
@@ -323,124 +420,193 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       rows: cur.props.rows,
       groups: cur.props.groups,
       columns: cur.props.columns,
-      rowId: cur.props.rowId,
+      rowId,
       sort: cur.props.sort,
-      collapsed,
-      isSection: cur.props.isSection,
+      collapsed: cur.collapsed,
+      isSection,
     });
     const after = settled.findIndex((it) => it.kind === "row" && it.id === h.id);
     setHold(null);
     ref.current = { ...ref.current, hold: null };
-    if (before !== undefined && after >= 0 && after !== before) flashMoved(h.id);
+    if (before !== undefined && after >= 0 && after !== before) {
+      flashMoved(h.id);
+      flip.current = { id: h.id, from: cur.offsets[before] ?? 0 };
+    }
     return settled;
   };
 
-  /** A hold for `id` at its place in `layout` (after its current predecessor). */
+  /** A hold for `id` at its slot within its group in `layout`. */
   const holdFor = (id: string, layout: FlatItem<Row>[]): Hold | null => {
     const i = layout.findIndex((it) => it.kind === "row" && it.id === id);
     const it = layout[i];
     if (it?.kind !== "row") return null;
-    const prev = layout[i - 1];
-    return { id, groupId: it.groupId, afterId: prev?.kind === "row" ? prev.id : null };
+    let index = 0;
+    for (let j = i - 1; j >= 0; j--) {
+      const p = layout[j];
+      if (p?.kind !== "row") break;
+      index++;
+    }
+    return { id, groupId: it.groupId, index };
+  };
+
+  /** Slot within its group for an insert/drop position, computed on `layout`. */
+  const slotFor = (pos: InsertPosition, layout: FlatItem<Row>[], exclude?: string): number => {
+    const list = layout.filter(
+      (it): it is RowItem<Row> =>
+        it.kind === "row" &&
+        it.id !== exclude &&
+        (pos.groupId === undefined || it.groupId === pos.groupId),
+    );
+    if (pos.afterRowId !== undefined) {
+      const i = list.findIndex((it) => it.id === pos.afterRowId);
+      if (i >= 0) return i + 1;
+    }
+    if (pos.beforeRowId !== undefined) {
+      const i = list.findIndex((it) => it.id === pos.beforeRowId);
+      if (i >= 0) return i;
+    }
+    return Number.POSITIVE_INFINITY;
   };
 
   const ensureVisible = (flatIndex: number, key?: string) => {
     const el = scrollRef.current;
+    const o = ref.current.offsets;
     if (!el || flatIndex < 0) return;
-    const top = (S.offsets[flatIndex] ?? 0) + HEADER_HEIGHT;
-    const bottom = (S.offsets[flatIndex + 1] ?? top) + HEADER_HEIGHT;
-    const viewTop = el.scrollTop + HEADER_HEIGHT + (groups ? GROUP_HEIGHT : 0);
-    if (top < viewTop)
-      el.scrollTop = Math.max(0, top - HEADER_HEIGHT - (groups ? GROUP_HEIGHT : 0));
+    const stickyRoom = groups && ref.current.items[flatIndex]?.kind === "row" ? GROUP_HEIGHT : 0;
+    const top = (o[flatIndex] ?? 0) + HEADER_HEIGHT;
+    const bottom = (o[flatIndex + 1] ?? top) + HEADER_HEIGHT;
+    const viewTop = el.scrollTop + HEADER_HEIGHT + stickyRoom;
+    if (top < viewTop) el.scrollTop = Math.max(0, top - HEADER_HEIGHT - stickyRoom);
     else if (bottom > el.scrollTop + el.clientHeight) el.scrollTop = bottom - el.clientHeight;
-    const c = key === undefined ? undefined : S.cols[S.colIndex.get(key) ?? -1];
+    const c = key === undefined ? undefined : ref.current.cols[ref.current.colIndex.get(key) ?? -1];
     if (c && !c.frozen) {
-      if (c.left < el.scrollLeft + S.frozenWidth)
-        el.scrollLeft = Math.max(0, c.left - S.frozenWidth);
+      if (c.left < el.scrollLeft + ref.current.frozenWidth)
+        el.scrollLeft = Math.max(0, c.left - ref.current.frozenWidth);
       else if (c.left + c.width > el.scrollLeft + el.clientWidth)
         el.scrollLeft = c.left + c.width - el.clientWidth;
     }
   };
 
-  /** Makes a cell the active one. Moving to another row releases the previous row's hold. */
+  /** Makes a cell (or group header) active. Leaving a row releases its hold. */
   const activate = (
-    rowIdArg: string,
-    key: string,
-    opts: { scroll?: boolean; keepRange?: boolean } = {},
+    target: CellRef,
+    opts: { scroll?: boolean; keepRange?: boolean; focus?: boolean } = {},
   ) => {
     const cur = ref.current;
-    if (!cur.hold || cur.hold.id !== rowIdArg) {
+    if (target.group) {
+      releaseHold();
+    } else if (!cur.hold || cur.hold.id !== target.rowId) {
       // Anchor the new hold in the layout as it is once the old row has settled.
       const layout = releaseHold() ?? cur.items;
-      const h = holdFor(rowIdArg, layout);
+      const h = holdFor(target.rowId, layout);
       if (h) {
         setHold(h);
         ref.current = { ...ref.current, hold: h };
       }
     }
-    setActive({ rowId: rowIdArg, key });
-    ref.current = { ...ref.current, active: { rowId: rowIdArg, key } };
+    setActive(target);
+    ref.current = { ...ref.current, active: target };
     if (!opts.keepRange) setRange(null);
-    focusPending.current = true;
-    if (opts.scroll) ensureVisible(S.indexById.get(rowIdArg) ?? -1, key);
+    if (opts.focus !== false) focusPending.current = true;
+    if (opts.scroll) {
+      const i = target.group
+        ? ref.current.groupIndexById.get(target.rowId)
+        : ref.current.indexById.get(target.rowId);
+      ensureVisible(i ?? -1, target.group ? undefined : target.key);
+    }
   };
 
   // --- Edits + undo ---
-  const applyEdits = (edits: { rowId: string; key: string; value: unknown }[], record = true) => {
+  const applyEdits = (edits: Edit[], record = true) => {
     const batch: EditRecord[] = [];
     for (const e of edits) {
       const col = colOf(e.key);
-      const entry = S.allRows.get(e.rowId);
+      const entry = ref.current.allRows.get(e.rowId);
       const before = col && entry ? col.getValue(entry.row) : undefined;
       batch.push({ rowId: e.rowId, key: e.key, before, after: e.value });
-      void props.onEdit(e.rowId, e.key, e.value);
+      guard("edit", () => ref.current.props.onEdit(e.rowId, e.key, e.value));
     }
     if (record) undo.current.push(batch);
   };
 
+  /**
+   * Undo/redo replays inverse edits, but skips a cell that no longer holds the value this
+   * grid left there (someone else changed it since): their change wins.
+   */
   const replay = (which: "undo" | "redo") => {
     const edits = which === "undo" ? undo.current.undo() : undo.current.redo();
     if (!edits || edits.length === 0) return;
-    for (const e of edits) void props.onEdit(e.rowId, e.key, e.value);
-    const first = edits[0];
-    if (first && S.indexById.has(first.rowId)) activate(first.rowId, first.key, { scroll: true });
+    let first: Edit | undefined;
+    let skipped = 0;
+    for (const e of edits) {
+      const col = colOf(e.key);
+      const entry = ref.current.allRows.get(e.rowId);
+      if (!col || !entry || !valuesEqual(col.getValue(entry.row), e.expect)) {
+        skipped++;
+        continue;
+      }
+      guard("edit", () => ref.current.props.onEdit(e.rowId, e.key, e.value));
+      first ??= e;
+    }
+    if (skipped)
+      showHint(`Skipped ${skipped} cell${skipped === 1 ? "" : "s"} changed by someone else.`);
+    if (first && ref.current.indexById.has(first.rowId))
+      activate({ rowId: first.rowId, key: first.key }, { scroll: true });
+  };
+
+  const decorationOf = (id: string, key: string): CellDecoration | undefined => {
+    const entry = ref.current.allRows.get(id);
+    return entry ? ref.current.props.cellDecoration?.(entry.row, key) : undefined;
+  };
+
+  /** Accept a ghost suggestion on an empty cell. Returns true if one was accepted. */
+  const acceptGhost = (id: string, key: string): boolean => {
+    const col = colOf(key);
+    const entry = ref.current.allRows.get(id);
+    const ghost = decorationOf(id, key)?.ghost;
+    if (!col || !entry || !ghost || !GHOST_TYPES.has(col.type)) return false;
+    if (!isEditable(col, entry.row) || !isEmptyValue(col.getValue(entry.row))) return false;
+    const value = parseText(col, ghost);
+    if (value === NOT_PARSED) return false;
+    applyEdits([{ rowId: id, key, value }]);
+    return true;
   };
 
   // --- Editing ---
-  const startEdit = (rowIdArg: string, key: string, initial?: string) => {
-    const it = rowItem(rowIdArg);
+  const startEdit = (id: string, key: string, initial?: string) => {
+    const it = rowItem(id);
     if (!it) return;
-    const editKey = it.section ? S.labelKey : key;
+    const editKey = it.section ? ref.current.labelKey : key;
     const col = colOf(editKey);
     if (!col || !isEditable(col, it.row)) return;
     // Editing always holds the row in place (e.g. after Escape released it).
-    if (ref.current.hold?.id !== rowIdArg) {
-      const h = holdFor(rowIdArg, ref.current.items);
+    if (ref.current.hold?.id !== id) {
+      const h = holdFor(id, ref.current.items);
       if (h) {
         setHold(h);
         ref.current = { ...ref.current, hold: h };
       }
     }
     if (col.type === "checkbox") {
-      applyEdits([{ rowId: rowIdArg, key: editKey, value: !col.getValue(it.row) }]);
+      applyEdits([{ rowId: id, key: editKey, value: !col.getValue(it.row) }]);
       return;
     }
-    if (PICKER_TYPES.has(col.type)) {
-      setEditing({
-        kind: "picker",
-        rowId: rowIdArg,
-        key: editKey,
-        query: initial ?? "",
-        value: col.getValue(it.row),
-      });
-    } else {
-      setEditing({
-        kind: "text",
-        rowId: rowIdArg,
-        key: editKey,
-        draft: initial ?? editText(col, col.getValue(it.row)),
-      });
-    }
+    const next: Editing = PICKER_TYPES.has(col.type)
+      ? {
+          kind: "picker",
+          rowId: id,
+          key: editKey,
+          query: initial ?? "",
+          value: col.getValue(it.row),
+        }
+      : {
+          kind: "text",
+          rowId: id,
+          key: editKey,
+          draft: initial ?? editText(col, col.getValue(it.row)),
+        };
+    setEditing(next);
+    ref.current = { ...ref.current, editing: next };
   };
 
   const move = (
@@ -448,49 +614,74 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     opts: { extend?: boolean; wrap?: boolean } = {},
   ) => {
     const cur = ref.current;
+    if (cur.selected.length) setSelected([]);
     const from = opts.extend && cur.range ? cur.range.focus : cur.active;
     if (!from) {
-      const first = rowItemAt(cur.navRows[0] ?? -1);
-      if (first) activate(first.id, cur.cols[0]?.key ?? "", { scroll: true });
+      const first = refAt(0, cur.cols[0]?.key ?? "");
+      if (first) activate(first, { scroll: true });
       return;
     }
-    const flat = cur.indexById.get(from.rowId) ?? -1;
-    let nav = cur.navRows.indexOf(flat);
+    const flat =
+      (from.group ? cur.groupIndexById.get(from.rowId) : cur.indexById.get(from.rowId)) ?? -1;
+    if (dir === "up" || dir === "down") {
+      if (opts.extend) {
+        // Ranges span rows only.
+        let n = cur.navRows.indexOf(flat);
+        if (n < 0) return;
+        n = dir === "up" ? Math.max(0, n - 1) : Math.min(cur.navRows.length - 1, n + 1);
+        const target = rowItemAt(cur.navRows[n] ?? -1);
+        if (!target || !cur.active) return;
+        setRange({
+          anchor: cur.range?.anchor ?? cur.active,
+          focus: { rowId: target.id, key: from.key },
+        });
+        ensureVisible(cur.navRows[n] ?? -1, from.key);
+        return;
+      }
+      const i = dir === "up" ? flat - 1 : flat + 1;
+      const target = refAt(i, from.key);
+      if (target) activate(target, { scroll: true });
+      return;
+    }
+    // Left / right.
+    if (from.group) {
+      if (opts.wrap) move(dir === "right" ? "down" : "up");
+      return;
+    }
     let ci = cur.colIndex.get(from.key) ?? 0;
-    if (dir === "up") nav = Math.max(0, nav - 1);
-    else if (dir === "down") nav = Math.min(cur.navRows.length - 1, nav + 1);
-    else if (dir === "left") {
+    let i = flat;
+    if (dir === "left") {
       if (ci > 0) ci--;
-      else if (opts.wrap && nav > 0) {
-        nav--;
+      else if (opts.wrap) {
+        i = flat - 1;
         ci = cur.cols.length - 1;
       }
     } else if (ci < cur.cols.length - 1) ci++;
-    else if (opts.wrap && nav < cur.navRows.length - 1) {
-      nav++;
+    else if (opts.wrap) {
+      i = flat + 1;
       ci = 0;
     }
-    const target = rowItemAt(cur.navRows[nav] ?? -1);
     const key = cur.cols[ci]?.key;
-    if (!target || key === undefined) return;
-    if (opts.extend && cur.active) {
-      setRange({ anchor: cur.range?.anchor ?? cur.active, focus: { rowId: target.id, key } });
-      ensureVisible(cur.navRows[nav] ?? -1, key);
+    const target = key === undefined ? null : refAt(i, key);
+    if (!target) return;
+    if (opts.extend && cur.active && !target.group) {
+      setRange({ anchor: cur.range?.anchor ?? cur.active, focus: target });
+      ensureVisible(i, key);
       return;
     }
-    activate(target.id, key, { scroll: true });
+    activate(target, { scroll: true });
   };
 
-  const commitText = (then?: "down" | "right" | "left") => {
+  const commitText = (then?: "down" | "right" | "left", draftOverride?: string) => {
     const e = ref.current.editing;
     if (e?.kind !== "text") return;
     const col = colOf(e.key);
-    const entry = S.allRows.get(e.rowId);
+    const entry = ref.current.allRows.get(e.rowId);
     setEditing(null);
     ref.current = { ...ref.current, editing: null };
     focusPending.current = true;
     if (col && entry) {
-      const value = parseText(col, e.draft);
+      const value = parseText(col, draftOverride ?? e.draft);
       if (value !== NOT_PARSED && !valuesEqual(value, col.getValue(entry.row))) {
         applyEdits([{ rowId: e.rowId, key: e.key, value }]);
       }
@@ -554,7 +745,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     }
     const value = col.type === "select" ? item.id : link(item);
     if (col.type === "link") pushMru(col.key, link(item));
-    const entry = S.allRows.get(e.rowId);
+    const entry = ref.current.allRows.get(e.rowId);
     if (!entry || !valuesEqual(value, col.getValue(entry.row)))
       applyEdits([{ rowId: e.rowId, key: e.key, value }]);
     cancelEdit();
@@ -588,8 +779,13 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
   };
 
   // --- Insert / duplicate / delete ---
-  const positionFor = (rowIdArg: string | undefined, where: "above" | "below"): InsertPosition => {
-    const it = rowIdArg ? rowItem(rowIdArg) : undefined;
+  const positionFor = (
+    target: CellRef | null | undefined,
+    where: "above" | "below",
+  ): InsertPosition => {
+    if (!target) return {};
+    if (target.group) return { groupId: target.rowId };
+    const it = rowItem(target.rowId);
     if (!it) return {};
     const pos: InsertPosition = where === "below" ? { afterRowId: it.id } : { beforeRowId: it.id };
     if (it.groupId !== undefined) pos.groupId = it.groupId;
@@ -597,97 +793,192 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
   };
 
   const afterInsert = (newId: string, pos: InsertPosition) => {
-    releaseHold();
-    const h: Hold = {
-      id: newId,
-      groupId: pos.groupId,
-      afterId: pos.afterRowId,
-      beforeId: pos.beforeRowId ?? (pos.afterRowId ? undefined : null),
-    };
+    const layout = releaseHold() ?? ref.current.items;
+    const h: Hold = { id: newId, groupId: pos.groupId, index: slotFor(pos, layout) };
     setHold(h);
     ref.current = { ...ref.current, hold: h };
-    pendingInsert.current = newId;
-    if (pos.groupId !== undefined && collapsed.has(pos.groupId)) {
-      setCollapsed((c) => {
-        const n = new Set(c);
-        n.delete(pos.groupId as string);
-        return n;
-      });
-    }
+    pendingFocus.current = { id: newId, focus: true };
+    expandGroup(pos.groupId);
     focusPending.current = true;
+    bump();
   };
 
   const insert = async (pos: InsertPosition) => {
-    if (!props.onInsert) return;
+    const fn = ref.current.props.onInsert;
+    if (!fn) return;
     commitAny();
-    const newId = await props.onInsert(pos);
+    const newId = await fn(pos);
     afterInsert(newId, pos);
   };
+  const runInsert = (pos: InsertPosition) => guard("insert", () => insert(pos));
 
   const duplicate = async (id: string) => {
-    const entry = S.allRows.get(id);
-    if (!props.onInsert || !entry) return;
+    const entry = ref.current.allRows.get(id);
+    const fn = ref.current.props.onInsert;
+    if (!fn || !entry) return;
     commitAny();
-    const pos = positionFor(id, "below");
-    const newId = await props.onInsert(pos);
+    const pos = positionFor({ rowId: id, key: "" }, "below");
+    const newId = await fn(pos);
     for (const c of ref.current.cols) {
       if (!isEditable(c.col, entry.row)) continue;
       const v = c.col.getValue(entry.row);
-      if (!valuesEqual(v, emptyValue(c.col.type))) void props.onEdit(newId, c.key, v);
+      if (!valuesEqual(v, emptyValue(c.col.type)))
+        guard("edit", () => ref.current.props.onEdit(newId, c.key, v));
     }
     afterInsert(newId, pos);
   };
+  const runDuplicate = (id: string) => guard("duplicate", () => duplicate(id));
 
-  const deleteRows = (ids: string[]) => {
-    if (!props.onDelete || ids.length === 0) return;
+  /** Deletes rows; more than one needs a confirmation (deletes aren't undoable yet). */
+  const deleteRows = (ids: string[], confirmed = false) => {
+    if (!ref.current.props.onDelete || ids.length === 0) return;
     commitAny();
-    props.onDelete(ids);
+    if (ids.length > 1 && !confirmed) {
+      setConfirm(ids);
+      return;
+    }
+    const cur = ref.current;
+    const gone = new Set(ids);
+    // Where focus goes afterwards: the next remaining row in display order, else the previous.
+    if (!cur.active || cur.active.group || gone.has(cur.active.rowId)) {
+      const order = cur.navRows.map((i) => (cur.items[i] as RowItem<Row>).id);
+      const idx = order.map((id, i) => (gone.has(id) ? i : -1)).filter((i) => i >= 0);
+      const last = Math.max(...idx);
+      const firstIdx = Math.min(...idx);
+      afterDelete.current =
+        order.slice(last + 1).find((id) => !gone.has(id)) ??
+        order
+          .slice(0, firstIdx)
+          .reverse()
+          .find((id) => !gone.has(id)) ??
+        null;
+    }
+    guard("delete", () => cur.props.onDelete?.(ids));
     setSelected([]);
   };
 
-  // Focus the new row's first editable cell once it shows up in the data.
+  // Activate a pending row (new row, focusRow) once it shows up in the data; scroll to
+  // a pending row; scroll to the active row after Escape released it; FLIP a settled row.
   useLayoutEffect(() => {
-    const id = pendingInsert.current;
-    if (!id) return;
-    const i = indexById.get(id);
-    if (i === undefined) return;
-    pendingInsert.current = null;
-    const it = items[i];
-    const key = firstEditableKey(it?.kind === "row" ? it.row : undefined);
-    setActive({ rowId: id, key });
-    ref.current = { ...ref.current, active: { rowId: id, key } };
-    setRange(null);
-    focusPending.current = true;
-    ensureVisible(i, key);
+    const pf = pendingFocus.current;
+    if (pf) {
+      const i = indexById.get(pf.id);
+      if (i !== undefined) {
+        pendingFocus.current = null;
+        const it = items[i];
+        const key = pf.key ?? firstEditableKey(it?.kind === "row" ? it.row : undefined);
+        activate({ rowId: pf.id, key }, { scroll: true, focus: pf.focus });
+      }
+    }
+    const ps = pendingScroll.current;
+    if (ps !== null && indexById.has(ps)) {
+      pendingScroll.current = null;
+      ensureVisible(indexById.get(ps) ?? -1);
+    }
+    if (scrollActive.current) {
+      scrollActive.current = false;
+      const a = ref.current.active;
+      if (a) ensureVisible(indexOfRef(a) ?? -1, a.group ? undefined : a.key);
+    }
+    const f = flip.current;
+    if (f) {
+      flip.current = null;
+      const to = indexById.get(f.id);
+      const el = [...(rootRef.current?.querySelectorAll<HTMLElement>("[data-row-id]") ?? [])].find(
+        (x) => x.dataset.rowId === f.id,
+      );
+      if (to !== undefined && el?.animate && !prefersReducedMotion()) {
+        const end = offsets[to] ?? 0;
+        if (end !== f.from)
+          el.animate(
+            [{ transform: `translateY(${f.from}px)` }, { transform: `translateY(${end}px)` }],
+            { duration: SLIDE_MS, easing: "ease-out" },
+          );
+      }
+    }
   });
 
-  // If the active row disappears (deleted, filtered, collapsed), drop the active cell.
-  useEffect(() => {
-    if (active && !indexById.has(active.rowId) && pendingInsert.current !== active.rowId) {
-      setActive(null);
-      if (editing?.rowId === active.rowId) setEditing(null);
+  // If the active row disappears (deleted, collapsed away, removed remotely), move to a
+  // neighbor instead of dropping focus on <body>.
+  useLayoutEffect(() => {
+    if (!active) return;
+    const idx = indexOfRef(active);
+    if (idx !== undefined) {
+      lastSeen.current = {
+        flat: idx,
+        groupId: active.group ? active.rowId : rowItemAt(idx)?.groupId,
+      };
+      return;
     }
-  }, [active, indexById, editing]);
+    if (pendingFocus.current?.id === active.rowId) return;
+    if (editing?.rowId === active.rowId) {
+      setEditing(null);
+      ref.current = { ...ref.current, editing: null };
+    }
+    const root = rootRef.current;
+    const hadFocus =
+      !document.activeElement ||
+      document.activeElement === document.body ||
+      !!root?.contains(document.activeElement);
+    let next: CellRef | null = null;
+    const ad = afterDelete.current;
+    afterDelete.current = null;
+    const seen = lastSeen.current;
+    if (ad && indexById.has(ad)) next = { rowId: ad, key: active.key };
+    else if (
+      seen?.groupId !== undefined &&
+      collapsed.has(seen.groupId) &&
+      groupIndexById.has(seen.groupId)
+    )
+      next = { rowId: seen.groupId, key: active.key, group: true };
+    else if (seen && items.length) next = refAt(Math.min(seen.flat, items.length - 1), active.key);
+    if (next) activate(next, { scroll: true, focus: hadFocus });
+    else {
+      setActive(null);
+      ref.current = { ...ref.current, active: null };
+    }
+  });
 
-  // Move DOM focus to the active cell after keyboard/mouse navigation and edits.
+  // Report the active row.
+  const activeRowId = active && !active.group ? active.rowId : null;
+  const onActiveRowChange = props.onActiveRowChange;
+  useEffect(() => {
+    onActiveRowChange?.(activeRowId);
+  }, [activeRowId, onActiveRowChange]);
+
+  // Move DOM focus to the active cell after keyboard/mouse navigation and edits, and put it
+  // back if this commit moved the focused row's DOM node (a re-sort), which drops focus.
   useLayoutEffect(() => {
     // Read through the ref: an earlier effect in this commit may have moved the active cell.
-    const active = ref.current.active;
-    if (!focusPending.current || ref.current.editing || !active) return;
+    const a = ref.current.active;
     const root = rootRef.current;
-    if (!root) return;
-    const rowEl = [...root.querySelectorAll<HTMLElement>("[data-row-id]")].find(
-      (el) => el.dataset.rowId === active.rowId,
-    );
-    const cell =
-      [...(rowEl?.querySelectorAll<HTMLElement>("[data-cell]") ?? [])].find(
-        (el) => el.dataset.col === active.key,
-      ) ?? rowEl?.querySelector<HTMLElement>("[data-cell]");
+    if (
+      hadFocus.current &&
+      root &&
+      (!document.activeElement || document.activeElement === document.body)
+    )
+      focusPending.current = true;
+    if (!focusPending.current || ref.current.editing || !a || confirm || menu) return;
+    const cell = findCell(a);
     if (cell) {
       focusPending.current = false;
       if (document.activeElement !== cell) cell.focus({ preventScroll: true });
     }
   });
+
+  const findCell = (a: CellRef): HTMLElement | null => {
+    const root = rootRef.current;
+    if (!root) return null;
+    const rowEl = a.group
+      ? [...root.querySelectorAll<HTMLElement>("[data-group-id]")].find(
+          (el) => el.dataset.groupId === a.rowId,
+        )
+      : [...root.querySelectorAll<HTMLElement>("[data-row-id]")].find(
+          (el) => el.dataset.rowId === a.rowId,
+        );
+    const cells = [...(rowEl?.querySelectorAll<HTMLElement>("[data-cell]") ?? [])];
+    return cells.find((el) => el.dataset.col === a.key) ?? cells[0] ?? null;
+  };
 
   // Anchor for the picker popover: the editing cell.
   useLayoutEffect(() => {
@@ -695,19 +986,39 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       if (pickerAnchor) setPickerAnchor(null);
       return;
     }
-    const root = rootRef.current;
-    const rowEl = [...(root?.querySelectorAll<HTMLElement>("[data-row-id]") ?? [])].find(
-      (el) => el.dataset.rowId === editing.rowId,
-    );
-    const cell =
-      [...(rowEl?.querySelectorAll<HTMLElement>("[data-cell]") ?? [])].find(
-        (el) => el.dataset.col === editing.key,
-      ) ?? null;
-    if (cell !== pickerAnchor) setPickerAnchor(cell);
+    const cell = findCell({ rowId: editing.rowId, key: editing.key });
+    const exact = cell?.dataset.col === editing.key ? cell : null;
+    if (exact !== pickerAnchor) setPickerAnchor(exact);
   });
+
+  // --- Imperative handle ---
+  const expandGroupRef = useRef(expandGroup);
+  expandGroupRef.current = expandGroup;
+  useImperativeHandle(
+    props.ref,
+    () => ({
+      focusRow(id: string, columnKey?: string) {
+        const entry = ref.current.allRows.get(id);
+        if (!entry) return;
+        expandGroupRef.current(entry.groupId);
+        pendingFocus.current = { id, key: columnKey, focus: true };
+        bump();
+      },
+      scrollToRow(id: string) {
+        const entry = ref.current.allRows.get(id);
+        if (!entry) return;
+        expandGroupRef.current(entry.groupId);
+        pendingScroll.current = id;
+        bump();
+      },
+    }),
+    [],
+  );
 
   // --- Keyboard ---
   const onKeyDown = (e: React.KeyboardEvent) => {
+    // IME composition: keys belong to the input method.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     const target = e.target as HTMLElement;
     const cur = ref.current;
     if (cur.drag && e.key === "Escape") {
@@ -715,18 +1026,18 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       return;
     }
     const inEditor = target.dataset.editor === "true";
-    if (!inEditor && !target.closest("[data-cell]")) return; // buttons in group headers etc.
+    if (!inEditor && (target.tagName === "BUTTON" || !target.closest("[data-cell]"))) return;
     const mod = isMod(e);
 
     // Shortcuts that work while editing too.
     if (mod && e.shiftKey && e.key === "Enter") {
       e.preventDefault();
-      void insert(positionFor(cur.active?.rowId, "below"));
+      runInsert(positionFor(cur.active, "below"));
       return;
     }
     if (mod && e.shiftKey && e.key === "ArrowUp") {
       e.preventDefault();
-      void insert(positionFor(cur.active?.rowId, "above"));
+      runInsert(positionFor(cur.active, "above"));
       return;
     }
 
@@ -741,12 +1052,21 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
         }
         return;
       }
+      const ghost =
+        cur.editing.draft === ""
+          ? decorationOf(cur.editing.rowId, cur.editing.key)?.ghost
+          : undefined;
       if (e.key === "Enter" && !e.shiftKey && !mod) {
         e.preventDefault();
         commitText("down");
       } else if (e.key === "Tab") {
         e.preventDefault();
-        commitText(e.shiftKey ? "left" : "right");
+        commitText(e.shiftKey ? "left" : "right", !e.shiftKey && ghost ? ghost : undefined);
+      } else if (e.key === "ArrowRight" && ghost) {
+        e.preventDefault();
+        const upd = { ...cur.editing, draft: ghost };
+        setEditing(upd);
+        ref.current = { ...ref.current, editing: upd };
       } else if (e.key === "Escape") {
         e.preventDefault();
         cancelEdit();
@@ -770,9 +1090,25 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       setSelected(cur.navRows.map((i) => (cur.items[i] as RowItem<Row>).id));
       return;
     }
+
+    // Group header row: toggle / collapse / expand; arrows move on.
+    if (a?.group) {
+      const isCollapsed = cur.collapsed.has(a.rowId);
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggleGroup(a.rowId);
+        return;
+      }
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        e.preventDefault();
+        if ((e.key === "ArrowLeft") !== isCollapsed) toggleGroup(a.rowId);
+        return;
+      }
+    }
+
     if (mod && (e.key === "d" || e.key === "D")) {
       e.preventDefault();
-      if (a) void duplicate(a.rowId);
+      if (a && !a.group) runDuplicate(a.rowId);
       return;
     }
     switch (e.key) {
@@ -781,51 +1117,57 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       case "ArrowLeft":
       case "ArrowRight": {
         e.preventDefault();
+        if (e.key === "ArrowRight" && a && !a.group && !e.shiftKey && acceptGhost(a.rowId, a.key)) {
+          move("right");
+          return;
+        }
         const dir = e.key.slice(5).toLowerCase() as "up" | "down" | "left" | "right";
         move(dir, { extend: e.shiftKey });
         return;
       }
       case "Tab": {
+        const flat = indexOfRef(a) ?? -1;
         const lastCell =
           a &&
-          cur.navRows.indexOf(cur.indexById.get(a.rowId) ?? -1) === cur.navRows.length - 1 &&
-          cur.colIndex.get(a.key) === cur.cols.length - 1;
-        const firstCell =
-          a &&
-          cur.navRows.indexOf(cur.indexById.get(a.rowId) ?? -1) === 0 &&
-          cur.colIndex.get(a.key) === 0;
+          flat === cur.items.length - 1 &&
+          (a.group || cur.colIndex.get(a.key) === cur.cols.length - 1);
+        const firstCell = a && flat === 0 && (a.group || cur.colIndex.get(a.key) === 0);
         if ((e.shiftKey && firstCell) || (!e.shiftKey && lastCell)) return; // let focus leave the grid
         e.preventDefault();
+        if (!e.shiftKey && a && !a.group) acceptGhost(a.rowId, a.key);
         move(e.shiftKey ? "left" : "right", { wrap: true });
         return;
       }
       case "Enter":
-        e.preventDefault();
-        if (a) startEdit(a.rowId, a.key);
-        return;
       case "F2":
         e.preventDefault();
-        if (a) startEdit(a.rowId, a.key);
+        if (a && !a.group) startEdit(a.rowId, a.key);
         return;
       case " ":
         e.preventDefault();
-        if (a) props.onOpenRow?.(a.rowId);
+        if (a && !a.group) cur.props.onOpenRow?.(a.rowId);
         return;
       case "Escape":
         setRange(null);
-        if (cur.selected.length) setSelected([]);
-        releaseHold();
+        setSelected([]);
+        if (cur.hold) {
+          releaseHold();
+          scrollActive.current = true;
+          focusPending.current = true;
+        }
         return;
       case "Delete":
       case "Backspace": {
         e.preventDefault();
-        if (cur.selected.length > 0) {
+        if (!a || a.group) return;
+        // Delete removes selected rows only when the active row is one of them; Backspace
+        // (and Delete otherwise) clears cells.
+        if (e.key === "Delete" && cur.selected.length > 0 && cur.selected.includes(a.rowId)) {
           deleteRows(cur.selected);
           return;
         }
-        const cells = rangeCells();
-        const edits: { rowId: string; key: string; value: unknown }[] = [];
-        for (const { item, col } of cells) {
+        const edits: Edit[] = [];
+        for (const { item, col } of rangeCells()) {
           if (item.section && col.key !== cur.labelKey) continue;
           if (!isEditable(col, item.row)) continue;
           const empty = emptyValue(col.type);
@@ -839,13 +1181,13 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       case "F10":
         if (e.key === "F10" && !e.shiftKey) return;
         e.preventDefault();
-        if (a) {
+        if (a && !a.group) {
           const r = target.getBoundingClientRect();
           setMenu({ x: r.left + 8, y: r.bottom, rowId: a.rowId });
         }
         return;
     }
-    if (a && e.key.length === 1 && !mod && !e.altKey) {
+    if (a && !a.group && e.key.length === 1 && !mod && !e.altKey) {
       e.preventDefault();
       startEdit(a.rowId, a.key, e.key);
     }
@@ -855,7 +1197,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
   const rangeCells = (): { item: RowItem<Row>; col: Column<Row> }[] => {
     const cur = ref.current;
     const r = cur.range ?? (cur.active ? { anchor: cur.active, focus: cur.active } : null);
-    if (!r) return [];
+    if (!r || r.anchor.group || r.focus.group) return [];
     const n0 = cur.navRows.indexOf(cur.indexById.get(r.anchor.rowId) ?? -1);
     const n1 = cur.navRows.indexOf(cur.indexById.get(r.focus.rowId) ?? -1);
     const c0 = cur.colIndex.get(r.anchor.key) ?? 0;
@@ -884,9 +1226,8 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
         .filter((it) => cur.selected.includes(it.id))
         .map((it) => cur.cols.map((c) => formatValue(c.col, c.col.getValue(it.row))));
     } else {
-      const cells = rangeCells();
       const byRow = new Map<string, string[]>();
-      for (const { item, col } of cells) {
+      for (const { item, col } of rangeCells()) {
         const list = byRow.get(item.id) ?? [];
         list.push(formatValue(col, col.getValue(item.row)));
         byRow.set(item.id, list);
@@ -900,12 +1241,13 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
 
   const onPaste = (e: React.ClipboardEvent) => {
     const cur = ref.current;
-    if (cur.editing || !cur.active || !(e.target as HTMLElement).closest?.("[data-cell]")) return;
+    const a = cur.active;
+    if (cur.editing || !a || a.group || !(e.target as HTMLElement).closest?.("[data-cell]")) return;
     const text = e.clipboardData.getData("text/plain");
     if (!text) return;
     e.preventDefault();
     const data = parseTsv(text);
-    const r = cur.range ?? { anchor: cur.active, focus: cur.active };
+    const r = cur.range ?? { anchor: a, focus: a };
     const n0 = cur.navRows.indexOf(cur.indexById.get(r.anchor.rowId) ?? -1);
     const n1 = cur.navRows.indexOf(cur.indexById.get(r.focus.rowId) ?? -1);
     const c0 = cur.colIndex.get(r.anchor.key) ?? 0;
@@ -913,27 +1255,61 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     const top = Math.min(n0, n1);
     const left = Math.min(c0, c1);
     const single = data.length === 1 && data[0]?.length === 1;
-    const rowsN = single && cur.range ? Math.abs(n1 - n0) + 1 : data.length;
-    const colsN =
-      single && cur.range ? Math.abs(c1 - c0) + 1 : Math.max(...data.map((d) => d.length));
-    const edits: { rowId: string; key: string; value: unknown }[] = [];
-    for (let dr = 0; dr < rowsN; dr++) {
-      const item = rowItemAt(cur.navRows[top + dr] ?? -1);
-      if (!item || item.section) continue;
+    const fill = single && !!cur.range;
+    const colsN = fill ? Math.abs(c1 - c0) + 1 : Math.max(...data.map((d) => d.length));
+    const edits: Edit[] = [];
+    const pasteRow = (item: RowItem<Row>, values: (dc: number) => string | undefined) => {
       for (let dc = 0; dc < colsN; dc++) {
         const col = cur.cols[left + dc]?.col;
-        const raw = single ? data[0]?.[0] : data[dr]?.[dc];
+        const raw = values(dc);
         if (!col || raw === undefined || !PASTE_TYPES.has(col.type) || !isEditable(col, item.row))
           continue;
         const value = parseText(col, raw);
         if (value === NOT_PARSED || valuesEqual(value, col.getValue(item.row))) continue;
         edits.push({ rowId: item.id, key: col.key, value });
       }
+    };
+    if (fill) {
+      for (let n = top; n <= Math.max(n0, n1); n++) {
+        const item = rowItemAt(cur.navRows[n] ?? -1);
+        if (item && !item.section) pasteRow(item, () => data[0]?.[0]);
+      }
+    } else {
+      // Section rows are skipped without consuming a pasted row.
+      let n = top;
+      for (const values of data) {
+        let item = rowItemAt(cur.navRows[n] ?? -1);
+        while (item?.section) item = rowItemAt(cur.navRows[++n] ?? -1);
+        if (!item) break;
+        pasteRow(item, (dc) => values[dc]);
+        n++;
+      }
     }
     if (edits.length) applyEdits(edits);
   };
 
-  // --- Focus leaving the grid ends the hold (and commits a text edit) ---
+  // --- Focus ---
+  // A cell focused some other way (Tab into the grid, screen reader) becomes the active one.
+  const onFocus = (e: React.FocusEvent) => {
+    const t = e.target as HTMLElement;
+    if (!t.dataset?.cell) return;
+    const groupEl = t.closest<HTMLElement>("[data-group-id]");
+    const rowEl = t.closest<HTMLElement>("[data-row-id]");
+    const next: CellRef | null = groupEl?.dataset.groupId
+      ? { rowId: groupEl.dataset.groupId, key: ref.current.active?.key ?? "", group: true }
+      : rowEl?.dataset.rowId
+        ? { rowId: rowEl.dataset.rowId, key: t.dataset.col ?? "" }
+        : null;
+    const a = ref.current.active;
+    if (
+      !next ||
+      (a && a.rowId === next.rowId && !!a.group === !!next.group && (a.group || a.key === next.key))
+    )
+      return;
+    activate(next, { focus: false });
+  };
+
+  // Focus leaving the grid ends the hold (and commits a text edit).
   const onBlur = () => {
     setTimeout(() => {
       const root = rootRef.current;
@@ -1046,21 +1422,28 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     dragPointer.current = null;
     const state = ref.current.drag;
     setDrag(null);
+    ref.current = { ...ref.current, drag: null };
     if (!drop || !state || state.gap === null) return;
     const pos = resolveDrop(state.rowId, state.gap);
     if (!pos) return;
-    ref.current.props.onMove?.(state.rowId, pos);
-    // Keep the moved row where it was dropped until focus leaves it (sorting is off, but
-    // this keeps a cross-group drop in its new group if the data takes a moment).
+    const layout = ref.current.items;
+    guard("move", () => ref.current.props.onMove?.(state.rowId, pos));
+    // Dropping onto a collapsed group opens it, so you can see where the row went.
+    expandGroup(pos.groupId);
+    // Keep the moved row in its new group until focus leaves it (the data may lag).
     const h: Hold = {
       id: state.rowId,
       groupId: pos.groupId,
-      afterId: pos.afterRowId,
-      beforeId: pos.beforeRowId ?? (pos.afterRowId ? undefined : null),
+      index: slotFor(pos, layout, state.rowId),
     };
     setHold(h);
     ref.current = { ...ref.current, hold: h };
-    setActive((a) => ({ rowId: state.rowId, key: a?.key ?? ref.current.cols[0]?.key ?? "" }));
+    const next = {
+      rowId: state.rowId,
+      key: ref.current.active?.key || ref.current.cols[0]?.key || "",
+    };
+    setActive(next);
+    ref.current = { ...ref.current, active: next };
     focusPending.current = true;
   };
   const onDragMoveRef = useRef(onDragMove);
@@ -1073,8 +1456,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
   const startDrag = (id: string, e: ReactPointerEvent) => {
     if (e.button !== 0) return;
     if (ref.current.sortOn) {
-      setHint("Reordering by drag is off while a live sort is on. Remove the sort to drag rows.");
-      setTimeout(() => setHint(""), 4000);
+      showHint("Reordering by drag is off while a live sort is on. Remove the sort to drag rows.");
       return;
     }
     if (!ref.current.props.onMove) return;
@@ -1111,6 +1493,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       window.removeEventListener("pointerup", stableUp);
       window.removeEventListener("pointercancel", stableUp);
       if (dragPointer.current) clearInterval(dragPointer.current.timer);
+      window.clearTimeout(hintTimer.current);
     },
     [stableMove, stableUp],
   );
@@ -1146,13 +1529,13 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     props.onColumnResize?.(key, w);
   };
 
-  const toggleGroup = (id: string) =>
-    setCollapsed((c) => {
-      const n = new Set(c);
-      if (n.has(id)) n.delete(id);
-      else n.add(id);
-      return n;
+  function toggleGroup(id: string) {
+    setCollapsed((s) => {
+      if (s.has(id)) s.delete(id);
+      else s.add(id);
+      return s;
     });
+  }
 
   // --- Row API (stable) ---
   const apiImpl: RowApi = {
@@ -1162,13 +1545,13 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       if (t.dataset.editor === "true" || t.closest("[data-editor]")) return;
       const cur = ref.current;
       if (cur.editing && (cur.editing.rowId !== id || cur.editing.key !== key)) commitAny();
-      if (e.shiftKey && cur.active) {
+      if (e.shiftKey && cur.active && !cur.active.group) {
         e.preventDefault();
         setRange({ anchor: cur.range?.anchor ?? cur.active, focus: { rowId: id, key } });
         return;
       }
       if (cur.selected.length && !isMod(e)) setSelected([]);
-      activate(id, key);
+      activate({ rowId: id, key });
     },
     cellDoubleClick(id, key) {
       startEdit(id, key);
@@ -1181,7 +1564,11 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     },
     setDraft(v) {
       const e = ref.current.editing;
-      if (e?.kind === "text") setEditing({ ...e, draft: v });
+      if (e?.kind === "text") {
+        const upd = { ...e, draft: v };
+        setEditing(upd);
+        ref.current = { ...ref.current, editing: upd };
+      }
     },
     rowNumberClick(id, e) {
       const cur = ref.current;
@@ -1202,14 +1589,14 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
         selectionAnchor.current = id;
       }
       setSelected(next);
-      const key = cur.active?.key ?? cur.cols[0]?.key ?? "";
-      activate(id, key);
+      const key = (cur.active && !cur.active.group ? cur.active.key : cur.cols[0]?.key) ?? "";
+      activate({ rowId: id, key });
     },
     gripPointerDown(id, e) {
       startDrag(id, e);
     },
     insertBelow(id) {
-      void insert(positionFor(id, "below"));
+      runInsert(positionFor({ rowId: id, key: "" }, "below"));
     },
     openRow(id) {
       ref.current.props.onOpenRow?.(id);
@@ -1218,9 +1605,17 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       e.preventDefault();
       commitAny();
       const cur = ref.current;
-      if (!cur.active || cur.active.rowId !== id)
-        activate(id, cur.active?.key ?? cur.cols[0]?.key ?? "");
-      setMenu({ x: e.clientX, y: e.clientY, rowId: id });
+      const key = (cur.active && !cur.active.group ? cur.active.key : cur.cols[0]?.key) ?? "";
+      if (!cur.active || cur.active.group || cur.active.rowId !== id) activate({ rowId: id, key });
+      // Keyboard-invoked context menus (Shift+F10 in some browsers) report 0,0.
+      const at =
+        e.clientX || e.clientY
+          ? { x: e.clientX, y: e.clientY }
+          : (() => {
+              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              return { x: r.left + 8, y: r.bottom };
+            })();
+      setMenu({ ...at, rowId: id });
     },
   };
   const apiRef = useRef(apiImpl);
@@ -1245,22 +1640,24 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     const inSel = selected.includes(id) && selected.length > 1;
     const targets = inSel ? selected : [id];
     const list: MenuItem[] = [];
+    const at: CellRef = { rowId: id, key: "" };
     if (onInsert) {
       list.push(
         {
           label: "Insert row above",
           shortcut: "⌘⇧↑",
-          onSelect: () => void insert(positionFor(id, "above")),
+          onSelect: () => runInsert(positionFor(at, "above")),
         },
         {
           label: "Insert row below",
           shortcut: "⌘⇧↵",
-          onSelect: () => void insert(positionFor(id, "below")),
+          onSelect: () => runInsert(positionFor(at, "below")),
         },
-        { label: "Duplicate row", shortcut: "⌘D", onSelect: () => void duplicate(id) },
+        { label: "Duplicate row", shortcut: "⌘D", onSelect: () => runDuplicate(id) },
       );
     }
     if (onOpenRow) list.push({ label: "Open", shortcut: "Space", onSelect: () => onOpenRow(id) });
+    list.push(...(props.extraMenuItems?.({ rowId: id, selectedRowIds: selected }) ?? []));
     if (onDelete) {
       list.push({
         label: targets.length > 1 ? `Delete ${targets.length} rows` : "Delete row",
@@ -1286,33 +1683,52 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
 
   const pickerCol =
     editing?.kind === "picker" ? cols[colIndex.get(editing.key) ?? -1]?.col : undefined;
-  const firstRowIndex = navRows[0] ?? -1;
+  const firstIndex = items.length ? 0 : -1;
   const dropY = drag?.gap !== null && drag?.gap !== undefined ? (offsets[drag.gap] ?? 0) : null;
 
   const renderItem = (index: number, start: number, isSticky: boolean) => {
     const item = items[index];
     if (!item) return null;
-    const posStyle: CSSProperties = isSticky
-      ? { position: "sticky", top: HEADER_HEIGHT, zIndex: 3 }
-      : { transform: `translateY(${start - HEADER_HEIGHT}px)` };
     if (item.kind === "group") {
       const g = item.group;
+      const isActive = !!active?.group && active.rowId === g.id;
+      const tabbable = isActive || (!active && index === firstIndex);
+      const posStyle: CSSProperties = isSticky
+        ? { position: "sticky", top: stickyTop, zIndex: 3 }
+        : { transform: `translateY(${start - HEADER_HEIGHT}px)` };
       return (
         <div
           key={item.key}
           role="row"
           aria-rowindex={index + 2}
+          aria-expanded={!item.collapsed}
           className={styles.groupRow}
           style={{ ...posStyle, height: GROUP_HEIGHT, width: totalWidth }}
           data-testid="group-header"
           data-group-id={g.id}
+          data-stuck={isSticky || undefined}
           data-collapsed={item.collapsed || undefined}
           data-drop-target={drag && drag.gap === index + 1 ? true : undefined}
         >
-          <div role="gridcell" aria-colspan={cols.length + 1} className={styles.groupCell}>
+          <div
+            role="gridcell"
+            aria-colspan={cols.length + 1}
+            className={styles.groupCell}
+            data-cell="true"
+            data-col={GROUP_COL}
+            data-active={isActive || undefined}
+            tabIndex={tabbable ? 0 : -1}
+            onPointerDown={(e) => {
+              if (e.button !== 0) return;
+              commitAny();
+              activate({ rowId: g.id, key: active?.key ?? cols[0]?.key ?? "", group: true });
+            }}
+          >
             <div className={styles.groupInner} style={{ maxWidth: viewportWidth || undefined }}>
               <button
                 type="button"
+                tabIndex={-1}
+                onMouseDown={(e) => e.preventDefault()}
                 className={styles.iconButton}
                 aria-expanded={!item.collapsed}
                 aria-label={`${item.collapsed ? "Expand" : "Collapse"} ${g.title}`}
@@ -1328,9 +1744,11 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
               {onInsert && (
                 <button
                   type="button"
+                  tabIndex={-1}
+                  onMouseDown={(e) => e.preventDefault()}
                   className={styles.addRow}
                   aria-label={`Add row to ${g.title}`}
-                  onClick={() => void insert({ groupId: g.id })}
+                  onClick={() => runInsert({ groupId: g.id })}
                 >
                   <PlusIcon /> <span className={styles.addRowText}>Add row</span>
                 </button>
@@ -1340,25 +1758,32 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
         </div>
       );
     }
-    const isActive = active?.rowId === item.id;
+    const isActive = !!active && !active.group && active.rowId === item.id;
     const inRange = rangeRect && rangeRect.n[0] >= 0 ? navRows.indexOf(index) : -1;
     const rangeCols =
       rangeRect && inRange >= rangeRect.n[0] && inRange <= rangeRect.n[1] ? rangeRect.c : null;
     return (
       <GridRow
         key={item.key}
-        item={item}
+        id={item.id}
+        row={item.row}
+        number={item.number}
+        section={item.section}
+        groupId={item.groupId}
         cols={cols}
         index={index}
-        style={{ ...posStyle, height: rh, width: totalWidth }}
+        top={start - HEADER_HEIGHT}
+        height={rh}
+        width={totalWidth}
         activeKey={isActive ? (active?.key ?? null) : null}
-        tabbableKey={!active && index === firstRowIndex ? (cols[0]?.key ?? null) : null}
+        tabbableKey={!active && index === firstIndex ? (cols[0]?.key ?? null) : null}
         editing={editing && editing.rowId === item.id ? editing : null}
         selected={selectedSet.has(item.id)}
         rangeCols={rangeCols}
         moved={moved.has(item.id)}
         dragging={drag?.rowId === item.id}
         colorRules={colorRules}
+        decorate={props.cellDecoration}
         labelKey={labelKey}
         sortOn={sortOn}
         canDrag={!!onMove}
@@ -1369,7 +1794,12 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     );
   };
 
-  const stickyItem = sticky >= 0 ? virtualItems.find((v) => v.index === sticky) : undefined;
+  const renderList =
+    sticky >= 0 && !virtualItems.some((v) => v.index === sticky)
+      ? [...virtualItems, { index: sticky, start: (offsets[sticky] ?? 0) + HEADER_HEIGHT }].sort(
+          (a, b) => a.index - b.index,
+        )
+      : virtualItems;
 
   return (
     <div
@@ -1385,6 +1815,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       onKeyDown={onKeyDown}
       onCopy={onCopy}
       onPaste={onPaste}
+      onFocus={onFocus}
       onBlur={onBlur}
     >
       <div ref={scrollRef} className={styles.scroll} data-testid="grid-scroll">
@@ -1426,10 +1857,11 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
                 <div
                   role="separator"
                   aria-orientation="vertical"
-                  aria-label={`Resize ${c.col.title}`}
+                  aria-label={`Resize ${c.col.title} column`}
                   aria-valuenow={c.width}
                   aria-valuemin={c.col.minWidth ?? MIN_WIDTH}
-                  tabIndex={-1}
+                  aria-valuemax={2000}
+                  tabIndex={0}
                   className={styles.resizer}
                   data-testid={`resize-${c.key}`}
                   onPointerDown={(e) => startResize(c.key, e)}
@@ -1437,7 +1869,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
                     if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
                       e.preventDefault();
                       e.stopPropagation();
-                      resizeBy(c.key, e.key === "ArrowLeft" ? -10 : 10);
+                      resizeBy(c.key, (e.key === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? 50 : 10));
                     }
                   }}
                 />
@@ -1450,10 +1882,9 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
           className={styles.body}
           style={{ height: virtualizer.getTotalSize(), width: totalWidth }}
         >
-          {stickyItem && renderItem(stickyItem.index, stickyItem.start, true)}
-          {virtualItems.map((v) =>
-            v.index === sticky ? null : renderItem(v.index, v.start, false),
-          )}
+          {/* Index order, sticky header included, so React never reorders DOM nodes just
+              because the stuck header changed. */}
+          {renderList.map((v) => renderItem(v.index, v.start, v.index === sticky))}
           {dropY !== null && (
             <div
               className={styles.dropLine}
@@ -1467,6 +1898,21 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       <div role="status" aria-live="polite" className={hint ? styles.hint : styles.visuallyHidden}>
         {hint}
       </div>
+      {confirm && (
+        <ConfirmDelete
+          count={confirm.length}
+          onConfirm={() => {
+            const ids = confirm;
+            setConfirm(null);
+            deleteRows(ids, true);
+            focusPending.current = true;
+          }}
+          onCancel={() => {
+            setConfirm(null);
+            focusPending.current = true;
+          }}
+        />
+      )}
       {menu && (
         <ContextMenu
           x={menu.x}
@@ -1500,6 +1946,44 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
           }}
         />
       )}
+    </div>
+  );
+}
+
+/** In-grid confirmation for multi-row deletes (testable, unlike window.confirm). */
+function ConfirmDelete({
+  count,
+  onConfirm,
+  onCancel,
+}: {
+  count: number;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const textId = useId();
+  useLayoutEffect(() => cancelRef.current?.focus(), []);
+  return (
+    <div
+      role="alertdialog"
+      aria-modal="false"
+      aria-labelledby={textId}
+      className={styles.confirm}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === "Escape") {
+          e.preventDefault();
+          onCancel();
+        }
+      }}
+    >
+      <span id={textId}>Delete {count} rows? This can't be undone.</span>
+      <button type="button" className={styles.danger} onClick={onConfirm}>
+        Delete {count} rows
+      </button>
+      <button type="button" ref={cancelRef} onClick={onCancel}>
+        Cancel
+      </button>
     </div>
   );
 }
@@ -1593,11 +2077,18 @@ function PickerFor<Row>({
   );
 }
 
+/** Row props are primitives (or stable references) so unchanged rows skip re-rendering. */
 interface GridRowProps<Row> {
-  item: RowItem<Row>;
+  id: string;
+  row: Row;
+  number: number;
+  section: boolean;
+  groupId: string | undefined;
   cols: ColLayout<Row>[];
   index: number;
-  style: CSSProperties;
+  top: number;
+  height: number;
+  width: number;
   activeKey: string | null;
   tabbableKey: string | null;
   editing: Editing | null;
@@ -1606,6 +2097,7 @@ interface GridRowProps<Row> {
   moved: boolean;
   dragging: boolean;
   colorRules: ColorRule<Row>[] | undefined;
+  decorate: ((row: Row, key: string) => CellDecoration | undefined) | undefined;
   labelKey: string;
   sortOn: boolean;
   canDrag: boolean;
@@ -1615,8 +2107,7 @@ interface GridRowProps<Row> {
 }
 
 function GridRowImpl<Row>(p: GridRowProps<Row>) {
-  const { item, cols, index, activeKey, editing, api, rangeCols } = p;
-  const row = item.row;
+  const { id, row, cols, index, activeKey, editing, api, rangeCols } = p;
   const { rowColor, cellColors } = useMemo(() => {
     let rowColor: string | undefined;
     const cellColors = new Map<string, string>();
@@ -1634,11 +2125,14 @@ function GridRowImpl<Row>(p: GridRowProps<Row>) {
     return { rowColor, cellColors };
   }, [p.colorRules, row]);
   const isActiveRow = activeKey !== null;
-  const rowStyle: CSSProperties = rowColor
-    ? ({ ...p.style, "--row-bg": `var(--option-${rowColor}-bg)` } as CSSProperties)
-    : p.style;
-  const n = item.number;
-  const rowLabel = item.section ? "section" : `row ${n}`;
+  const rowStyle = {
+    transform: `translateY(${p.top}px)`,
+    height: p.height,
+    width: p.width,
+    ...(rowColor ? { "--row-bg": `var(--option-${rowColor}-bg)` } : {}),
+  } as CSSProperties;
+  const n = p.number;
+  const rowLabel = p.section ? "section" : `row ${n}`;
 
   const rowNumber = (
     // biome-ignore lint/a11y/useKeyWithClickEvents: keyboard selection is ⌘A / Shift+arrows on cells
@@ -1648,7 +2142,7 @@ function GridRowImpl<Row>(p: GridRowProps<Row>) {
       style={{ width: ROWNUM_WIDTH }}
       onClick={(e) => {
         if ((e.target as HTMLElement).closest("button")) return;
-        api.rowNumberClick(item.id, e);
+        api.rowNumberClick(id, e);
       }}
       data-testid="row-number"
     >
@@ -1656,24 +2150,26 @@ function GridRowImpl<Row>(p: GridRowProps<Row>) {
         <button
           type="button"
           tabIndex={-1}
+          onMouseDown={(e) => e.preventDefault()}
           className={styles.grip}
           aria-label={`Drag ${rowLabel} to reorder`}
           aria-disabled={p.sortOn || undefined}
           title={p.sortOn ? "Drag is off while a live sort is on" : "Drag to reorder"}
-          onPointerDown={(e) => api.gripPointerDown(item.id, e)}
+          onPointerDown={(e) => api.gripPointerDown(id, e)}
           data-testid="drag-handle"
         >
           <GripIcon />
         </button>
       )}
-      <span className={styles.rownumText}>{item.section ? "" : n}</span>
+      <span className={styles.rownumText}>{p.section ? "" : n}</span>
       {p.canOpen && (
         <button
           type="button"
           tabIndex={-1}
+          onMouseDown={(e) => e.preventDefault()}
           className={styles.expand}
           aria-label={`Open ${rowLabel}`}
-          onClick={() => api.openRow(item.id)}
+          onClick={() => api.openRow(id)}
         >
           <ExpandIcon />
         </button>
@@ -1682,9 +2178,10 @@ function GridRowImpl<Row>(p: GridRowProps<Row>) {
         <button
           type="button"
           tabIndex={-1}
+          onMouseDown={(e) => e.preventDefault()}
           className={styles.insertBtn}
           aria-label={`Insert row below ${rowLabel}`}
-          onClick={() => api.insertBelow(item.id)}
+          onClick={() => api.insertBelow(id)}
           data-testid="insert-below"
         >
           <PlusIcon />
@@ -1693,8 +2190,8 @@ function GridRowImpl<Row>(p: GridRowProps<Row>) {
     </div>
   );
 
-  const cellProps = (key: string, i: number, extra: Record<string, unknown> = {}) => {
-    const isActive = activeKey === key || (item.section && isActiveRow);
+  const cellProps = (key: string, i: number) => {
+    const isActive = activeKey === key || (p.section && isActiveRow);
     const inRange = !!rangeCols && i >= rangeCols[0] && i <= rangeCols[1];
     return {
       "data-cell": "true",
@@ -1704,14 +2201,13 @@ function GridRowImpl<Row>(p: GridRowProps<Row>) {
       "data-active": isActive || undefined,
       "data-inrange": inRange || undefined,
       tabIndex: isActive || p.tabbableKey === key ? 0 : -1,
-      onPointerDown: (e: ReactPointerEvent) => api.cellPointerDown(item.id, key, e),
-      onDoubleClick: () => api.cellDoubleClick(item.id, key),
-      ...extra,
+      onPointerDown: (e: ReactPointerEvent) => api.cellPointerDown(id, key, e),
+      onDoubleClick: () => api.cellDoubleClick(id, key),
     };
   };
 
   let cells: React.ReactNode;
-  if (item.section) {
+  if (p.section) {
     const lc = cols.find((c) => c.key === p.labelKey);
     const text = lc ? formatValue(lc.col, lc.col.getValue(row)) : "";
     const isEditing = editing?.kind === "text";
@@ -1744,6 +2240,9 @@ function GridRowImpl<Row>(p: GridRowProps<Row>) {
       const editable = isEditable(c.col, row);
       const isEditingText = editing?.kind === "text" && editing.key === c.key;
       const isEditingPicker = editing?.kind === "picker" && editing.key === c.key;
+      const deco = p.decorate?.(row, c.key);
+      const ghost =
+        deco?.ghost && GHOST_TYPES.has(c.col.type) && isEmptyValue(value) ? deco.ghost : undefined;
       const cc = cellColors.get(c.key);
       const style: CSSProperties = {
         width: c.width,
@@ -1763,6 +2262,8 @@ function GridRowImpl<Row>(p: GridRowProps<Row>) {
           data-frozen={c.frozen || undefined}
           data-colored={cc ? true : undefined}
           data-editing={isEditingText || isEditingPicker || undefined}
+          data-warning={deco?.warning ? true : undefined}
+          title={deco?.warning}
           style={style}
         >
           {isEditingText ? (
@@ -1771,15 +2272,26 @@ function GridRowImpl<Row>(p: GridRowProps<Row>) {
               numeric={c.col.type === "number"}
               value={editing.draft}
               label={c.col.title}
+              placeholder={ghost}
               onChange={api.setDraft}
             />
           ) : (
-            <CellContent
-              col={c.col}
-              value={isEditingPicker ? editing.value : value}
-              editable={editable}
-              onToggle={() => api.toggle(item.id, c.key)}
-            />
+            <>
+              <CellContent
+                col={c.col}
+                value={isEditingPicker ? editing.value : value}
+                editable={editable}
+                onToggle={() => api.toggle(id, c.key)}
+              />
+              {ghost && activeKey === c.key && (
+                <span className={styles.ghost} data-testid="ghost">
+                  {ghost}
+                </span>
+              )}
+              {deco?.warning && (
+                <span className={styles.visuallyHidden}>Warning: {deco.warning}</span>
+              )}
+            </>
           )}
         </div>
       );
@@ -1793,15 +2305,16 @@ function GridRowImpl<Row>(p: GridRowProps<Row>) {
       aria-selected={p.selected}
       className={styles.row}
       style={rowStyle}
-      data-row-id={item.id}
+      data-row-id={id}
+      data-group={p.groupId}
       data-testid="grid-row"
-      data-section={item.section || undefined}
+      data-section={p.section || undefined}
       data-selected={p.selected || undefined}
       data-active-row={isActiveRow || undefined}
       data-colored={rowColor ? true : undefined}
       data-moved={p.moved || undefined}
       data-dragging={p.dragging || undefined}
-      onContextMenu={(e) => api.contextMenu(item.id, e)}
+      onContextMenu={(e) => api.contextMenu(id, e)}
     >
       {rowNumber}
       {cells}

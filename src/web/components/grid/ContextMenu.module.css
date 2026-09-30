@@ -23,7 +23,7 @@
 }
 
 .item:hover:not(:disabled),
-.item:focus-visible {
+.item:focus {
   background: var(--color-accent-subtle);
   outline: none;
 }

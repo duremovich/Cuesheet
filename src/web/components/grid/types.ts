@@ -101,6 +101,35 @@ export interface InsertPosition {
 
 export type RowHeight = "compact" | "normal" | "tall";
 
+/** An entry of the row context menu. */
+export interface MenuItem {
+  label: string;
+  shortcut?: string;
+  danger?: boolean;
+  onSelect: () => void;
+}
+
+/** Per-cell extras from `cellDecoration`. */
+export interface CellDecoration {
+  /** Orange underline + tooltip (e.g. "Duplicate cue number"). Never blocks editing. */
+  warning?: string;
+  /**
+   * A suggested value shown faintly in the empty cell (e.g. the midpoint cue number). Tab or
+   * → accepts it; typing replaces it.
+   */
+  ghost?: string;
+}
+
+/** Imperative handle (`ref` prop). */
+export interface DataGridHandle {
+  /** Make a row's cell (default: its first editable column) active and focus it. */
+  focusRow(rowId: string, columnKey?: string): void;
+  /** Scroll a row into view (expanding its group if collapsed) without moving focus. */
+  scrollToRow(rowId: string): void;
+}
+
+export type GridAction = "edit" | "insert" | "duplicate" | "move" | "delete";
+
 export interface DataGridProps<Row> {
   columns: Column<Row>[];
   rowId: (r: Row) => string;
@@ -130,4 +159,20 @@ export interface DataGridProps<Row> {
   onColumnResize?: (key: string, width: number) => void;
   /** Accessible name of the grid. */
   "aria-label"?: string;
+  /** Imperative handle: `focusRow`, `scrollToRow`. */
+  ref?: React.Ref<DataGridHandle>;
+  /** The active row changed (null: none, or a group header). */
+  onActiveRowChange?: (rowId: string | null) => void;
+  /** Controlled collapsed group ids; omit for internal state. */
+  collapsed?: string[];
+  onCollapsedChange?: (ids: string[]) => void;
+  /** Extra context-menu entries for a row. */
+  extraMenuItems?: (ctx: { rowId: string; selectedRowIds: string[] }) => MenuItem[];
+  /** Warnings and ghost suggestions per cell. Keep it stable (`useCallback`). */
+  cellDecoration?: (row: Row, key: string) => CellDecoration | undefined;
+  /**
+   * A callback threw or rejected. The grid also shows a short inline message. Defaults to
+   * `console.error`.
+   */
+  onError?: (error: unknown, action: GridAction) => void;
 }

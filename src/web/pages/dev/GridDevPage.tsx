@@ -12,6 +12,7 @@ import {
 import { ThemeToggle } from "../../components/ThemeToggle";
 import styles from "./GridDevPage.module.css";
 import {
+  cueNumberHints,
   type MockCue,
   MockShowStore,
   STATUS_OPTIONS,
@@ -122,6 +123,12 @@ export function GridDevPage() {
   const [log, setLog] = useState("Ready");
 
   const columns = useMemo(() => makeColumns(store), [store]);
+  // Duplicate-number warnings and ghost midpoint numbers on the Cue column (R3).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `version` is the store's change signal
+  const cellDecoration = useMemo(() => {
+    const hints = cueNumberHints(store.list());
+    return (row: MockCue, key: string) => (key === "number" ? hints.get(row.id) : undefined);
+  }, [store, version]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `version` is the store's change signal
   const data = useMemo(
     () => (grouped ? { groups: store.groups() } : { rows: store.list() }),
@@ -184,6 +191,7 @@ export function GridDevPage() {
           sort={sort}
           rowHeight={rowHeight}
           colorRules={COLOR_PRESETS[preset]}
+          cellDecoration={cellDecoration}
           onEdit={(id, key, value) => {
             store.edit(id, key, value);
             setLog(`Edited ${label(id)} · ${key}`);

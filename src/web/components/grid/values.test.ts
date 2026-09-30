@@ -77,12 +77,12 @@ describe("UndoStack", () => {
       { rowId: "r", key: "b", before: "x", after: "y" },
     ]);
     expect(u.undo()).toEqual([
-      { rowId: "r", key: "b", value: "x" },
-      { rowId: "r", key: "a", value: 2 },
+      { rowId: "r", key: "b", value: "x", expect: "y" },
+      { rowId: "r", key: "a", value: 2, expect: 3 },
     ]);
-    expect(u.undo()).toEqual([{ rowId: "r", key: "a", value: 1 }]);
+    expect(u.undo()).toEqual([{ rowId: "r", key: "a", value: 1, expect: 2 }]);
     expect(u.undo()).toBeNull();
-    expect(u.redo()).toEqual([{ rowId: "r", key: "a", value: 2 }]);
+    expect(u.redo()).toEqual([{ rowId: "r", key: "a", value: 2, expect: 1 }]);
     // A new edit clears the redo stack.
     u.push([{ rowId: "r", key: "c", before: 0, after: 1 }]);
     expect(u.canRedo).toBe(false);

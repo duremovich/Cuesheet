@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { contentSceneNumber, MockShowStore, seedFromExamples, stressSeed } from "./mockShow";
+import {
+  contentSceneNumber,
+  cueNumberHints,
+  MockShowStore,
+  seedFromExamples,
+  stressSeed,
+  suggestCueNumber,
+} from "./mockShow";
 
 describe("mock show seed", () => {
   const seed = seedFromExamples();
@@ -70,5 +77,19 @@ describe("MockShowStore", () => {
     // Without a scene, plain list order: the earlier-created item comes first.
     const plain = store.searchContent("thing").map((c) => c.id);
     expect(plain.indexOf(item.id)).toBeLessThan(plain.indexOf(inScene.id));
+  });
+});
+
+describe("cue number hints", () => {
+  it("suggests the midpoint number", () => {
+    expect(suggestCueNumber("14.2", "14.4")).toBe("14.3");
+    expect(suggestCueNumber("14.2", "14.25")).toBe("14.22");
+    expect(suggestCueNumber("70.00", undefined)).toBe("71");
+    expect(suggestCueNumber("1", "2")).toBe("1.5");
+  });
+  it("flags duplicates in the example cue list", () => {
+    const hints = cueNumberHints(seedFromExamples().cues);
+    const warned = [...hints.values()].filter((h) => h.warning).map((h) => h.warning);
+    expect(warned).toContain("Duplicate cue number 49.00");
   });
 });

@@ -82,34 +82,14 @@ describe("sortRows", () => {
 });
 
 describe("applyHolds", () => {
-  it("pins a held row after its anchor in a sorted list", () => {
+  it("pins a held row at its slot in a sorted list, clamped", () => {
     const lists = [{ groupId: undefined, ids: ["a", "b", "c", "x"] }];
-    expect(applyHolds(lists, [{ id: "x", afterId: "a" }], true)[0]?.ids).toEqual([
-      "a",
-      "x",
-      "b",
-      "c",
-    ]);
-    expect(applyHolds(lists, [{ id: "x", afterId: null }], true)[0]?.ids).toEqual([
-      "x",
-      "a",
-      "b",
-      "c",
-    ]);
-    expect(applyHolds(lists, [{ id: "x", beforeId: "c" }], true)[0]?.ids).toEqual([
-      "a",
-      "b",
-      "x",
-      "c",
-    ]);
-  });
-  it("falls back to the data's position when the anchor is gone", () => {
-    const lists = [{ groupId: undefined, ids: ["a", "x", "b"] }];
-    expect(applyHolds(lists, [{ id: "x", afterId: "gone" }], true)[0]?.ids).toEqual([
-      "a",
-      "x",
-      "b",
-    ]);
+    expect(applyHolds(lists, [{ id: "x", index: 1 }], true)[0]?.ids).toEqual(["a", "x", "b", "c"]);
+    expect(applyHolds(lists, [{ id: "x", index: 0 }], true)[0]?.ids).toEqual(["x", "a", "b", "c"]);
+    expect(applyHolds(lists, [{ id: "a", index: 99 }], true)[0]?.ids).toEqual(["b", "c", "x", "a"]);
+    expect(applyHolds(lists, [{ id: "a", index: Number.POSITIVE_INFINITY }], true)[0]?.ids).toEqual(
+      ["b", "c", "x", "a"],
+    );
   });
   it("does not reposition in show order, but keeps a row in its group", () => {
     const lists = [
@@ -117,9 +97,9 @@ describe("applyHolds", () => {
       { groupId: "g2", ids: ["x", "c"] },
     ];
     // Show order: a same-group hold is a no-op.
-    expect(applyHolds(lists, [{ id: "c", groupId: "g2", afterId: null }], false)).toEqual(lists);
+    expect(applyHolds(lists, [{ id: "c", groupId: "g2", index: 0 }], false)).toEqual(lists);
     // x's scene was edited to g2 while it was focused in g1: it stays in g1 until blur.
-    const held = applyHolds(lists, [{ id: "x", groupId: "g1", afterId: "a" }], false);
+    const held = applyHolds(lists, [{ id: "x", groupId: "g1", index: 1 }], false);
     expect(held.map((l) => l.ids)).toEqual([["a", "x", "b"], ["c"]]);
   });
 });
@@ -164,11 +144,27 @@ describe("buildLayout", () => {
       columns: cols,
       rowId: (x) => x.id,
       sort: [{ key: "num", dir: "desc" }],
-      holds: [{ id: "c", groupId: "g2", afterId: "b" }],
+      holds: [{ id: "b", groupId: "g2", index: 0 }],
     });
-    // Sorted desc: c, b, s(empty last). c is held after b.
+    // Sorted desc: c, b, s(empty last). b is held in the first slot.
     expect(
       items.filter((i) => i.kind === "row").map((i) => (i.kind === "row" ? i.id : "")),
     ).toEqual(["a", "b", "c", "s"]);
+  });
+
+  it("keeps a held row in its slot when its neighbor re-sorts away", () => {
+    const list = [r("a", "1"), r("b", "2"), r("c", "3"), r("d", "4")];
+    const layout = (rows: R[]) =>
+      buildLayout({
+        rows,
+        columns: cols,
+        rowId: (x) => x.id,
+        sort: [{ key: "num", dir: "asc" }],
+        holds: [{ id: "c", index: 2 }],
+      }).map((i) => (i.kind === "row" ? i.id : ""));
+    expect(layout(list)).toEqual(["a", "b", "c", "d"]);
+    // b is edited to 9 and sorts to the end; c (held) stays in slot 2.
+    const edited = list.map((x) => (x.id === "b" ? { ...x, num: "9" } : x));
+    expect(layout(edited)).toEqual(["a", "d", "c", "b"]);
   });
 });

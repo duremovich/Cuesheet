@@ -62,7 +62,8 @@ test("an inserted row stays where it was inserted under a live sort until focus 
   const at = await rowIndex(anchor);
   const fresh = grid(page).locator(`[role="row"][aria-rowindex="${at + 1}"]`);
   await expect(cellOf(fresh, "number")).toBeFocused();
-  await expect(cellOf(fresh, "number")).toHaveText("");
+  // Empty, with the midpoint number shown as a ghost suggestion (cellDecoration).
+  await expect(cellOf(fresh, "number").getByTestId("ghost")).toHaveText("2.05");
 
   // Give it a number that sorts far away; Tab stays in the row, so it holds its place.
   await page.keyboard.type("65");
@@ -70,16 +71,21 @@ test("an inserted row stays where it was inserted under a live sort until focus 
   await expect(cellOf(fresh, "number")).toHaveText("65");
   await expect(rowByCue(page, "65")).toHaveAttribute("aria-rowindex", String(at + 1));
 
-  // Leaving the row (Escape) lets it slide to its sorted place.
+  // Leaving the row (Escape) lets it slide to its sorted place; the grid scrolls to it.
   await page.keyboard.press("Escape");
-  await expect(rowByCue(page, "2.10")).toHaveAttribute("aria-rowindex", String(at + 1));
   const moved = rowByCue(page, "65");
-  await moved.scrollIntoViewIfNeeded();
+  await expect(moved).toBeVisible();
+  await expect(moved).toHaveAttribute("data-moved", "true");
+  await expect(cellOf(moved, "page")).toBeFocused(); // Tab moved to the next column
   expect(await rowIndex(moved)).toBeGreaterThan(at + 50);
   await expect(rowByCue(page, "60.00")).toHaveAttribute(
     "aria-rowindex",
     String((await rowIndex(moved)) - 1),
   );
+  await page.getByTestId("grid-scroll").evaluate((el) => {
+    el.scrollTop = 0;
+  });
+  await expect(rowByCue(page, "2.10")).toHaveAttribute("aria-rowindex", String(at + 1));
 });
 
 test("dragging a row by its handle reorders it", async ({ page }) => {
@@ -175,16 +181,69 @@ test("group headers collapse and expand, and stay stuck while scrolling", async 
   await header.getByRole("button", { name: "Expand 100 Overture" }).click();
   await expect(rowByCue(page, "2.00")).toBeVisible();
 
-  // Scroll into the middle of the list: the current group's header sits under the column header.
+  // Scroll into the list: the stuck header names the group of the first thing below it.
+  // (500 is the review's repro: Unassigned collapsed, scene 102's last row under the header.)
   const scroller = page.getByTestId("grid-scroll");
-  await scroller.evaluate((el) => {
-    el.scrollTop = 3000;
-  });
-  const top = await scroller.boundingBox();
-  const stuck = grid(page).getByTestId("group-header").first();
-  await expect
-    .poll(async () => Math.round(((await stuck.boundingBox())?.y ?? 0) - (top?.y ?? 0)))
-    .toBeLessThanOrEqual(40);
+  for (const y of [500, 1234, 3000]) {
+    await scroller.evaluate((el, top) => {
+      el.scrollTop = top;
+    }, y);
+    const stuck = grid(page).locator('[data-testid="group-header"][data-stuck]');
+    await expect(stuck).toHaveCount(1);
+    const below = await stuck.evaluate((el) => {
+      const bottom = el.getBoundingClientRect().bottom;
+      const candidates = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          '[data-testid="grid-row"], [data-testid="group-header"]:not([data-stuck])',
+        ),
+      )
+        .map((e) => ({ e, top: e.getBoundingClientRect().top }))
+        .filter((c) => c.top >= bottom - 1)
+        .sort((p, q) => p.top - q.top);
+      const first = candidates[0]?.e;
+      return first?.dataset.group ?? first?.dataset.groupId ?? null;
+    });
+    await expect(stuck).toHaveAttribute("data-group-id", below ?? "none");
+    const box = await scroller.boundingBox();
+    const stuckBox = await stuck.boundingBox();
+    expect(Math.round((stuckBox?.y ?? 0) - (box?.y ?? 0))).toBe(34);
+  }
+});
+
+test("the row menu works from the keyboard", async ({ page }) => {
+  await ungroup(page);
+  const row = rowByCue(page, "0.30");
+  const at = await rowIndex(row);
+  await cellOf(row, "lx").click();
+  await page.keyboard.press("Shift+F10");
+  const menu = page.getByRole("menu", { name: "Row actions" });
+  await expect(menu.getByRole("menuitem", { name: /Insert row above/ })).toBeFocused();
+  // Escape closes it and focus is back on the cell.
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(cellOf(row, "lx")).toBeFocused();
+  // ArrowDown + Enter: "Insert row below".
+  await page.keyboard.press("Shift+F10");
+  await expect(menu.getByRole("menuitem").first()).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(menu.getByRole("menuitem", { name: /Insert row below/ })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("grid-log")).toHaveText("Inserted a row");
+  const fresh = grid(page).locator(`[role="row"][aria-rowindex="${at + 1}"]`);
+  await expect(cellOf(fresh, "number")).toBeFocused();
+});
+
+test("Tab into the grid activates the first cell", async ({ page }) => {
+  // Tab order: toolbar, the column resizers, then one cell of the grid.
+  await grid(page).locator('[role="separator"]').last().focus();
+  await page.keyboard.press("Tab");
+  const first = grid(page).locator('[data-cell][tabindex="0"]').first();
+  await expect(first).toBeFocused();
+  await expect(first).toHaveAttribute("data-active", "true");
+  // The first item is the Unassigned group header; Enter collapses it.
+  await page.keyboard.press("Enter");
+  await expect(rowByCue(page, "0.10")).toHaveCount(0);
+  await expect(first).toBeFocused();
 });
 
 test("5,000 rows scroll smoothly to the last row", async ({ page }) => {

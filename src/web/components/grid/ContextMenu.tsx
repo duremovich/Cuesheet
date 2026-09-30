@@ -2,13 +2,9 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import styles from "./ContextMenu.module.css";
 import { placeAtPoint, useOutsidePointer } from "./popover";
+import type { MenuItem } from "./types";
 
-export interface MenuItem {
-  label: string;
-  shortcut?: string;
-  danger?: boolean;
-  onSelect: () => void;
-}
+export type { MenuItem };
 
 /** A keyboard-navigable menu at a point (right-click). Closes on Escape or outside click. */
 export function ContextMenu({
@@ -27,19 +23,25 @@ export function ContextMenu({
   portalOwner?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  // Mounted transparent (not visibility:hidden, which can't take focus), placed from its
+  // measured size, then the first item is focused once the placement has committed.
   const [style, setStyle] = useState<React.CSSProperties>({
     position: "fixed",
     left: x,
     top: y,
-    visibility: "hidden",
+    opacity: 0,
   });
+  const placed = style.opacity === undefined;
 
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     setStyle(placeAtPoint(x, y, { width: el.offsetWidth, height: el.offsetHeight }));
-    el.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
   }, [x, y]);
+
+  useLayoutEffect(() => {
+    if (placed) ref.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+  }, [placed]);
 
   useOutsidePointer(() => [ref.current], onClose);
 
@@ -53,6 +55,9 @@ export function ContextMenu({
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       buttons[(i - 1 + buttons.length) % buttons.length]?.focus();
+    } else if (e.key === "Home" || e.key === "End") {
+      e.preventDefault();
+      (e.key === "Home" ? buttons[0] : buttons.at(-1))?.focus();
     } else if (e.key === "Escape" || e.key === "Tab") {
       e.preventDefault();
       onClose();

@@ -77,12 +77,15 @@ export function TextEditor({
   numeric,
   value,
   label,
+  placeholder,
   onChange,
 }: {
   multiline: boolean;
   numeric: boolean;
   value: string;
   label: string;
+  /** Ghost suggestion (Tab / → accepts it). */
+  placeholder?: string | undefined;
   onChange: (v: string) => void;
 }) {
   const ref = useRef<HTMLInputElement & HTMLTextAreaElement>(null);
@@ -106,9 +109,11 @@ export function TextEditor({
         className={styles.editorArea}
         aria-label={label}
         data-editor="true"
+        placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
+          if (e.nativeEvent.isComposing || e.keyCode === 229) return;
           // ⌘/Ctrl+Enter: newline (plain Enter commits, handled by the grid).
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
             e.preventDefault();
@@ -131,6 +136,7 @@ export function TextEditor({
       className={styles.editor}
       aria-label={label}
       data-editor="true"
+      placeholder={placeholder}
       value={value}
       onChange={(e) => onChange(e.target.value)}
     />

@@ -154,6 +154,14 @@ export interface EditRecord {
   after: unknown;
 }
 
+/** One cell change to replay: set `value` if the cell still holds `expect`. */
+export interface Replay {
+  rowId: string;
+  key: string;
+  value: unknown;
+  expect: unknown;
+}
+
 /** Undo/redo of batches of edits (one batch per user action, e.g. a paste). */
 export class UndoStack {
   private done: EditRecord[][] = [];
@@ -168,18 +176,20 @@ export class UndoStack {
   }
 
   /** The edits to apply to undo the last batch (inverse values), or null. */
-  undo(): { rowId: string; key: string; value: unknown }[] | null {
+  undo(): Replay[] | null {
     const b = this.done.pop();
     if (!b) return null;
     this.undone.push(b);
-    return [...b].reverse().map((e) => ({ rowId: e.rowId, key: e.key, value: e.before }));
+    return [...b]
+      .reverse()
+      .map((e) => ({ rowId: e.rowId, key: e.key, value: e.before, expect: e.after }));
   }
 
-  redo(): { rowId: string; key: string; value: unknown }[] | null {
+  redo(): Replay[] | null {
     const b = this.undone.pop();
     if (!b) return null;
     this.done.push(b);
-    return b.map((e) => ({ rowId: e.rowId, key: e.key, value: e.after }));
+    return b.map((e) => ({ rowId: e.rowId, key: e.key, value: e.after, expect: e.before }));
   }
 
   get canUndo(): boolean {

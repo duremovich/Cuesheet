@@ -10,7 +10,14 @@ import {
   wait,
 } from "../../test/dom";
 import { DataGrid } from "./DataGrid";
-import type { Column, InsertPosition, PickerItem, SortSpec } from "./types";
+import type {
+  Column,
+  DataGridHandle,
+  DataGridProps,
+  InsertPosition,
+  PickerItem,
+  SortSpec,
+} from "./types";
 
 interface R {
   id: string;
@@ -87,14 +94,20 @@ function Harness({
   sort,
   grouped,
   columns,
+  extra,
+  remote,
 }: {
   initial: R[];
   s: Spies;
   sort?: SortSpec[];
   grouped?: boolean;
   columns?: Column<R>[];
+  extra?: Partial<DataGridProps<R>>;
+  /** Receives the row setter, to simulate someone else's edits. */
+  remote?: (set: React.Dispatch<React.SetStateAction<R[]>>) => void;
 }) {
   const [rows, setRows] = useState(initial);
+  remote?.(setRows);
   const [cols] = useState(() => columns ?? makeColumns({}));
   const onInsert = (pos: InsertPosition) => {
     s.onInsert(pos);
@@ -134,9 +147,9 @@ function Harness({
       title: g === "g1" ? "Scene One" : "Scene Two",
       rows: rows.filter((r) => r.group === g),
     }));
-    return <DataGrid<R> {...common} groups={groups} />;
+    return <DataGrid<R> {...common} {...extra} groups={groups} />;
   }
-  return <DataGrid<R> {...common} rows={rows} />;
+  return <DataGrid<R> {...common} {...extra} rows={rows} />;
 }
 
 const cell = (rowId: string, key: string) => {
@@ -325,6 +338,223 @@ describe("DataGrid long text, insert affordance and column resize", () => {
   });
 });
 
+describe("DataGrid review fixes", () => {
+  it("ignores Enter and Escape during IME composition", () => {
+    const s = spies();
+    render(<Harness initial={THREE} s={s} />);
+    pointerDown(cell("r1", "name"));
+    press("Enter");
+    const input = editor() as HTMLInputElement;
+    setInputValue(input, "かな");
+    act(() => {
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+          isComposing: true,
+        }),
+      );
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+          cancelable: true,
+          isComposing: true,
+        }),
+      );
+    });
+    expect(editor()).not.toBeNull();
+    expect(s.onEdit).not.toHaveBeenCalled();
+    press("Enter");
+    expect(s.onEdit).toHaveBeenCalledWith("r1", "name", "かな");
+  });
+
+  it("a double Enter on Create with a slow search creates once", async () => {
+    const s = spies();
+    const create = vi.fn(async (name: string) => ({ id: "n1", label: name }));
+    const search = () => new Promise<PickerItem[]>((r) => setTimeout(() => r([]), 50));
+    render(<Harness initial={THREE} s={s} columns={makeColumns({ search, create })} />);
+    pointerDown(cell("r1", "ref"));
+    press("Z");
+    const input = document.activeElement as HTMLInputElement;
+    press("Enter", {}, input);
+    press("Enter", {}, input);
+    await wait(120);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(s.onEdit).toHaveBeenCalledTimes(1);
+  });
+
+  it("one keystroke while editing re-renders at most two rows", () => {
+    const s = spies();
+    const calls: string[] = [];
+    const columns = makeColumns({}).map((c) =>
+      c.key === "qty"
+        ? {
+            ...c,
+            getValue: (r: R) => {
+              calls.push(r.id);
+              return r.qty;
+            },
+          }
+        : c,
+    );
+    const many = Array.from({ length: 12 }, (_, i) => row(`m${i}`, `n${i}`, { qty: i }));
+    render(<Harness initial={many} s={s} columns={columns} />);
+    pointerDown(cell("m3", "name"));
+    press("x");
+    calls.length = 0;
+    setInputValue(editor() as HTMLInputElement, "xy");
+    expect(new Set(calls).size).toBeLessThanOrEqual(2);
+  });
+
+  it("pasting across a section row skips it without consuming a pasted row", () => {
+    const s = spies();
+    const rows = [row("a", "1"), row("sec", "ACT 2", { section: true }), row("b", "2")];
+    render(<Harness initial={rows} s={s} />);
+    pointerDown(cell("a", "name"));
+    const { event } = clipboardEvent("paste", { "text/plain": "X\nY" });
+    act(() => cell("a", "name").dispatchEvent(event));
+    expect(s.onEdit.mock.calls).toEqual([
+      ["a", "name", "X"],
+      ["b", "name", "Y"],
+    ]);
+  });
+
+  it("group headers are keyboard rows: arrow onto them, Enter toggles, focus stays", () => {
+    const s = spies();
+    const rows = [row("a", "one"), row("b", "two", { group: "g2" })];
+    render(<Harness initial={rows} s={s} grouped />);
+    pointerDown(cell("b", "name"));
+    press("ArrowUp");
+    const header = document.querySelector('[data-group-id="g2"] [data-cell]') as HTMLElement;
+    expect(document.activeElement).toBe(header);
+    // Group buttons are out of the tab order.
+    for (const b of document.querySelectorAll('[data-testid="group-header"] button'))
+      expect((b as HTMLElement).tabIndex).toBe(-1);
+    press("Enter");
+    expect(rowOrder()).toEqual(["a"]);
+    expect(document.activeElement).toBe(document.querySelector('[data-group-id="g2"] [data-cell]'));
+    press("ArrowRight");
+    expect(rowOrder()).toEqual(["a", "b"]);
+    press("ArrowDown");
+    expect(focused()).toBe("b:name");
+  });
+
+  it("collapsing the active row's group moves focus to its header", () => {
+    const s = spies();
+    const rows = [row("a", "one"), row("b", "two", { group: "g2" })];
+    const collapsed: string[][] = [];
+    const Controlled = () => {
+      const [ids, setIds] = useState<string[]>([]);
+      return (
+        <Harness
+          initial={rows}
+          s={s}
+          grouped
+          extra={{
+            collapsed: ids,
+            onCollapsedChange: (next) => {
+              collapsed.push(next);
+              setIds(next);
+            },
+          }}
+        />
+      );
+    };
+    render(<Controlled />);
+    pointerDown(cell("b", "name"));
+    click(document.querySelector('[aria-label="Collapse Scene Two"]') as HTMLElement);
+    expect(collapsed.at(-1)).toEqual(["g2"]);
+    expect(document.activeElement).toBe(document.querySelector('[data-group-id="g2"] [data-cell]'));
+  });
+
+  it("a cell focused by Tab (or programmatically) becomes the active cell", () => {
+    const s = spies();
+    render(<Harness initial={THREE} s={s} />);
+    const first = cell("r1", "name");
+    expect(first.tabIndex).toBe(0);
+    act(() => first.focus());
+    expect(first.dataset.active).toBe("true");
+    press("ArrowDown");
+    expect(focused()).toBe("r2:name");
+  });
+
+  it("ghost suggestions show on the active empty cell; Tab accepts, typing replaces", () => {
+    const s = spies();
+    const rows = [row("a", "14.2"), row("n", ""), row("b", "14.4")];
+    render(
+      <Harness
+        initial={rows}
+        s={s}
+        extra={{
+          cellDecoration: (r, key) =>
+            key === "name" && r.id === "n" ? { ghost: "14.3", warning: "Check me" } : undefined,
+        }}
+      />,
+    );
+    expect(cell("n", "name").getAttribute("title")).toBe("Check me");
+    pointerDown(cell("n", "name"));
+    expect(cell("n", "name").querySelector('[data-testid="ghost"]')?.textContent).toBe("14.3");
+    press("Tab");
+    expect(s.onEdit).toHaveBeenCalledWith("n", "name", "14.3");
+    expect(focused()).toBe("n:qty");
+  });
+
+  it("undo skips a cell someone else changed since", () => {
+    const s = spies();
+    let setRows: React.Dispatch<React.SetStateAction<R[]>> = () => {};
+    render(<Harness initial={THREE} s={s} remote={(set) => (setRows = set)} />);
+    pointerDown(cell("r1", "name"));
+    press("a");
+    press("Enter");
+    act(() => setRows((rs) => rs.map((r) => (r.id === "r1" ? { ...r, name: "theirs" } : r))));
+    s.onEdit.mockClear();
+    press("z", { mod: true });
+    expect(s.onEdit).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="status"]')?.textContent).toMatch(/Skipped 1 cell/);
+  });
+
+  it("exposes focusRow / scrollToRow and reports the active row", () => {
+    const s = spies();
+    const handle: { current: DataGridHandle | null } = { current: null };
+    const onActiveRowChange = vi.fn();
+    render(<Harness initial={THREE} s={s} extra={{ ref: handle, onActiveRowChange }} />);
+    act(() => handle.current?.focusRow("r3", "qty"));
+    expect(focused()).toBe("r3:qty");
+    expect(onActiveRowChange).toHaveBeenLastCalledWith("r3");
+    act(() => handle.current?.scrollToRow("r1"));
+    expect(focused()).toBe("r3:qty");
+  });
+
+  it("adds extra menu items and reports callback errors inline", async () => {
+    const s = spies();
+    const onError = vi.fn();
+    const pick = vi.fn();
+    render(
+      <Harness
+        initial={THREE}
+        s={s}
+        extra={{
+          extraMenuItems: ({ rowId }) => [{ label: "Show in script", onSelect: () => pick(rowId) }],
+          onInsert: () => Promise.reject(new Error("offline")),
+          onError,
+        }}
+      />,
+    );
+    pointerDown(cell("r1", "name"));
+    press("ContextMenu");
+    const items = [...document.querySelectorAll('[role="menuitem"]')];
+    expect(items.map((m) => m.firstChild?.textContent)).toContain("Show in script");
+    click(items.find((m) => m.firstChild?.textContent === "Show in script") as HTMLElement);
+    expect(pick).toHaveBeenCalledWith("r1");
+    press("Enter", { mod: true, shift: true });
+    await wait();
+    expect(onError).toHaveBeenCalledWith(expect.any(Error), "insert");
+    expect(document.querySelector('[role="status"]')?.textContent).toMatch(/Couldn't insert/);
+  });
+});
+
 describe("DataGrid live sort", () => {
   it("holds an edited row in place until focus leaves it, then moves it", async () => {
     const s = spies();
@@ -490,22 +720,67 @@ describe("DataGrid clipboard", () => {
 });
 
 describe("DataGrid selection, groups and menus", () => {
-  it("selects rows via row numbers and deletes the selection", () => {
+  it("selects rows via row numbers; deleting several asks first, then focuses a neighbor", () => {
     const s = spies();
     render(<Harness initial={THREE} s={s} />);
     const nums = () => [...document.querySelectorAll<HTMLElement>('[data-testid="row-number"]')];
-    click(nums()[0] as HTMLElement);
-    click(nums()[2] as HTMLElement, { shift: true });
-    expect([...document.querySelectorAll("[data-selected]")].length).toBe(3);
-    click(nums()[1] as HTMLElement, { mod: true });
-    expect(
+    const selectedIds = () =>
       [...document.querySelectorAll("[data-selected]")].map(
         (e) => (e as HTMLElement).dataset.rowId,
-      ),
-    ).toEqual(["r1", "r3"]);
+      );
+    click(nums()[0] as HTMLElement);
+    click(nums()[2] as HTMLElement, { shift: true });
+    expect(selectedIds()).toEqual(["r1", "r2", "r3"]);
+    click(nums()[1] as HTMLElement, { mod: true }); // toggles r2 off; r2 becomes active
+    expect(selectedIds()).toEqual(["r1", "r3"]);
+    // The active row isn't in the selection: Delete clears its cell instead of deleting rows.
     press("Delete");
+    expect(s.onDelete).not.toHaveBeenCalled();
+    expect(cell("r2", "name").textContent).toBe("");
+    click(nums()[2] as HTMLElement, { mod: true }); // r3 off
+    click(nums()[2] as HTMLElement, { mod: true }); // r3 on again, active
+    expect(selectedIds()).toEqual(["r1", "r3"]);
+    press("Delete");
+    const dialog = document.querySelector('[role="alertdialog"]') as HTMLElement;
+    expect(dialog.textContent).toContain("Delete 2 rows?");
+    expect(s.onDelete).not.toHaveBeenCalled();
+    click(
+      [...dialog.querySelectorAll("button")].find(
+        (b) => b.textContent === "Delete 2 rows",
+      ) as HTMLElement,
+    );
     expect(s.onDelete).toHaveBeenCalledWith(["r1", "r3"]);
     expect(rowOrder()).toEqual(["r2"]);
+    expect(focused()).toBe("r2:name");
+  });
+
+  it("Backspace never deletes rows; arrows clear a stale row selection", () => {
+    const s = spies();
+    render(<Harness initial={THREE} s={s} />);
+    const nums = [...document.querySelectorAll<HTMLElement>('[data-testid="row-number"]')];
+    click(nums[1] as HTMLElement);
+    expect(document.querySelectorAll("[data-selected]").length).toBe(1);
+    press("Backspace");
+    expect(s.onDelete).not.toHaveBeenCalled();
+    expect(s.onEdit).toHaveBeenCalledWith("r2", "name", "");
+    press("ArrowDown");
+    expect(document.querySelectorAll("[data-selected]").length).toBe(0);
+    press("Delete"); // no selection any more: clears r3's cell
+    expect(s.onDelete).not.toHaveBeenCalled();
+    expect(s.onEdit).toHaveBeenLastCalledWith("r3", "name", "");
+  });
+
+  it("deleting the active row moves focus to the next row", () => {
+    const s = spies();
+    render(<Harness initial={THREE} s={s} />);
+    pointerDown(cell("r2", "qty"));
+    press("ContextMenu");
+    const del = [...document.querySelectorAll('[role="menuitem"]')].find(
+      (m) => m.firstChild?.textContent === "Delete row",
+    );
+    click(del as HTMLElement);
+    expect(s.onDelete).toHaveBeenCalledWith(["r2"]);
+    expect(focused()).toBe("r3:qty");
   });
 
   it("Ctrl+A selects all rows", () => {

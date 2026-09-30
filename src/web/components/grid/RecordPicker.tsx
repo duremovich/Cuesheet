@@ -147,6 +147,10 @@ export function RecordPicker(props: RecordPickerProps) {
     popRef.current?.querySelector(`[data-index="${hi}"]`)?.scrollIntoView?.({ block: "nearest" });
   }, [hi]);
 
+  // Set synchronously while a pick/create is in flight so a second Enter (or click) can't
+  // start another one before React re-renders with `busy`.
+  const pendingRef = useRef(false);
+
   const choose = async (entry: Entry, via: PickVia) => {
     if (entry.kind === "item") {
       onPick(entry.item, via);
@@ -174,30 +178,47 @@ export function RecordPicker(props: RecordPickerProps) {
 
   /** Enter/Tab: resolve against fresh results (the user may type faster than the debounce). */
   const commit = async (via: "enter" | "tab" | "shiftTab") => {
-    if (busy) return;
-    const empty = query.trim() === "";
-    if (empty && !userMoved && (via !== "enter" || multi)) {
-      onClose(via === "enter" ? "enter" : via);
-      return;
-    }
-    let list = entries;
-    if (!results || results.q !== query) {
-      try {
-        list = buildEntries(query, await run(query), recent, !!create);
-      } catch {
+    if (pendingRef.current) return;
+    pendingRef.current = true;
+    try {
+      const empty = query.trim() === "";
+      if (empty && !userMoved && (via !== "enter" || multi)) {
+        onClose(via === "enter" ? "enter" : via);
         return;
       }
+      let list = entries;
+      if (!results || results.q !== query) {
+        try {
+          list = buildEntries(query, await run(query), recent, !!create);
+        } catch {
+          return;
+        }
+      }
+      const entry = list[userMoved ? Math.min(hi, list.length - 1) : 0];
+      if (!entry) {
+        onClose(via === "enter" ? "enter" : via);
+        return;
+      }
+      await choose(entry, via);
+    } finally {
+      pendingRef.current = false;
     }
-    const entry = list[userMoved ? Math.min(hi, list.length - 1) : 0];
-    if (!entry) {
-      onClose(via === "enter" ? "enter" : via);
-      return;
+  };
+
+  const chooseOnce = async (entry: Entry, via: PickVia) => {
+    if (pendingRef.current) return;
+    pendingRef.current = true;
+    try {
+      await choose(entry, via);
+    } finally {
+      pendingRef.current = false;
     }
-    await choose(entry, via);
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     e.stopPropagation();
+    // IME composition: Enter/Escape/Tab belong to the input method.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     switch (e.key) {
       case "ArrowDown":
         e.preventDefault();
@@ -275,7 +296,7 @@ export function RecordPicker(props: RecordPickerProps) {
               setHighlight(i);
               setUserMoved(true);
             },
-            onClick: () => void choose(entry, "click"),
+            onClick: () => void chooseOnce(entry, "click"),
           };
           if (entry.kind === "create") {
             return (

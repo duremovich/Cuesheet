@@ -85,15 +85,15 @@ export function sortRows<Row>(
 }
 
 /**
- * A row pinned in place. `afterId`: the row it follows (null = first in its group);
- * `beforeId` is used when there is no afterId. `groupId` keeps it in its group even if
- * the data moved it to another one (e.g. its scene was edited) until the hold ends.
+ * A row pinned in place: it stays at slot `index` (0-based, clamped) of its group's list,
+ * whatever its neighbors do. `groupId` keeps it in its group even if the data moved it to
+ * another one (e.g. its scene was edited) until the hold ends.
  */
 export interface Hold {
   id: string;
   groupId?: string | undefined;
-  afterId?: string | null | undefined;
-  beforeId?: string | null | undefined;
+  /** Slot within the group; `Infinity` = last. */
+  index: number;
 }
 
 export interface OrderedList {
@@ -119,26 +119,7 @@ export function applyHolds(
     const target = (h.groupId !== undefined && out.find((l) => l.groupId === h.groupId)) || from;
     if (target === from && !positional) continue;
     from.ids.splice(from.ids.indexOf(h.id), 1);
-    let at = -1;
-    if (h.afterId === null) at = 0;
-    else if (h.afterId !== undefined) {
-      const i = target.ids.indexOf(h.afterId);
-      if (i >= 0) at = i + 1;
-    }
-    if (at < 0 && h.beforeId !== undefined) {
-      if (h.beforeId === null) at = target.ids.length;
-      else {
-        const i = target.ids.indexOf(h.beforeId);
-        if (i >= 0) at = i;
-      }
-    }
-    if (at < 0) {
-      // Anchor gone: keep the data's position when it stayed in its group, else append.
-      if (target === from) {
-        const orig = lists.find((l) => l.groupId === from.groupId)?.ids.indexOf(h.id) ?? -1;
-        at = orig >= 0 ? Math.min(orig, target.ids.length) : target.ids.length;
-      } else at = target.ids.length;
-    }
+    const at = Math.max(0, Math.min(h.index, target.ids.length));
     target.ids.splice(at, 0, h.id);
   }
   return out;

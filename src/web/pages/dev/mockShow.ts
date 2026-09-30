@@ -376,3 +376,44 @@ export class MockShowStore {
       .map((p) => ({ id: p.id, label: p.name, ...(p.role ? { secondary: p.role } : {}) }));
   };
 }
+
+/**
+ * The ghost cue number for a row inserted between two cues (ux.md §Inserting a cue):
+ * 14.2 | 14.4 → 14.3; 14.2 | 14.25 → 14.22; after the last cue → the next whole number.
+ */
+export function suggestCueNumber(
+  prev: string | undefined,
+  next: string | undefined,
+): string | undefined {
+  const a = prev === undefined ? Number.NaN : Number.parseFloat(prev);
+  const b = next === undefined ? Number.NaN : Number.parseFloat(next);
+  if (Number.isNaN(a)) return Number.isNaN(b) ? "1" : undefined;
+  if (Number.isNaN(b)) return String(Math.floor(a) + 1);
+  if (b <= a) return undefined;
+  const decimals = (x: string | undefined) => (x?.split(".")[1] ?? "").length;
+  for (let d = Math.max(decimals(prev), decimals(next)); d <= 4; d++) {
+    const f = 10 ** d;
+    const mid = Math.floor(((a + b) / 2) * f + 1e-9) / f;
+    if (mid > a && mid < b) return mid.toFixed(d);
+  }
+  return undefined;
+}
+
+/** Duplicate-number warnings and ghost numbers for unnumbered cues, by row id. */
+export function cueNumberHints(cues: MockCue[]): Map<string, { warning?: string; ghost?: string }> {
+  const list = cues.filter((c) => !c.isSection);
+  const counts = new Map<string, number>();
+  for (const c of list) if (c.number) counts.set(c.number, (counts.get(c.number) ?? 0) + 1);
+  const out = new Map<string, { warning?: string; ghost?: string }>();
+  list.forEach((c, i) => {
+    if (c.number && (counts.get(c.number) ?? 0) > 1) {
+      out.set(c.id, { warning: `Duplicate cue number ${c.number}` });
+    } else if (!c.number) {
+      const prev = list.slice(0, i).findLast((x) => x.number)?.number;
+      const next = list.slice(i + 1).find((x) => x.number)?.number;
+      const ghost = suggestCueNumber(prev, next);
+      if (ghost) out.set(c.id, { ghost });
+    }
+  });
+  return out;
+}
