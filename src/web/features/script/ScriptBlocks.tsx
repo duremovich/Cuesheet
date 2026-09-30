@@ -5,14 +5,10 @@
 // selection → anchor (placement.ts `rangeToSpan`) relies on.
 import type { ReactNode } from "react";
 import type { ScriptBlock } from "./contract";
-import { segmentText } from "./markers";
+import { type QuoteRange, segmentText } from "./markers";
 import styles from "./Script.module.css";
 
-export interface QuoteRange {
-  id: string;
-  start: number;
-  end: number;
-}
+export type { QuoteRange };
 
 export function BlockText({
   block,

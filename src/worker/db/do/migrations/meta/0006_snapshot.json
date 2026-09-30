@@ -1,8 +1,8 @@
 {
-  "id": "6ce04673-d73f-4f8a-ac51-eed3bf76ead3",
-  "prevId": "9cfc49e0-0efa-46ad-904c-a5f49f9b67f3",
   "version": "6",
   "dialect": "sqlite",
+  "id": "06c4e061-24b8-4d90-934d-3e8c4d146f4e",
+  "prevId": "9cfc49e0-0efa-46ad-904c-a5f49f9b67f3",
   "tables": {
     "attachments": {
       "name": "attachments",
@@ -377,28 +377,28 @@
         "content_scene_id_scenes_id_fk": {
           "name": "content_scene_id_scenes_id_fk",
           "tableFrom": "content",
+          "tableTo": "scenes",
           "columnsFrom": [
             "scene_id"
           ],
-          "tableTo": "scenes",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "set null"
+          "onDelete": "set null",
+          "onUpdate": "no action"
         },
         "content_creator_id_persons_id_fk": {
           "name": "content_creator_id_persons_id_fk",
           "tableFrom": "content",
+          "tableTo": "persons",
           "columnsFrom": [
             "creator_id"
           ],
-          "tableTo": "persons",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "set null"
+          "onDelete": "set null",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -443,28 +443,28 @@
         "content_surfaces_content_id_content_id_fk": {
           "name": "content_surfaces_content_id_content_id_fk",
           "tableFrom": "content_surfaces",
+          "tableTo": "content",
           "columnsFrom": [
             "content_id"
           ],
-          "tableTo": "content",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "content_surfaces_surface_id_surfaces_id_fk": {
           "name": "content_surfaces_surface_id_surfaces_id_fk",
           "tableFrom": "content_surfaces",
+          "tableTo": "surfaces",
           "columnsFrom": [
             "surface_id"
           ],
-          "tableTo": "surfaces",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -603,28 +603,201 @@
         "content_versions_content_id_content_id_fk": {
           "name": "content_versions_content_id_content_id_fk",
           "tableFrom": "content_versions",
+          "tableTo": "content",
           "columnsFrom": [
             "content_id"
           ],
-          "tableTo": "content",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "content_versions_rendered_by_persons_id_fk": {
           "name": "content_versions_rendered_by_persons_id_fk",
           "tableFrom": "content_versions",
+          "tableTo": "persons",
           "columnsFrom": [
             "rendered_by"
           ],
-          "tableTo": "persons",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "set null"
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "cue_anchors": {
+      "name": "cue_anchors",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "custom": {
+          "name": "custom",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'{}'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "cue_id": {
+          "name": "cue_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "script_version_id": {
+          "name": "script_version_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "block": {
+          "name": "block",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "offset": {
+          "name": "offset",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "length": {
+          "name": "length",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "quote": {
+          "name": "quote",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "prefix": {
+          "name": "prefix",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "suffix": {
+          "name": "suffix",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "page": {
+          "name": "page",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "confidence": {
+          "name": "confidence",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "cue_anchors_cue_version_idx": {
+          "name": "cue_anchors_cue_version_idx",
+          "columns": [
+            "cue_id",
+            "script_version_id"
+          ],
+          "isUnique": true
+        },
+        "cue_anchors_version_idx": {
+          "name": "cue_anchors_version_idx",
+          "columns": [
+            "script_version_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "cue_anchors_cue_id_cues_id_fk": {
+          "name": "cue_anchors_cue_id_cues_id_fk",
+          "tableFrom": "cue_anchors",
+          "tableTo": "cues",
+          "columnsFrom": [
+            "cue_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "cue_anchors_script_version_id_script_versions_id_fk": {
+          "name": "cue_anchors_script_version_id_script_versions_id_fk",
+          "tableFrom": "cue_anchors",
+          "tableTo": "script_versions",
+          "columnsFrom": [
+            "script_version_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -669,28 +842,28 @@
         "cue_assignees_cue_id_cues_id_fk": {
           "name": "cue_assignees_cue_id_cues_id_fk",
           "tableFrom": "cue_assignees",
+          "tableTo": "cues",
           "columnsFrom": [
             "cue_id"
           ],
-          "tableTo": "cues",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "cue_assignees_person_id_persons_id_fk": {
           "name": "cue_assignees_person_id_persons_id_fk",
           "tableFrom": "cue_assignees",
+          "tableTo": "persons",
           "columnsFrom": [
             "person_id"
           ],
-          "tableTo": "persons",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -743,28 +916,28 @@
         "cue_content_cue_id_cues_id_fk": {
           "name": "cue_content_cue_id_cues_id_fk",
           "tableFrom": "cue_content",
+          "tableTo": "cues",
           "columnsFrom": [
             "cue_id"
           ],
-          "tableTo": "cues",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "cue_content_content_id_content_id_fk": {
           "name": "cue_content_content_id_content_id_fk",
           "tableFrom": "cue_content",
+          "tableTo": "content",
           "columnsFrom": [
             "content_id"
           ],
-          "tableTo": "content",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -952,15 +1125,15 @@
         "cues_scene_id_scenes_id_fk": {
           "name": "cues_scene_id_scenes_id_fk",
           "tableFrom": "cues",
+          "tableTo": "scenes",
           "columnsFrom": [
             "scene_id"
           ],
-          "tableTo": "scenes",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "set null"
+          "onDelete": "set null",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1104,28 +1277,28 @@
         "note_assignees_note_id_notes_id_fk": {
           "name": "note_assignees_note_id_notes_id_fk",
           "tableFrom": "note_assignees",
+          "tableTo": "notes",
           "columnsFrom": [
             "note_id"
           ],
-          "tableTo": "notes",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "note_assignees_person_id_persons_id_fk": {
           "name": "note_assignees_person_id_persons_id_fk",
           "tableFrom": "note_assignees",
+          "tableTo": "persons",
           "columnsFrom": [
             "person_id"
           ],
-          "tableTo": "persons",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -1178,28 +1351,28 @@
         "note_cues_note_id_notes_id_fk": {
           "name": "note_cues_note_id_notes_id_fk",
           "tableFrom": "note_cues",
+          "tableTo": "notes",
           "columnsFrom": [
             "note_id"
           ],
-          "tableTo": "notes",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "note_cues_cue_id_cues_id_fk": {
           "name": "note_cues_cue_id_cues_id_fk",
           "tableFrom": "note_cues",
+          "tableTo": "cues",
           "columnsFrom": [
             "cue_id"
           ],
-          "tableTo": "cues",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -1338,28 +1511,28 @@
         "notes_content_id_content_id_fk": {
           "name": "notes_content_id_content_id_fk",
           "tableFrom": "notes",
+          "tableTo": "content",
           "columnsFrom": [
             "content_id"
           ],
-          "tableTo": "content",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "set null"
+          "onDelete": "set null",
+          "onUpdate": "no action"
         },
         "notes_scene_id_scenes_id_fk": {
           "name": "notes_scene_id_scenes_id_fk",
           "tableFrom": "notes",
+          "tableTo": "scenes",
           "columnsFrom": [
             "scene_id"
           ],
-          "tableTo": "scenes",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "set null"
+          "onDelete": "set null",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1559,28 +1732,28 @@
         "scene_surfaces_scene_id_scenes_id_fk": {
           "name": "scene_surfaces_scene_id_scenes_id_fk",
           "tableFrom": "scene_surfaces",
+          "tableTo": "scenes",
           "columnsFrom": [
             "scene_id"
           ],
-          "tableTo": "scenes",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "scene_surfaces_surface_id_surfaces_id_fk": {
           "name": "scene_surfaces_surface_id_surfaces_id_fk",
           "tableFrom": "scene_surfaces",
+          "tableTo": "surfaces",
           "columnsFrom": [
             "surface_id"
           ],
-          "tableTo": "surfaces",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -1721,6 +1894,241 @@
           "isUnique": false
         }
       },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "script_versions": {
+      "name": "script_versions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "custom": {
+          "name": "custom",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'{}'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "script_id": {
+          "name": "script_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "label": {
+          "name": "label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "attachment_id": {
+          "name": "attachment_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "imported_at": {
+          "name": "imported_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "confidence": {
+          "name": "confidence",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "text_key": {
+          "name": "text_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "text_bytes": {
+          "name": "text_bytes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "block_count": {
+          "name": "block_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "page_count": {
+          "name": "page_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "page_map": {
+          "name": "page_map",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'[]'"
+        },
+        "stats": {
+          "name": "stats",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'{}'"
+        },
+        "position": {
+          "name": "position",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "script_versions_script_idx": {
+          "name": "script_versions_script_idx",
+          "columns": [
+            "script_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "script_versions_script_id_scripts_id_fk": {
+          "name": "script_versions_script_id_scripts_id_fk",
+          "tableFrom": "script_versions",
+          "tableTo": "scripts",
+          "columnsFrom": [
+            "script_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "scripts": {
+      "name": "scripts",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "custom": {
+          "name": "custom",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'{}'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "current_version_id": {
+          "name": "current_version_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
@@ -1980,9 +2388,9 @@
   "views": {},
   "enums": {},
   "_meta": {
-    "columns": {},
     "schemas": {},
-    "tables": {}
+    "tables": {},
+    "columns": {}
   },
   "internal": {
     "indexes": {}

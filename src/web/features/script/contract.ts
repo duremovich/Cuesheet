@@ -1,115 +1,78 @@
-// The contract between the script reader UI (M4b, this folder) and the script data model /
-// extraction / anchoring engine (M4a: src/shared/script.ts, src/shared/script-anchor/,
-// ./extract/, routes/script.ts). Everything in this folder imports script types and
-// engine helpers from HERE only, so wiring the real engine is a change to this file:
+// What the script reader UI (this folder) uses from the script data model and anchoring
+// engine (M4a: src/shared/script.ts, src/shared/script-anchor/, ./extract/). Everything
+// here imports script types and engine helpers from this file only.
 //
-//   export type { ... } from "../../../shared/script";
-//   export { makeAnchor } from "../../../shared/script-anchor";
-//   extractScript → (await import("./extract")).extractScript(file)
-//
-// Until M4a lands, the types are declared below and `makeAnchor` / `extractScript` come
-// from local stand-ins (./mock/: TXT/MD only), used by the fixture-backed mock source
-// (VITE_SCRIPT_MOCK=1, see ./source.ts).
-import type { Json } from "../../../shared/tables";
+// Anchor rows come from the store with nullable fields (`block: null` for a `missing`
+// anchor); the UI works on `CueAnchorRow`, the same row normalized (`normalizeAnchor`:
+// block -1 when it has no position, empty strings, state `manual` when unset).
+import type {
+  ScriptRow,
+  ScriptVersionRow,
+  CueAnchorRow as StoredAnchorRow,
+} from "../../../shared/tables";
 
-export type BlockKind = "heading" | "character" | "dialogue" | "direction" | "lyric" | "other";
+export type {
+  Anchor,
+  AnchorState,
+  BlockKind,
+  CreateScriptVersionResponse as ImportVersionResponse,
+  ReanchorResult,
+  ScriptBlock,
+  ScriptPageInfo,
+  ScriptText,
+} from "../../../shared/script";
+export {
+  anchorPosition,
+  makeAnchor,
+  makePositionAnchor,
+} from "../../../shared/script-anchor";
+export type { ScriptRow, ScriptVersionRow, StoredAnchorRow };
 
-export interface ScriptBlock {
-  /** Stable index in the version's text (= its position in `blocks`). */
-  i: number;
-  /** Physical page (1-based), a key into `pages`. */
-  page: number;
-  kind: BlockKind;
-  text: string;
-}
+import type { AnchorState, ScriptText } from "../../../shared/script";
 
-export interface ScriptPageInfo {
-  page: number;
-  /** The printed page number ("14", "14a"). */
-  label: string;
-}
-
-export interface ScriptText {
-  blocks: ScriptBlock[];
-  pages: ScriptPageInfo[];
-  source: "pdf" | "docx" | "txt" | "ocr";
-  /** 0–1: how sure extraction is (OCR and odd layouts are lower). */
-  confidence: number;
-}
-
-export interface Anchor {
-  block: number;
-  offset: number;
-  /** 0: a position (LX / timecode / visual cues), not a quote. */
-  length: number;
-  quote: string;
-  prefix: string;
-  suffix: string;
-}
-
-export type AnchorState = "matched" | "moved" | "changed" | "missing" | "manual";
-
-export interface ReanchorResult {
-  cueId: string;
-  from: Anchor;
-  to: Anchor | null;
-  state: AnchorState;
-  confidence: number;
-  candidates: { anchor: Anchor; score: number }[];
-}
-
-// ---- Store rows (tables in the show snapshot, written with ops) ----
-
-export interface ScriptRow {
-  id: string;
-  title: string | null;
-  current_version_id: string | null;
-}
-
-export interface ScriptVersionRow {
-  id: string;
-  script_id: string;
-  label: string | null;
-  attachment_id: string | null;
-  /** ms since the epoch (an ISO string is accepted too). */
-  imported_at: number | string | null;
-  source: ScriptText["source"] | null;
-  confidence: number | null;
-  text_key: string | null;
-  block_count: number | null;
-  page_count: number | null;
-  stats: Json | null;
-  position: number | null;
-}
-
+/** A `cue_anchors` row as the UI sees it (see `normalizeAnchor`). */
 export interface CueAnchorRow {
   id: string;
   cue_id: string;
   script_version_id: string;
+  /** -1: no position (a `missing` anchor). */
   block: number;
   offset: number;
   length: number;
   quote: string;
   prefix: string;
   suffix: string;
-  /** Derived by the server from `block` (the client never sends it). */
+  /** Physical page, derived by the server from `block`. */
   page: number | null;
   state: AnchorState;
   confidence: number | null;
 }
 
-/** Response of `POST /api/shows/:id/script/versions`. */
-export interface ImportVersionResponse {
-  versionId: string;
-  results: ReanchorResult[];
+const normalized = new WeakMap<StoredAnchorRow, CueAnchorRow>();
+
+export function normalizeAnchor(row: StoredAnchorRow): CueAnchorRow {
+  const hit = normalized.get(row);
+  if (hit) return hit;
+  const out: CueAnchorRow = {
+    id: row.id,
+    cue_id: row.cue_id,
+    script_version_id: row.script_version_id,
+    block: row.block ?? -1,
+    offset: row.offset ?? 0,
+    length: row.length ?? 0,
+    quote: row.quote ?? "",
+    prefix: row.prefix ?? "",
+    suffix: row.suffix ?? "",
+    page: row.page,
+    state: row.state ?? "manual",
+    confidence: row.confidence,
+  };
+  normalized.set(row, out);
+  return out;
 }
 
-// ---- Engine helpers (M4a stand-ins until it lands) ----
-
-export { makeAnchor } from "./mock/anchorText";
-
-/** Extract a script file in the browser (PDF, DOCX, TXT/MD). Loaded on demand. */
+/** Extract a script file in the browser (PDF, DOCX, TXT/MD); the extractor loads on demand. */
 export async function extractScript(file: File): Promise<ScriptText> {
-  const m = await import("./mock/extractText");
+  const m = await import("./extract");
   return m.extractScript(file);
 }

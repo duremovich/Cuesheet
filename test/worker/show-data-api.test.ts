@@ -3,7 +3,18 @@ import { describe, expect, it } from "vitest";
 import type { MembersResponse } from "../../src/shared/api";
 import { newId } from "../../src/shared/ids";
 import type { HistoryResponse, MutateResponse, Op, SnapshotResponse } from "../../src/shared/ops";
-import { api, collect, createShow, isType, loginAdmin, newUser, post, WS_HEADERS } from "./helpers";
+import type { ServerMessage } from "../../src/shared/ws";
+import {
+  api,
+  collect,
+  createShow,
+  isType,
+  loginAdmin,
+  newUser,
+  post,
+  sessionCookie,
+  WS_HEADERS,
+} from "./helpers";
 
 function mutate(showId: string, cookie: string, ops: Op[] | unknown, clientId = "test-client") {
   return post(`/api/shows/${showId}/mutate`, { clientId, ops }, cookie);
@@ -217,7 +228,20 @@ describe("show data API", () => {
     await post(`/api/shows/${show.id}/members`, { email: u.email, role: "viewer" }, admin);
     const sock = await openSocket(show.id, u.cookie);
     await sock.next(isType("hello"));
+    // The same user signed in in another browser: its socket isn't this session's.
+    const login = await post("/api/auth/login", { email: u.email, password: "long-enough-pw" });
+    expect(login.status).toBe(200);
+    const other = await openSocket(show.id, sessionCookie(login));
+    await other.next(isType("hello"));
     expect((await post("/api/auth/logout", {}, u.cookie)).status).toBe(200);
     expect(await sock.closedWith()).toBe(4003);
+    // The other browser stays connected: it sees the signed-out socket leave.
+    const seen: string[] = [];
+    await other.next((m): m is ServerMessage => {
+      seen.push(m.type);
+      return m.type === "presence" && m.clients === 1;
+    });
+    expect(seen).not.toContain("revoked");
+    expect(other.ws.readyState).toBe(WebSocket.OPEN);
   });
 });

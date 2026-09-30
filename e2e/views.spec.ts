@@ -9,6 +9,7 @@ import {
   snapshot,
   trackErrors,
   uniqueName,
+  waitForShowReady,
 } from "./helpers";
 
 let errors: string[] = [];
@@ -199,6 +200,42 @@ test("an inserted row under a filter stays until you leave it, then a toast offe
   await toast.getByRole("button", { name: "Clear filters" }).click();
   await expect(page.getByTestId("cue-count")).toHaveText("121 cues");
   await expect(rowByCue(page, "0.35")).toBeVisible();
+});
+
+test("changing a new shared view before the server confirms it is a draft, not a conflict", async ({
+  browser,
+}) => {
+  const { page } = await exampleShow(browser);
+  // Hold the view's create at the network until the filter has been changed, so the
+  // draft starts while the view only exists optimistically (client-stamped updated_at).
+  let release = () => {};
+  const held = new Promise<void>((r) => {
+    release = r;
+  });
+  await page.route(
+    "**/api/shows/*/mutate",
+    async (route) => {
+      await held;
+      await route.continue();
+    },
+    { times: 1 },
+  );
+  await duplicateView(page, "Held", true);
+  await addStatusFilter(page, "Cued");
+  await expect(page.getByTestId("view-dirty")).toBeVisible();
+  const created = page.waitForResponse((r) => r.url().endsWith("/mutate"));
+  release();
+  expect((await created).status()).toBe(200);
+  // The server's stamp replaced ours. After a reload (the draft is kept in localStorage,
+  // the view comes from the server) the draft is still just a draft, not a conflict.
+  await page.reload();
+  await waitForShowReady(page);
+  await expect(page.getByTestId("current-view")).toHaveText("Held");
+  await expect(page.getByTestId("view-dirty")).toBeVisible();
+  await expect(page.getByText("This view changed since your draft")).toHaveCount(0);
+  await page.getByRole("button", { name: "Save view" }).click();
+  await expect(page.getByTestId("view-dirty")).toHaveCount(0);
+  await expect(page.getByTestId("cue-count")).toHaveText("3 of 120 cues");
 });
 
 test("the owner sets a shared default; another member opens the show on it", async ({

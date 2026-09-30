@@ -159,14 +159,19 @@ describe("attachBatch", () => {
 });
 
 describe("moveAnchorOp", () => {
-  it("keeps a quote found in the target block, else becomes a position at its start", () => {
+  it("keeps a Line cue's quote found in the target block, else becomes a position", () => {
     const row = anchorRow({ id: "a", cue_id: "c", block: 5, offset: 0, length: 4, quote: "Bass" });
-    expect(moveAnchorOp(row, SAMPLE, 7)).toMatchObject({
+    expect(moveAnchorOp(row, SAMPLE, 7, false)).toMatchObject({
       op: "update",
       fields: { block: 7, offset: 8, length: 4, quote: "Bass", state: "manual" },
     });
-    expect(moveAnchorOp(row, SAMPLE, 3)).toMatchObject({
-      fields: { block: 3, offset: 0, length: 0, quote: "" },
+    // Not there, or a positional cue: the block's first words (the engine's position anchor).
+    const first = "Keep your head down and your case up.";
+    expect(moveAnchorOp(row, SAMPLE, 3, false)).toMatchObject({
+      fields: { block: 3, offset: 0, quote: first },
+    });
+    expect(moveAnchorOp(row, SAMPLE, 7, true)).toMatchObject({
+      fields: { block: 7, offset: 0, quote: "Daphne. Bass. Classically trained." },
     });
   });
 });

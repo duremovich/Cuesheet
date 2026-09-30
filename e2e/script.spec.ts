@@ -1,11 +1,6 @@
 // M4b: the script view (R20) and the calling-script print (R21). Imports the TXT fixtures
 // in e2e/fixtures/, places and attaches cues, jumps between grid and script, imports a
 // second version, resolves the flagged cues, reads the old version, prints.
-//
-// Until M4a (data model + anchoring engine) is merged, run against a build with
-// VITE_SCRIPT_MOCK=1: the script data then lives in the browser (see
-// src/web/features/script/source.ts), so the viewer test copies it to the viewer's
-// browser. With the real engine the copy is a no-op.
 import path from "node:path";
 import { type Browser, expect, type Locator, type Page, test } from "@playwright/test";
 import { addMember, apiCreateShow, apiLogin, recordId, trackErrors, uniqueName } from "./helpers";
@@ -147,6 +142,9 @@ async function importScript(page: Page, file: string, label: string) {
   await expect(page.getByTestId("import-preview")).toContainText("3 pages");
   await page.getByLabel("Version label").fill(label);
   await page.getByRole("button", { name: "Import", exact: true }).click();
+  // Saved, the original uploaded and the report shown: the reader is ready.
+  await expect(page.getByTestId("import-report")).toBeVisible();
+  await expect(page.getByTestId("script-reader")).toBeVisible();
 }
 
 async function attachBySelection(page: Page, needle: string, cueNumber: string) {
@@ -159,20 +157,6 @@ async function attachBySelection(page: Page, needle: string, cueNumber: string) 
   ).toBeVisible();
   await page.keyboard.press("Enter");
   await expect(pop).toBeHidden();
-}
-
-/** The mock keeps script data in the browser: give it to another browser (no-op when live). */
-async function shareMockScript(from: Page, to: Page, showId: string) {
-  const key = `cuesheet.scriptmock.${showId}`;
-  const value = await from.evaluate((k) => localStorage.getItem(k), key);
-  if (value) {
-    await to.context().addInitScript(
-      ([k, v]) => {
-        localStorage.setItem(k as string, v as string);
-      },
-      [key, value],
-    );
-  }
 }
 
 async function cueOrder(page: Page, showId: string) {
@@ -207,6 +191,8 @@ test("script: import, place and attach cues, grid ↔ script, new version, resol
   await importScript(page, "script-v1.txt", "Rehearsal draft");
   await expect(page.getByTestId("script-page")).toHaveCount(3);
   await expect(page.getByTestId("import-report")).toContainText("3 pages");
+  // The original file was uploaded to the version after it was created.
+  await expect(page.getByRole("link", { name: "Original file" })).toBeVisible();
   await expect(page.getByTestId("current-page")).toHaveText("12");
   await expect(page.locator('[data-kind="character"]').first()).toHaveCSS(
     "font-variant-caps",
@@ -378,7 +364,6 @@ test("script: viewers read without placing; phones get badges", async ({ browser
   const { page: viewer } = await addMember(browser, page, showId, "viewer");
   pages.push(viewer);
   trackErrors(viewer, errors);
-  await shareMockScript(page, viewer, showId);
   await viewer.goto(`/shows/${showId}/script?cue=${ids.c1420}`);
   await expect(marker(viewer, ids.c1420)).toBeVisible();
   await expect(viewer.getByRole("button", { name: "Import new version" })).toHaveCount(0);
@@ -395,7 +380,6 @@ test("script: viewers read without placing; phones get badges", async ({ browser
 
   // 390 px: one column, markers as badges that expand on tap; nothing wider than the screen.
   const phone = await newPage(browser, { width: 390, height: 844 });
-  await shareMockScript(page, phone, showId);
   await phone.goto(`/shows/${showId}/script`);
   await expect(phone.getByTestId("script-page").first()).toBeVisible();
   await expect(phone.getByTestId("script-margin")).toHaveCount(0);

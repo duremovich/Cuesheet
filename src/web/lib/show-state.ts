@@ -13,10 +13,12 @@ import {
   type SnapshotResponse,
 } from "../../shared/ops";
 import { compareOrder, effectivePlacement, orderKeyFor } from "../../shared/order";
+import { pageForBlock } from "../../shared/script";
 import {
   type AnyRow,
   ATTACHMENT_FIELDS,
   type ContentVersionRow,
+  type CueAnchorRow,
   FIELDS,
   type FieldOptions,
   type FieldSpec,
@@ -27,6 +29,7 @@ import {
   ORDERED_TABLES,
   type OrderedTableName,
   type Row,
+  type ScriptVersionRow,
   TABLE_NAMES,
   type TableName,
 } from "../../shared/tables";
@@ -64,6 +67,9 @@ export function emptyData(): ShowData {
       views: new Map(),
       content_versions: new Map(),
       attachments: new Map(),
+      scripts: new Map(),
+      script_versions: new Map(),
+      cue_anchors: new Map(),
     },
     order: { scenes: [], cues: [], content: [], surfaces: [] },
     joins: {
@@ -207,6 +213,75 @@ export function resolveLocal(data: ShowData, ops: AnyOp[], ctx: LocalContext): A
       state = applyResolved(state, more);
       out.push(...more);
     }
+    if (op.table === "cue_anchors" || op.table === "scripts") {
+      const more = scriptFollowUps(state, op, ctx);
+      state = applyResolved(state, more);
+      out.push(...more);
+    }
+  }
+  return out;
+}
+
+/**
+ * Like the server (ops-engine `prepareAnchor` / `syncCuePage`): an anchor's page comes
+ * from its block through the version's page map (a position-less anchor has none), and
+ * Cue.page follows anchors on the script's current version, also when the current version
+ * changes.
+ */
+function scriptFollowUps(data: ShowData, op: Op, ctx: LocalContext): ResolvedOp[] {
+  if (op.op !== "create" && op.op !== "update") return [];
+  const stamp = { updated_at: ctx.now, updated_by: ctx.userId };
+  if (op.table === "scripts") {
+    const vid = op.fields.current_version_id;
+    if (op.op !== "update" || typeof vid !== "string") return [];
+    const anchors = [...data.tables.cue_anchors.values()].filter(
+      (a) => a.script_version_id === vid,
+    );
+    return cuePageOps(data, anchors, stamp);
+  }
+  const a = data.tables.cue_anchors.get(op.id);
+  const version = a && data.tables.script_versions.get(a.script_version_id);
+  if (!a || !version) return [];
+  const fixed: FieldValues =
+    a.block === null
+      ? { offset: null, length: null, page: null }
+      : {
+          offset: a.offset ?? 0,
+          length: a.length ?? 0,
+          page: pageForBlock(version.page_map ?? [], a.block)?.page ?? null,
+          ...(op.op === "create" && a.state === null ? { state: "manual" } : {}),
+        };
+  const changed = Object.fromEntries(
+    Object.entries(fixed).filter(([k, v]) => (a as unknown as Record<string, unknown>)[k] !== v),
+  );
+  const out: ResolvedOp[] = [];
+  if (Object.keys(changed).length > 0) {
+    out.push({ op: "update", table: "cue_anchors", id: a.id, fields: { ...changed, ...stamp } });
+  }
+  return [...out, ...cuePageOps(data, [{ ...a, ...changed } as CueAnchorRow], stamp)];
+}
+
+/**
+ * Cue.page updates for anchors that are on their script's current version (`current`:
+ * the version about to become current, when `data` doesn't say so yet).
+ */
+function cuePageOps(
+  data: ShowData,
+  anchors: CueAnchorRow[],
+  stamp: { updated_at: number; updated_by: string },
+  current?: string,
+): ResolvedOp[] {
+  const out: ResolvedOp[] = [];
+  for (const a of anchors) {
+    if (a.block === null) continue;
+    const version = data.tables.script_versions.get(a.script_version_id);
+    const script = version && data.tables.scripts.get(version.script_id);
+    if (!version || (current ?? script?.current_version_id) !== version.id) continue;
+    const label = pageForBlock(version.page_map ?? [], a.block)?.label;
+    const cue = data.tables.cues.get(a.cue_id);
+    if (label !== undefined && cue && cue.page !== label) {
+      out.push({ op: "update", table: "cues", id: cue.id, fields: { page: label, ...stamp } });
+    }
   }
   return out;
 }
@@ -265,7 +340,10 @@ function promotedVersion(data: ShowData, deleted: ContentVersionRow): ContentVer
 }
 
 /** Newer = higher position, then later created_at, then higher id (the server's order). */
-export function compareVersionAge(a: ContentVersionRow, b: ContentVersionRow): number {
+export function compareVersionAge(
+  a: Pick<ContentVersionRow, "position" | "created_at" | "id">,
+  b: Pick<ContentVersionRow, "position" | "created_at" | "id">,
+): number {
   return (
     (a.position ?? 0) - (b.position ?? 0) ||
     a.created_at - b.created_at ||
@@ -386,6 +464,31 @@ function resolveOne(data: ShowData, op: Op, ctx: LocalContext): ResolvedOp[] {
             id: next.id,
             fields: { is_current: true, ...stamp },
           });
+        }
+      }
+      if (op.table === "script_versions") {
+        // The current script version went: the newest other one becomes current.
+        const v = row as ScriptVersionRow;
+        const script = data.tables.scripts.get(v.script_id);
+        if (script?.current_version_id === v.id) {
+          let next: ScriptVersionRow | null = null;
+          for (const o of data.tables.script_versions.values()) {
+            if (o.id === v.id || o.script_id !== v.script_id) continue;
+            if (!next || compareVersionAge(o, next) > 0) next = o;
+          }
+          if (next) {
+            out.push({
+              op: "update",
+              table: "scripts",
+              id: script.id,
+              fields: { current_version_id: next.id, ...stamp },
+            });
+            const nextId = next.id;
+            const anchors = [...data.tables.cue_anchors.values()].filter(
+              (a) => a.script_version_id === nextId,
+            );
+            out.push(...cuePageOps(data, anchors, stamp, nextId));
+          }
         }
       }
       return out;

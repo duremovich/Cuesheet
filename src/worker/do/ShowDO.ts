@@ -8,6 +8,7 @@ import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import type { Role, ShowMetaDTO } from "../../shared/api";
 import { thumbnailKey } from "../../shared/attachments";
 import type {
+  AnyOp,
   AnyResolvedOp,
   HistoryEntry,
   MutateResponse,
@@ -15,9 +16,12 @@ import type {
 } from "../../shared/ops";
 import {
   type AttachmentRow,
+  type CueAnchorRow,
   DATA_TABLES,
   type FieldOptions,
   isTableName,
+  type ScriptRow,
+  type ScriptVersionRow,
 } from "../../shared/tables";
 import { PING_FRAME, PONG_FRAME, type ServerMessage } from "../../shared/ws";
 import migrations from "../db/do/migrations/migrations.js";
@@ -39,6 +43,11 @@ import {
 
 /** Header the Worker uses to tell the DO who opened a WebSocket. */
 export const USER_ID_HEADER = "X-Cuesheet-User";
+/** Header carrying the opener's session id (the SHA-256 of their cookie token). */
+export const SESSION_ID_HEADER = "X-Cuesheet-Session";
+
+/** WebSocket tag for the sockets one session (one signed-in browser) opened. */
+const sessionTag = (sessionId: string) => `session:${sessionId}`;
 
 /** Close code sent to sockets whose user lost access (logout, removed from the show). */
 export const ACCESS_REVOKED_CODE = 4003;
@@ -89,6 +98,7 @@ const UPLOAD_PREFIX = "upload:";
 
 interface SocketAttachment {
   userId: string;
+  sessionId?: string;
 }
 
 export class ShowDO extends DurableObject<Env> {
@@ -290,6 +300,86 @@ export class ShowDO extends DurableObject<Env> {
     this.ctx.storage.sql.exec("UPDATE attachments SET thumb_key = ? WHERE id = ?", key, id);
   }
 
+  // ---- script (routes/script.ts: the text lives in R2, re-anchoring runs in the Worker) ----
+
+  /**
+   * The show's script and its versions (oldest first), or nulls/empty. Rows without
+   * `custom` (the recursive Json type makes RPC stub types too deep for TypeScript).
+   */
+  async scriptInfo(): Promise<{
+    script: Omit<ScriptRow, "custom"> | null;
+    versions: Omit<ScriptVersionRow, "custom">[];
+  }> {
+    const sql = this.ctx.storage.sql;
+    const script = sql
+      .exec<Record<string, SqlStorageValue>>("SELECT * FROM scripts LIMIT 1")
+      .toArray()[0];
+    const versions = sql
+      .exec<Record<string, SqlStorageValue>>(
+        "SELECT * FROM script_versions ORDER BY position, created_at, id",
+      )
+      .toArray();
+    const plain = <T>(
+      table: "scripts" | "script_versions",
+      row: Record<string, SqlStorageValue>,
+    ) => {
+      const { custom: _c, ...rest } = decodeRow(table, row);
+      return rest as unknown as T;
+    };
+    return {
+      script: script ? plain<Omit<ScriptRow, "custom">>("scripts", script) : null,
+      versions: versions.map((v) => plain<Omit<ScriptVersionRow, "custom">>("script_versions", v)),
+    };
+  }
+
+  /**
+   * Was this id ever a script version (deleted now: its history remains, its text may still
+   * wait in `pending_r2_deletes`)? Such ids aren't reused.
+   */
+  async scriptVersionIdUsed(id: string): Promise<boolean> {
+    const sql = this.ctx.storage.sql;
+    return (
+      sql.exec("SELECT 1 FROM pending_r2_deletes WHERE attachment_id = ? LIMIT 1", id).toArray()
+        .length > 0 ||
+      sql
+        .exec(
+          `SELECT 1 FROM changes WHERE "table" = 'script_versions' AND record_id = ? LIMIT 1`,
+          id,
+        )
+        .toArray().length > 0
+    );
+  }
+
+  /** A version's anchors (without `custom`, as above). */
+  async anchorsOf(versionId: string): Promise<Omit<CueAnchorRow, "custom">[]> {
+    return this.ctx.storage.sql
+      .exec<Record<string, SqlStorageValue>>(
+        "SELECT * FROM cue_anchors WHERE script_version_id = ? ORDER BY created_at, id",
+        versionId,
+      )
+      .toArray()
+      .map((a) => {
+        const { custom: _c, ...rest } = decodeRow("cue_anchors", a);
+        return rest as unknown as Omit<CueAnchorRow, "custom">;
+      });
+  }
+
+  /**
+   * A script route's batch (`ctx.script`): anchors for cues deleted since the Worker read
+   * them are dropped first, in the same synchronous turn as the batch, so a cue deleted
+   * mid-import doesn't fail the import.
+   */
+  async mutateScript(ctx: MutationContext, ops: AnyOp[]): Promise<MutateResult> {
+    const sql = this.ctx.storage.sql;
+    const kept = ops.filter(
+      (op) =>
+        !(op.op === "create" && op.table === "cue_anchors") ||
+        sql.exec("SELECT 1 FROM cues WHERE id = ?", op.fields.cue_id as string).toArray().length >
+          0,
+    );
+    return this.mutate({ ...ctx, script: true }, kept);
+  }
+
   /**
    * Broadcast a committed batch. Ops on a personal view go only to its owner's sockets;
    * everyone else gets the same message without them (possibly with no ops at all), so
@@ -369,10 +459,6 @@ export class ShowDO extends DurableObject<Env> {
     );
   }
 
-  /**
-   * Close every socket belonging to a user (logout, removal from the show). Each gets a
-   * `revoked` message first so the client stops reconnecting instead of retrying.
-   */
   /** Tell a user's open sockets their role changed (`{type:"role"}`). Returns how many. */
   async notifyRole(userId: string, role: Role): Promise<number> {
     const sockets = this.ctx.getWebSockets(userId);
@@ -391,8 +477,24 @@ export class ShowDO extends DurableObject<Env> {
     return n;
   }
 
+  /**
+   * Close every socket belonging to a user (removal from the show). Each gets a
+   * `revoked` message first so the client stops reconnecting instead of retrying.
+   */
   async disconnectUser(userId: string): Promise<number> {
-    const sockets = this.ctx.getWebSockets(userId);
+    return this.revoke(this.ctx.getWebSockets(userId));
+  }
+
+  /**
+   * Close the sockets one session opened (that browser signed out), the same way. The
+   * user's other sessions (other browsers and devices) stay connected: their access
+   * hasn't changed, and `revoked` is terminal for a client.
+   */
+  async disconnectSession(sessionId: string): Promise<number> {
+    return this.revoke(this.ctx.getWebSockets(sessionTag(sessionId)));
+  }
+
+  private revoke(sockets: WebSocket[]): number {
     for (const ws of sockets) {
       this.send(ws, { type: "revoked" });
       try {
@@ -416,9 +518,10 @@ export class ShowDO extends DurableObject<Env> {
     const meta = await this.getMeta();
     if (!meta) return new Response("Show not initialised", { status: 404 });
 
+    const sessionId = request.headers.get(SESSION_ID_HEADER) ?? undefined;
     const { 0: client, 1: server } = new WebSocketPair();
-    this.ctx.acceptWebSocket(server, [userId]);
-    server.serializeAttachment({ userId } satisfies SocketAttachment);
+    this.ctx.acceptWebSocket(server, sessionId ? [userId, sessionTag(sessionId)] : [userId]);
+    server.serializeAttachment({ userId, sessionId } satisfies SocketAttachment);
 
     const clients = this.openSockets().length;
     this.send(server, { type: "hello", showId: meta.showId, clients });

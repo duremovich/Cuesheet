@@ -9,9 +9,17 @@ import { newId } from "../../../shared/ids";
 import type { Op } from "../../../shared/ops";
 import type { CueRow, FieldOptions } from "../../../shared/tables";
 import type { Anchor, CueAnchorRow, ReanchorResult, ScriptText } from "./contract";
-import { makeAnchor } from "./contract";
+import { makeAnchor, makePositionAnchor } from "./contract";
 import { useScriptText } from "./data";
-import { cueLabel, markerText, type PageBlocks, pagesOf, triggerBadge } from "./markers";
+import {
+  cueLabel,
+  markerText,
+  type PageBlocks,
+  pagesOf,
+  type QuoteRange,
+  quoteRanges,
+  triggerBadge,
+} from "./markers";
 import { rangeToSpan } from "./placement";
 import {
   allDone,
@@ -25,6 +33,9 @@ import { BlockText } from "./ScriptBlocks";
 import type { AnchorFields, AnchorOp } from "./source";
 
 export const CUT_STATUS = "Cut";
+const GUESS = new Set(["guess"]);
+const OLD = new Set(["old"]);
+const NO_QUOTES = new Map<number, QuoteRange[]>();
 
 function fieldsOf(cueId: string, versionId: string, a: Anchor): AnchorFields {
   return {
@@ -59,7 +70,13 @@ export function skipBatch(item: ResolveItem): { cueOps: Op[]; anchorOps: AnchorO
     cueOps: [],
     anchorOps:
       item.anchorId && item.state === "changed"
-        ? [{ op: "update", id: item.anchorId, fields: { state: "missing", confidence: 0 } }]
+        ? [
+            {
+              op: "update",
+              id: item.anchorId,
+              fields: { state: "missing", block: null, confidence: 0 },
+            },
+          ]
         : [],
   };
 }
@@ -213,7 +230,7 @@ export function ResolveScreen({
     }
     // A click without a selection: a position at the start of that block.
     const el = (e.target as Element).closest<HTMLElement>("[data-block]");
-    if (el) setPicked(makeAnchor(text, Number(el.dataset.block), 0, 0));
+    if (el) setPicked(makePositionAnchor(text, Number(el.dataset.block)));
   };
 
   if (state.items.length === 0) {
@@ -230,6 +247,7 @@ export function ResolveScreen({
   const done = allDone(state);
   const newPage = newPages[pageIdx];
   const highlight = picked ?? (state.placing ? null : (cand?.anchor ?? null));
+  const newQuotes = highlight ? quoteRanges(text, [{ ...highlight, id: "guess" }]) : NO_QUOTES;
 
   return (
     <div className={styles.resolve} data-testid="resolve-screen">
@@ -361,19 +379,8 @@ export function ResolveScreen({
                     <BlockText
                       key={b.i}
                       block={b}
-                      quotes={
-                        highlight && highlight.block === b.i && highlight.length > 0
-                          ? [
-                              {
-                                id: "guess",
-                                start: highlight.offset,
-                                end: highlight.offset + highlight.length,
-                              },
-                            ]
-                          : []
-                      }
-                      hot={new Set(["guess"])}
-                      highlight={!!highlight && highlight.block === b.i && highlight.length === 0}
+                      quotes={newQuotes.get(b.i)}
+                      hot={GUESS}
                       data-guess={highlight?.block === b.i || undefined}
                     />
                   ))}
@@ -445,22 +452,14 @@ function OldContext({
   label: string;
 }) {
   const page = pages.find((p) => p.blocks.some((b) => b.i === from.block));
+  const oldQuotes = quoteRanges(text, [{ ...from, id: "old" }]);
   const blocks = text.blocks.slice(Math.max(0, from.block - 1), from.block + 2);
   return (
     <div className={styles.paneText} data-testid="resolve-old-text">
       {page && <p className="muted">Page {page.label}</p>}
       {blocks.map((b) => (
         <div key={b.i} className={styles.oldRow}>
-          <BlockText
-            block={b}
-            quotes={
-              b.i === from.block && from.length > 0
-                ? [{ id: "old", start: from.offset, end: from.offset + from.length }]
-                : []
-            }
-            hot={new Set(["old"])}
-            highlight={b.i === from.block && from.length === 0}
-          />
+          <BlockText block={b} quotes={oldQuotes.get(b.i)} hot={OLD} />
           {b.i === from.block && <span className={styles.oldMarker}>{label}</span>}
         </div>
       ))}

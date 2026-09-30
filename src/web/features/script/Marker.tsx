@@ -5,7 +5,14 @@ import type { CueRow } from "../../../shared/tables";
 import { optionColor } from "../../components/grid/Chip";
 import { MenuButton, type MenuEntry } from "../shared/MenuButton";
 import type { CueAnchorRow } from "./contract";
-import { cueLabel, MARKER_HEIGHT, markerText, NEEDS_LOOK, triggerBadge } from "./markers";
+import {
+  cueLabel,
+  isPositionalCue,
+  MARKER_HEIGHT,
+  markerText,
+  NEEDS_LOOK,
+  triggerBadge,
+} from "./markers";
 import styles from "./Script.module.css";
 
 export const ANCHOR_DRAG_TYPE = "application/x-cuesheet-anchor";
@@ -74,7 +81,7 @@ export function Marker({
       data-anchor={anchor.id}
       data-state={anchor.state}
       data-color={color}
-      data-positional={anchor.length === 0 || undefined}
+      data-positional={isPositionalCue(cue) || undefined}
       data-flash={flash || undefined}
       data-active={active || undefined}
       style={{ top, height: MARKER_HEIGHT, ...markerStyle(color) }}

@@ -3,6 +3,7 @@
 // Field names are the storage names (snake_case), as in docs/spec/data-model.md.
 // Adding a field: see "Adding a field to a core table" in CLAUDE.md.
 
+import type { AnchorState, AnchorStats, PageMapEntry, ScriptSource } from "./script";
 import { MAX_LENGTH_M, MAX_LENS_RATIO, MAX_PIXELS } from "./units";
 
 export const TABLE_NAMES = [
@@ -15,6 +16,9 @@ export const TABLE_NAMES = [
   "views",
   "content_versions",
   "attachments",
+  "scripts",
+  "script_versions",
+  "cue_anchors",
 ] as const;
 export type TableName = (typeof TABLE_NAMES)[number];
 
@@ -204,6 +208,54 @@ export const FIELDS = {
     thumb_key: { type: "text", auto: true },
     position: number,
   },
+  /**
+   * The show's script (R20; one per show). src/shared/script.ts, CLAUDE.md "Script".
+   * Changing `current_version_id` updates Cue.page from that version's anchors.
+   */
+  scripts: {
+    title: text,
+    current_version_id: ref("script_versions"),
+  },
+  /**
+   * Created only by POST /script/versions (text in R2 at `text_key`); clients may rename
+   * (`label`), reorder, set `attachment_id` (the version's own `source_file` upload) and
+   * delete. Deleting one deletes its anchors, its file and (after a day) its text.
+   */
+  script_versions: {
+    script_id: { type: "ref", ref: "scripts", cascade: true, immutable: true },
+    label: text,
+    attachment_id: ref("attachments"),
+    imported_at: { type: "number", auto: true },
+    source: { type: "text", auto: true },
+    confidence: { type: "number", auto: true },
+    text_key: { type: "text", auto: true },
+    text_bytes: { type: "number", auto: true },
+    block_count: { type: "number", auto: true },
+    page_count: { type: "number", auto: true },
+    /** PageMapEntry[] (src/shared/script.ts). */
+    page_map: { type: "json", auto: true },
+    /** AnchorStats after re-anchoring. */
+    stats: { type: "json", auto: true },
+    position: number,
+  },
+  /**
+   * A cue's place in one script version (decision 0004). `page` is derived from `block`
+   * by the engine (whatever the client sends is replaced). Block/offset/length may be null
+   * only when `state` is "missing". One per cue and version.
+   */
+  cue_anchors: {
+    cue_id: { type: "ref", ref: "cues", cascade: true, immutable: true },
+    script_version_id: { type: "ref", ref: "script_versions", cascade: true, immutable: true },
+    block: { type: "number", integer: true, min: 0 },
+    offset: { type: "number", integer: true, min: 0 },
+    length: { type: "number", integer: true, min: 0 },
+    quote: text,
+    prefix: text,
+    suffix: text,
+    page: { type: "number", integer: true, min: 1 },
+    state: select,
+    confidence: { type: "number", min: 0, max: 1 },
+  },
 } as const satisfies Record<TableName, Record<string, FieldSpec>>;
 
 export type FieldName<T extends TableName> = keyof (typeof FIELDS)[T] & string;
@@ -369,6 +421,45 @@ export interface AttachmentRow extends CommonRow {
   position: number | null;
 }
 
+export interface ScriptRow extends CommonRow {
+  title: string | null;
+  current_version_id: string | null;
+}
+
+export interface ScriptVersionRow extends CommonRow {
+  script_id: string;
+  label: string | null;
+  /** The original file (an attachment on this version's `source_file` field). */
+  attachment_id: string | null;
+  imported_at: number | null;
+  source: ScriptSource | null;
+  confidence: number | null;
+  /** R2 key of the gzipped ScriptText; fetch it via `scriptTextUrl`. */
+  text_key: string | null;
+  text_bytes: number | null;
+  block_count: number | null;
+  page_count: number | null;
+  page_map: PageMapEntry[];
+  /** Counts by state after re-anchoring ({} for the first version). */
+  stats: Partial<AnchorStats>;
+  position: number | null;
+}
+
+export interface CueAnchorRow extends CommonRow {
+  cue_id: string;
+  script_version_id: string;
+  block: number | null;
+  offset: number | null;
+  length: number | null;
+  quote: string | null;
+  prefix: string | null;
+  suffix: string | null;
+  /** Physical page (1-based), derived from `block`; its label is in the version's page_map. */
+  page: number | null;
+  state: AnchorState | null;
+  confidence: number | null;
+}
+
 export interface RowTypes {
   scenes: SceneRow;
   cues: CueRow;
@@ -379,6 +470,9 @@ export interface RowTypes {
   views: ViewRow;
   content_versions: ContentVersionRow;
   attachments: AttachmentRow;
+  scripts: ScriptRow;
+  script_versions: ScriptVersionRow;
+  cue_anchors: CueAnchorRow;
 }
 
 /**
@@ -390,6 +484,8 @@ export const ATTACHMENT_FIELDS: Partial<Record<TableName, Record<string, FieldSp
   content: { attachments: { type: "attachment" } },
   notes: { attachments: { type: "attachment" } },
   surfaces: { images: { type: "attachment" } },
+  /** The script file as received (PDF / DOCX / text), kept for reference and print. */
+  script_versions: { source_file: { type: "attachment" } },
 };
 
 export function isAttachmentField(table: string, field: string): boolean {

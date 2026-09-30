@@ -17,7 +17,6 @@ const NEW: ScriptText = {
 
 function source(): ScriptSource {
   return {
-    mode: "mock",
     subscribe: () => () => undefined,
     getSnapshot: () => ({ scripts: new Map(), versions: new Map(), anchors: new Map() }),
     apply: vi.fn(async () => undefined),
@@ -156,7 +155,7 @@ describe("ResolveScreen", () => {
         {
           op: "update",
           id: "n2",
-          fields: expect.objectContaining({ block: 6, length: 0, state: "manual" }),
+          fields: expect.objectContaining({ block: 6, offset: 0, quote: "JERRY", state: "manual" }),
         },
       ],
     );
@@ -169,7 +168,7 @@ describe("ResolveScreen", () => {
     await wait(0);
     expect(onApply).toHaveBeenCalledWith(
       [],
-      [{ op: "update", id: "n1", fields: { state: "missing", confidence: 0 } }],
+      [{ op: "update", id: "n1", fields: { state: "missing", block: null, confidence: 0 } }],
     );
     expect(heading(container)).toContain("Q 14.25");
     click(btn(container, "Cut"));

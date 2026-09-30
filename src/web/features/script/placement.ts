@@ -6,7 +6,7 @@ import type { CueRow } from "../../../shared/tables";
 import { suggestCueNumber } from "../cues/cueNumbers";
 import { textField } from "../shared/ops";
 import type { Anchor, CueAnchorRow, ScriptText } from "./contract";
-import { makeAnchor } from "./contract";
+import { makeAnchor, makePositionAnchor } from "./contract";
 import { compareAnchors, isPlaced } from "./markers";
 import type { AnchorOp } from "./source";
 
@@ -121,8 +121,8 @@ export function newCueBatch(opts: {
 
 /**
  * Attach an existing cue at `anchor` (moving its anchor if it already has one on this
- * version). A cue without a trigger type takes Line + the quote (selection) or
- * `positionTrigger` (margin click).
+ * version). `positionTrigger` set = a margin click (a position), else a selection. A cue
+ * without a trigger type takes `positionTrigger`, or Line + the quote.
  */
 export function attachBatch(opts: {
   cue: CueRow;
@@ -135,19 +135,19 @@ export function attachBatch(opts: {
   const { cue, anchor } = opts;
   const cueOps: Op[] = [];
   if (!cue.trigger_type) {
-    if (anchor.length > 0) {
-      cueOps.push({
-        op: "update",
-        table: "cues",
-        id: cue.id,
-        fields: { trigger_type: "Line", trigger_value: cue.trigger_value ?? anchor.quote },
-      });
-    } else if (opts.positionTrigger) {
+    if (opts.positionTrigger) {
       cueOps.push({
         op: "update",
         table: "cues",
         id: cue.id,
         fields: { trigger_type: opts.positionTrigger },
+      });
+    } else {
+      cueOps.push({
+        op: "update",
+        table: "cues",
+        id: cue.id,
+        fields: { trigger_type: "Line", trigger_value: cue.trigger_value ?? anchor.quote },
       });
     }
   }
@@ -159,13 +159,20 @@ export function attachBatch(opts: {
 }
 
 /**
- * A marker dragged onto `block`: the quote stays a quote when that block contains it (the
- * first occurrence), else the anchor becomes a position at the block's start. State: manual.
+ * A marker dragged onto `block`: a Line cue's quote stays a quote when that block contains
+ * it (the first occurrence); otherwise (and for positional cues) the anchor becomes a
+ * position at the block's start. State: manual.
  */
-export function moveAnchorOp(row: CueAnchorRow, text: ScriptText, block: number): AnchorOp {
+export function moveAnchorOp(
+  row: CueAnchorRow,
+  text: ScriptText,
+  block: number,
+  positional: boolean,
+): AnchorOp {
   const target = text.blocks[block]?.text ?? "";
-  const at = row.length > 0 && row.quote ? target.indexOf(row.quote) : -1;
-  const a = at >= 0 ? makeAnchor(text, block, at, row.quote.length) : makeAnchor(text, block, 0, 0);
+  const at = !positional && row.quote ? target.indexOf(row.quote) : -1;
+  const a =
+    at >= 0 ? makeAnchor(text, block, at, row.quote.length) : makePositionAnchor(text, block);
   return {
     op: "update",
     id: row.id,

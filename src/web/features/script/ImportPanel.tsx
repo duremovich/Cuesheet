@@ -7,6 +7,7 @@
 import { useRef, useState } from "react";
 import { checkAttachmentType } from "../../../shared/attachments";
 import { newId } from "../../../shared/ids";
+import { SCRIPT_SOURCE_FIELD } from "../../../shared/script";
 import { api, putFile } from "../../lib/api";
 import type { ImportVersionResponse, ScriptText } from "./contract";
 import { extractScript } from "./contract";
@@ -15,7 +16,9 @@ import styles from "./Script.module.css";
 import { BlockText } from "./ScriptBlocks";
 import type { ScriptSource } from "./source";
 
-export const SCRIPT_ACCEPT = ".pdf,.docx,.txt,.md,application/pdf,text/plain,text/markdown";
+/** Like `extract`'s SCRIPT_ACCEPT (not imported: the extractor is a lazy chunk). */
+export const SCRIPT_ACCEPT =
+  ".pdf,.docx,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown";
 
 /** Below this, extraction is flagged (and always for OCR). */
 export const LOW_CONFIDENCE = 0.8;
@@ -46,14 +49,13 @@ export async function uploadOriginal(
   versionId: string,
   file: File,
 ): Promise<string | null> {
-  if (source.mode === "mock") return "Originals aren't stored in mock mode";
   try {
     const type = checkAttachmentType(file.type, file.name);
     if ("error" in type) return type.error;
     const res = await api.uploadUrl(showId, {
       table: "script_versions",
       recordId: versionId,
-      field: "source_file",
+      field: SCRIPT_SOURCE_FIELD,
       filename: file.name,
       contentType: type.contentType,
       size: file.size,
@@ -120,11 +122,9 @@ export function ImportPanel({
       setPhase({ kind: "preview", file, text });
       return;
     }
-    let originalError: string | null = null;
-    if (source.mode === "live") {
-      setPhase({ kind: "importing", file, text, step: "Uploading the original file…" });
-      originalError = await uploadOriginal(source, showId, res.versionId, file);
-    }
+    // Version first (the upload needs the record), then the original file.
+    setPhase({ kind: "importing", file, text, step: "Uploading the original file…" });
+    const originalError = await uploadOriginal(source, showId, res.versionId, file);
     onDone(res, originalError, file);
   };
 
@@ -197,6 +197,11 @@ export function ImportPanel({
             confidence · {preview.text.source.toUpperCase()}
           </p>
           {isLowConfidence(preview.text) && <LowConfidenceBanner source={preview.text.source} />}
+          {preview.text.warnings?.map((w) => (
+            <p key={w} className={styles.banner} data-kind="warning" data-testid="extract-warning">
+              {w}
+            </p>
+          ))}
           {firstPage && (
             <section className={styles.previewPage} aria-label="First page">
               <p className="muted">Page {firstPage.label}</p>

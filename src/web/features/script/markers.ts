@@ -3,7 +3,14 @@
 // Pure; the reader (Reader.tsx) measures the DOM and calls these.
 import type { CueRow } from "../../../shared/tables";
 import type { CellDecoration } from "../../components/grid/types";
-import type { AnchorState, CueAnchorRow, ScriptBlock, ScriptText } from "./contract";
+import {
+  type Anchor,
+  type AnchorState,
+  anchorPosition,
+  type CueAnchorRow,
+  type ScriptBlock,
+  type ScriptText,
+} from "./contract";
 
 /** Height of one marker in the margin, px (fixed, so layout is arithmetic). */
 export const MARKER_HEIGHT = 44;
@@ -48,6 +55,44 @@ export function markerText(cue: CueRow): string {
   if (cue.trigger_type === "Line") return tv ? `“${tv}”` : desc;
   if (cue.trigger_type === "Visual") return tv || desc;
   return desc;
+}
+
+/**
+ * A cue anchored at a position (LX / timecode / visual…: a tick at its line) rather than
+ * on quoted text (Line cues, and cues with no trigger type, are underlined).
+ */
+export function isPositionalCue(cue: CueRow | undefined): boolean {
+  return !!cue?.trigger_type && cue.trigger_type !== "Line";
+}
+
+/** A range of one block's text to underline, tagged with its anchor id. */
+export interface QuoteRange {
+  id: string;
+  start: number;
+  end: number;
+}
+
+/**
+ * Per block, the ranges to underline for `anchors` in `text` (a quote may run across
+ * blocks: the engine's `anchorPosition` splits it). Anchors outside the text are skipped.
+ */
+export function quoteRanges(
+  text: ScriptText,
+  anchors: readonly (Anchor & { id: string })[],
+): Map<number, QuoteRange[]> {
+  const out = new Map<number, QuoteRange[]>();
+  for (const a of anchors) {
+    if (a.block < 0 || a.length <= 0) continue;
+    const span = anchorPosition(text, a);
+    for (const s of span?.segments ?? []) {
+      if (s.end <= s.start) continue;
+      const list = out.get(s.block);
+      const r = { id: a.id, start: s.start, end: s.end };
+      if (list) list.push(r);
+      else out.set(s.block, [r]);
+    }
+  }
+  return out;
 }
 
 /** "Q 14.22" (or "Q –" when unnumbered). */

@@ -14,8 +14,10 @@ import {
   anchorsByBlock,
   cueLabel,
   isPlaced,
+  isPositionalCue,
   markerText,
   pagesOf,
+  quoteRanges,
   triggerBadge,
 } from "../script/markers";
 import { BlockText } from "../script/ScriptBlocks";
@@ -52,6 +54,16 @@ export function CallingScriptPrint() {
     [anchors, state.tables.cues, state.joins.cueAssignees, filter],
   );
   const byBlock = useMemo(() => anchorsByBlock(shown), [shown]);
+  const quotes = useMemo(
+    () =>
+      text
+        ? quoteRanges(
+            text,
+            shown.filter((a) => !isPositionalCue(state.tables.cues.get(a.cue_id))),
+          )
+        : new Map(),
+    [text, shown, state.tables.cues],
+  );
   const pages = useMemo(() => (text ? pagesOf(text) : []), [text]);
   const filterText = [
     filter.status && `status ${filter.status}`,
@@ -92,10 +104,10 @@ export function CallingScriptPrint() {
               <div key={b.i} className={styles.scriptRow}>
                 <BlockText
                   block={b}
-                  quotes={list
-                    .filter((a) => a.length > 0)
-                    .map((a) => ({ id: a.id, start: a.offset, end: a.offset + a.length }))}
-                  data-positional={list.some((a) => a.length === 0) || undefined}
+                  quotes={quotes.get(b.i)}
+                  data-positional={
+                    list.some((a) => isPositionalCue(state.tables.cues.get(a.cue_id))) || undefined
+                  }
                 />
                 <div className={styles.printMargin}>
                   {list.map((a) => {

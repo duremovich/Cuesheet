@@ -1,7 +1,7 @@
 // Test data for the script view's unit and DOM tests (not used by the app).
 import type { CueRow } from "../../../shared/tables";
 import type { CueAnchorRow, ScriptText } from "./contract";
-import { parseScriptText } from "./mock/extractText";
+import { extractPlainText } from "./extract/text";
 
 export function cueRow(p: Partial<CueRow> & { id: string }): CueRow {
   return {
@@ -47,9 +47,9 @@ export function anchorRow(p: Partial<CueAnchorRow> & { id: string; cue_id: strin
 
 /** A small two-page script. Blocks: 0 heading, 1 direction, 2 JOE, 3 dialogue, 4 SUE,
  * 5 dialogue (page 1); 6 JERRY, 7 dialogue, 8 direction (page 2, labelled 13). */
-export const SAMPLE: ScriptText = parseScriptText(
+export const SAMPLE: ScriptText = extractPlainText(
   [
-    "12",
+    "--- page 12 ---",
     "",
     "ACT ONE, SCENE 5",
     "",
@@ -60,7 +60,7 @@ export const SAMPLE: ScriptText = parseScriptText(
     "",
     "SUE",
     "Sweet Sue needs a sax and a bass.",
-    "\f13",
+    "--- page 13 ---",
     "",
     "JERRY",
     "Daphne. Bass. Classically trained.",

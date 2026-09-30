@@ -36,7 +36,7 @@ import {
 import { ImportPanel, isLowConfidence, LowConfidenceBanner, uploadOriginal } from "./ImportPanel";
 import { scriptPrintUrl } from "./links";
 import type { MarkerActions } from "./Marker";
-import { cueLabel, isPlaced } from "./markers";
+import { cueLabel, isPlaced, isPositionalCue } from "./markers";
 import {
   attachBatch,
   moveAnchorOp,
@@ -269,7 +269,10 @@ export function ScriptPage() {
       move: async (anchorId, block) => {
         const row = anchorsRef.current.find((a) => a.id === anchorId);
         if (!row || !text || row.block === block) return;
-        await apply([], [moveAnchorOp(row, text, block)], "move the marker").catch(() => undefined);
+        const positional = isPositionalCue(store.getState().tables.cues.get(row.cue_id));
+        await apply([], [moveAnchorOp(row, text, block, positional)], "move the marker").catch(
+          () => undefined,
+        );
       },
     }),
     [store, viewId, apply, ws, focusCue, text],
@@ -525,7 +528,7 @@ export function ScriptPage() {
           data-testid="original-missing"
         >
           No original file for this version: {originalError.message}.
-          {source.mode === "live" && ws.canEdit && (
+          {ws.canEdit && (
             <button
               type="button"
               className={styles.linkButton}
@@ -584,7 +587,7 @@ export function ScriptPage() {
           ) : (
             <span className="muted">No original file</span>
           )}
-          {!version.attachment_id && source.mode === "live" && ws.canEdit && (
+          {!version.attachment_id && ws.canEdit && (
             <button
               type="button"
               className={styles.linkButton}

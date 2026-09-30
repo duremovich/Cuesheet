@@ -1,4 +1,4 @@
-12
+--- page 12 ---
 
 ACT ONE, SCENE 5 - THE TRAIN PLATFORM
 
@@ -16,7 +16,8 @@ Nobody looks twice at a bass fiddle wearing heels either, I hope.
 
 SUE
 Ladies, on the train! Sweet Sue needs a saxophone and a bass player, and she needs them tonight.
-13
+
+--- page 13 ---
 
 JOE
 Then Sweet Sue is in luck, ma'am. Josephine, tenor sax.
@@ -28,7 +29,8 @@ SUE
 Whatever you are, you're hired. Bienstock, the tickets!
 
 (The train doors slide open. Light spills onto the platform.)
-14
+
+--- page 14 ---
 
 ACT ONE, SCENE 6 - THE SLEEPER CAR
 

@@ -183,30 +183,42 @@ test("group headers collapse and expand, and stay stuck while scrolling", async 
 
   // Scroll into the list: the stuck header names the group of the first thing below it.
   // (500 is the review's repro: Unassigned collapsed, scene 102's last row under the header.)
+  // Setting scrollTop only schedules the scroll event; the grid re-renders after it. Wait
+  // until the grid says it has laid out this offset (data-scroll-offset), then read the
+  // stuck header and the rows under it from that one settled layout.
   const scroller = page.getByTestId("grid-scroll");
+  const stuck = grid(page).locator('[data-testid="group-header"][data-stuck]');
   for (const y of [500, 1234, 3000]) {
-    await scroller.evaluate((el, top) => {
-      el.scrollTop = top;
+    const top = await scroller.evaluate((el, t) => {
+      el.scrollTop = t;
+      return Math.round(el.scrollTop);
     }, y);
-    const stuck = grid(page).locator('[data-testid="group-header"][data-stuck]');
+    expect(top).toBeGreaterThan(0);
+    await expect(scroller).toHaveAttribute("data-scroll-offset", String(top));
     await expect(stuck).toHaveCount(1);
-    const below = await stuck.evaluate((el) => {
-      const bottom = el.getBoundingClientRect().bottom;
+    const layout = await stuck.evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      const scrollBox = (
+        el.closest('[data-testid="grid-scroll"]') as HTMLElement
+      ).getBoundingClientRect();
       const candidates = Array.from(
         document.querySelectorAll<HTMLElement>(
           '[data-testid="grid-row"], [data-testid="group-header"]:not([data-stuck])',
         ),
       )
         .map((e) => ({ e, top: e.getBoundingClientRect().top }))
-        .filter((c) => c.top >= bottom - 1)
+        .filter((c) => c.top >= box.bottom - 1)
         .sort((p, q) => p.top - q.top);
       const first = candidates[0]?.e;
-      return first?.dataset.group ?? first?.dataset.groupId ?? null;
+      return {
+        stuckGroup: el.dataset.groupId ?? null,
+        below: first?.dataset.group ?? first?.dataset.groupId ?? null,
+        offset: Math.round(box.top - scrollBox.top),
+      };
     });
-    await expect(stuck).toHaveAttribute("data-group-id", below ?? "none");
-    const box = await scroller.boundingBox();
-    const stuckBox = await stuck.boundingBox();
-    expect(Math.round((stuckBox?.y ?? 0) - (box?.y ?? 0))).toBe(34);
+    expect(layout.below, `something under the stuck header at ${top}`).not.toBeNull();
+    expect(layout.stuckGroup).toBe(layout.below);
+    expect(layout.offset).toBe(34);
   }
 });
 

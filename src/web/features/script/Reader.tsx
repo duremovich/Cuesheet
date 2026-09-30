@@ -11,7 +11,7 @@ import type { CueRow, FieldOptions } from "../../../shared/tables";
 import type { PickerItem } from "../../components/grid/types";
 import { useMediaQuery } from "../shared/useMediaQuery";
 import type { Anchor, CueAnchorRow, ScriptBlock, ScriptText } from "./contract";
-import { makeAnchor } from "./contract";
+import { makeAnchor, makePositionAnchor } from "./contract";
 import { type ColorBy, type MarkerFilter, markerColor, matchesMarker } from "./filters";
 import {
   ANCHOR_DRAG_TYPE,
@@ -29,10 +29,13 @@ import {
   findPage,
   headingsOf,
   isPlaced,
+  isPositionalCue,
   MARKER_HEIGHT,
   type PageBlocks,
   pageIndexOfBlock,
   pagesOf,
+  type QuoteRange,
+  quoteRanges,
   type StackItem,
   stackMarkers,
   triggerBadge,
@@ -41,7 +44,7 @@ import { PlacePopover, type PlaceRequest } from "./PlacePopover";
 import type { NewCueInput } from "./placement";
 import { rangeToSpan } from "./placement";
 import styles from "./Script.module.css";
-import { BlockText, type QuoteRange } from "./ScriptBlocks";
+import { BlockText } from "./ScriptBlocks";
 
 export interface Placement {
   create(anchor: Anchor, input: NewCueInput): Promise<void>;
@@ -101,6 +104,15 @@ export function Reader(props: ReaderProps) {
     [anchors, cues, assignees, filter],
   );
   const byBlock = useMemo(() => anchorsByBlock(shown), [shown]);
+  // Line cues' quotes, per block (a quote may run onto the next lines).
+  const quotes = useMemo(
+    () =>
+      quoteRanges(
+        text,
+        shown.filter((a) => !isPositionalCue(cues.get(a.cue_id))),
+      ),
+    [text, shown, cues],
+  );
 
   // --- virtualized pages ---
   const scroller = useRef<HTMLDivElement>(null);
@@ -275,7 +287,7 @@ export function Reader(props: ReaderProps) {
   const onMarginClick = useCallback(
     (block: number, x: number, y: number) => {
       if (!canPlace) return;
-      openPlace("position", makeAnchor(text, block, 0, 0), x, y);
+      openPlace("position", makePositionAnchor(text, block), x, y);
     },
     [canPlace, openPlace, text],
   );
@@ -483,6 +495,7 @@ export function Reader(props: ReaderProps) {
                   <Page
                     page={p}
                     byBlock={byBlock}
+                    quotes={quotes}
                     cues={cues}
                     openNotes={props.openNotes}
                     fieldOptions={props.fieldOptions}
@@ -522,6 +535,7 @@ export function Reader(props: ReaderProps) {
 interface PageProps {
   page: PageBlocks;
   byBlock: ReadonlyMap<number, CueAnchorRow[]>;
+  quotes: ReadonlyMap<number, QuoteRange[]>;
   cues: ReadonlyMap<string, CueRow>;
   openNotes: ReadonlyMap<string, number>;
   fieldOptions: FieldOptions;
@@ -635,17 +649,16 @@ const Page = memo(function Page(p: PageProps) {
       >
         {p.page.blocks.map((b) => {
           const list = p.byBlock.get(b.i);
-          const quotes: QuoteRange[] = (list ?? [])
-            .filter((a) => a.length > 0)
-            .map((a) => ({ id: a.id, start: a.offset, end: a.offset + a.length }));
           return (
             <BlockText
               key={b.i}
               block={b}
-              quotes={quotes}
+              quotes={p.quotes.get(b.i)}
               hot={p.hot}
               highlight={p.findBlock === b.i}
-              data-positional={list?.some((a) => a.length === 0) || undefined}
+              data-positional={
+                list?.some((a) => isPositionalCue(p.cues.get(a.cue_id))) || undefined
+              }
             >
               {p.narrow && list && list.length > 0 && (
                 <span className={styles.badges}>

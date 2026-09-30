@@ -74,8 +74,8 @@ to try on the **Cues** tab:
   (e.g. "Tech 2") once, then ↓/↑ (or Space) to move through cues, type, Enter; ⌘/Ctrl+G
   jumps to a cue number. On a phone, **＋** opens quick add: pick a cue, type, Add note;
   📷 takes (or picks) a photo that's attached to the note.
-- **Script** tab: **Choose a file…** (or drop a PDF, DOCX or TXT; in a
-  `VITE_SCRIPT_MOCK=1` build only TXT/MD, e.g. `e2e/fixtures/script-v1.txt`), give it a
+- **Script** tab: **Choose a file…** (or drop a PDF, DOCX, TXT or Markdown file, e.g.
+  `e2e/fixtures/script-v1.txt`), give it a
   label, **Import**. Select a line → **New cue on this line** (the number is suggested
   from the cues around it) or **Attach existing cue**; click the right margin to place an
   LX / timecode / visual cue at a line. Click a marker to open the cue; drag it to move

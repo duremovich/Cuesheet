@@ -36,6 +36,7 @@ import type {
 import { ApiError, api } from "../../lib/api";
 import { jsonEqual } from "../../lib/show-state";
 import {
+  type ShowStore,
   useShowSocketState,
   useShowStore,
   useShowStoreInstance,
@@ -187,6 +188,20 @@ export interface ViewActions {
 /** A failed request that never reached the server (offline): worth retrying. */
 const isNetworkError = (e: unknown) => !(e instanceof ApiError);
 
+/**
+ * The view's `updated_at` as the server stamped it, or null while local changes to it are
+ * unconfirmed (then it's our optimistic stamp, which the server's will replace).
+ */
+function confirmedStamp(store: ShowStore, view: ViewRow | null): number | null {
+  if (!view || store.hasPending("views", view.id)) return null;
+  return view.updated_at;
+}
+
+/** A draft whose view was saved (by someone) since it started. No base stamp yet: not stale. */
+function isStale(draft: Draft, view: ViewRow): boolean {
+  return draft.baseUpdatedAt !== null && draft.baseUpdatedAt !== view.updated_at;
+}
+
 export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
   const ws = useWorkspace();
   const { showId, userId, canEdit, toast, reportError } = ws;
@@ -293,9 +308,16 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
     [savedConfig, table],
   );
   const dirty = !isPersonal && !!draft && !jsonEqual(draft, saved);
-  // The shared view changed (someone saved it) since the draft started.
-  const conflict =
-    dirty && !!draftEntry && !!current && draftEntry.baseUpdatedAt !== current.updated_at;
+  // The shared view changed (someone saved it) since the draft started. A draft started
+  // while the view had unconfirmed local changes (just created or saved here) has no base
+  // stamp yet (the optimistic `updated_at` is the client's clock, never the server's):
+  // it takes the view's stamp once the server has confirmed it (below).
+  const conflict = dirty && !!draftEntry && !!current && isStale(draftEntry, current);
+  const viewPending = useShowStore(() => !!current && store.hasPending("views", current.id));
+  useEffect(() => {
+    if (!draftEntry || draftEntry.baseUpdatedAt !== null || !current || viewPending) return;
+    setDraft(dKey, { ...draftEntry, baseUpdatedAt: current.updated_at }, true);
+  }, [draftEntry, current, dKey, viewPending]);
   // A draft that matches what's saved (after a save lands) is dropped.
   useEffect(() => {
     if (draft && jsonEqual(draft, saved)) setDraft(dKey, undefined);
@@ -353,16 +375,19 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
   }, []);
 
   /** A draft entry for `next`, keeping the base it started from. */
-  const draftFor = useCallback((key: string, next: ViewConfig): Draft => {
-    const cur = latest.current;
-    const prev = getDraft(key);
-    return {
-      config: next,
-      base: prev?.base ?? cur.saved,
-      baseUpdatedAt: prev ? prev.baseUpdatedAt : (cur.current?.updated_at ?? null),
-      savedAt: Date.now(),
-    };
-  }, []);
+  const draftFor = useCallback(
+    (key: string, next: ViewConfig): Draft => {
+      const cur = latest.current;
+      const prev = getDraft(key);
+      return {
+        config: next,
+        base: prev?.base ?? cur.saved,
+        baseUpdatedAt: prev ? prev.baseUpdatedAt : confirmedStamp(store, cur.current),
+        savedAt: Date.now(),
+      };
+    },
+    [store],
+  );
 
   // --- Personal views: debounced saves; offline → keep the draft and retry ---
   const saveTimer = useRef<number | null>(null);
@@ -544,7 +569,7 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
         const cur = latest.current;
         const entry = getDraft(cur.dKey);
         if (!entry) return;
-        if (cur.current && entry.baseUpdatedAt !== cur.current.updated_at) {
+        if (cur.current && isStale(entry, cur.current)) {
           // Someone saved this view since: never write over it silently.
           toast("This view changed since your draft: rebase or discard.", "error");
           return;
@@ -598,7 +623,7 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
           {
             config: next,
             base: cur.saved,
-            baseUpdatedAt: cur.current.updated_at,
+            baseUpdatedAt: confirmedStamp(store, cur.current),
             savedAt: Date.now(),
           },
           true,
@@ -657,7 +682,7 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
           "set the default view",
         ),
     }),
-    [update, select, send, table, userId, nextPosition, showId, toast],
+    [update, select, send, table, userId, nextPosition, showId, toast, store],
   );
 
   // --- Migrate the M1c localStorage prefs (once per show + table, silently) ---

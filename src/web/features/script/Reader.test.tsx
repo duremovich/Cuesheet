@@ -177,7 +177,7 @@ describe("Reader placement popover", () => {
     await wait(10);
     expect(placement.attach).toHaveBeenCalledWith(
       "c3",
-      expect.objectContaining({ length: 0, offset: 0 }),
+      expect.objectContaining({ offset: 0 }),
       "LX",
     );
   });

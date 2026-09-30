@@ -137,6 +137,23 @@ describe("ShowStore", () => {
     expect(store.tables.cues.get("c2")?.created_by).toBe("server");
   });
 
+  it("says which rows still have unconfirmed local changes (hasPending)", async () => {
+    const { server, store, releaseNext } = setup();
+    server.apply({ clientId: "x", ops: [cue("c1", "1")] });
+    await store.load();
+    expect(store.hasPending("cues", "c1")).toBe(false);
+
+    const done = store.mutate([
+      { op: "update", table: "cues", id: "c1", fields: { description: "x" } },
+    ]);
+    expect(store.hasPending("cues", "c1")).toBe(true);
+    expect(store.hasPending("cues", "c2")).toBe(false);
+    expect(store.hasPending("scenes", "c1")).toBe(false);
+    await releaseNext();
+    await done;
+    expect(store.hasPending("cues", "c1")).toBe(false);
+  });
+
   it("reconciles with the server's order when someone else inserted first", async () => {
     const { server, store, releaseNext } = setup();
     server.apply({ clientId: "x", ops: [cue("c1", "1"), cue("c3", "3")] });
