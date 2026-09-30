@@ -12,7 +12,7 @@
     "build": "vite build",
     "preview": "pnpm build && pnpm db:migrate:local && vite preview",
     "typecheck": "tsc -b",
-    "lint": "biome check .",
+    "lint": "biome check --error-on-warnings .",
     "format": "biome check --write .",
     "test": "vitest run",
     "e2e": "playwright test",

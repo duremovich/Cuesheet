@@ -3,18 +3,20 @@ import { Link, useNavigate } from "react-router";
 import type { CreateInviteResponse, ShowSummaryDTO, UserDTO } from "../../shared/api";
 import { AppHeader } from "../components/AppHeader";
 import { api } from "../lib/api";
+import { useApiErrorHandler } from "../lib/auth";
 import styles from "./pages.module.css";
 
 export function ShowsPage({ user }: { user: UserDTO }) {
   const [shows, setShows] = useState<ShowSummaryDTO[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const handleError = useApiErrorHandler();
 
   useEffect(() => {
     api
       .listShows()
       .then((r) => setShows(r.shows))
-      .catch((e: Error) => setError(e.message));
-  }, []);
+      .catch((e: unknown) => setError(handleError(e)));
+  }, [handleError]);
 
   return (
     <>
@@ -33,8 +35,10 @@ export function ShowsPage({ user }: { user: UserDTO }) {
               {shows.map((s) => (
                 <li key={s.id}>
                   <Link to={`/shows/${s.id}`}>
-                    <span>{s.name}</span>
-                    <span className="muted">{s.role}</span>
+                    <span className={styles.showListName} title={s.name}>
+                      {s.name}
+                    </span>
+                    <span className={`muted ${styles.showListRole}`}>{s.role}</span>
                   </Link>
                 </li>
               ))}
@@ -48,6 +52,7 @@ export function ShowsPage({ user }: { user: UserDTO }) {
 }
 
 function NewShowForm() {
+  const handleError = useApiErrorHandler();
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -62,7 +67,7 @@ function NewShowForm() {
       const { show } = await api.createShow({ name });
       navigate(`/shows/${show.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not create show");
+      setError(handleError(err));
       setBusy(false);
     }
   }
@@ -82,6 +87,7 @@ function NewShowForm() {
 }
 
 function InviteForm() {
+  const handleError = useApiErrorHandler();
   const [invite, setInvite] = useState<CreateInviteResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -95,7 +101,7 @@ function InviteForm() {
       setInvite(await api.createInvite({ email }));
       formEl.reset();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not create invite");
+      setError(handleError(err));
     }
   }
 

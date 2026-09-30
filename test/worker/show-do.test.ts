@@ -3,7 +3,7 @@
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import type { ServerMessage } from "../../src/shared/ws";
+import { PING_FRAME, type ServerMessage } from "../../src/shared/ws";
 import { type ShowDO, USER_ID_HEADER } from "../../src/worker/do/ShowDO";
 
 function stubFor(name: string) {
@@ -89,7 +89,7 @@ describe("ShowDO", () => {
     expect(await a.next((m) => m.type === "presence")).toEqual({ type: "presence", clients: 2 });
     expect(await stub.clientCount()).toBe(2);
 
-    b.ws.send(JSON.stringify({ type: "ping" }));
+    b.ws.send(PING_FRAME);
     expect(await b.next((m) => m.type === "pong")).toEqual({ type: "pong" });
 
     b.ws.close(1000, "bye");
@@ -109,6 +109,10 @@ describe("ShowDO", () => {
     await a.next((m) => m.type === "presence" && m.clients === 2);
 
     await evictDurableObject(stub); // hibernates sockets, drops in-memory state
+
+    // Heartbeats are answered by the runtime's auto-response while hibernated.
+    a.ws.send(PING_FRAME);
+    expect(await a.next((m) => m.type === "pong")).toEqual({ type: "pong" });
 
     b.ws.close(1000, "bye");
     expect(await a.next((m) => m.type === "presence" && m.clients === 1)).toMatchObject({

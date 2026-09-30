@@ -74,10 +74,22 @@
 .showList a {
   display: flex;
   justify-content: space-between;
+  gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
   color: var(--color-text);
   text-decoration: none;
   background: var(--color-surface);
+}
+
+.showListName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.showListRole {
+  flex-shrink: 0;
 }
 
 .showList a:hover {
@@ -95,6 +107,9 @@
 
 .showTitle {
   font-size: 18px;
+  flex: 1 1 auto;
+  /* Shrink with an ellipsis, but never to nothing. */
+  min-width: 6ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

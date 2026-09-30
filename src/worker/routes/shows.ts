@@ -39,6 +39,21 @@ const requireMembership = createMiddleware<ShowEnv>(async (c, next) => {
   await next();
 });
 
+/**
+ * WebSocket upgrades are exempt from CORS, and SameSite=Lax cookies are sent on them, so a
+ * foreign page could otherwise open a socket as the user (cross-site WebSocket hijacking).
+ * Browsers always send Origin on WebSocket handshakes; require it to be ours.
+ */
+const requireSameOriginUpgrade = createMiddleware<ShowEnv>(async (c, next) => {
+  if (c.req.header("Upgrade")?.toLowerCase() !== "websocket") {
+    return c.json({ error: "Expected a WebSocket upgrade" }, 426);
+  }
+  if (c.req.header("Origin") !== new URL(c.req.url).origin) {
+    return c.json({ error: "Cross-origin WebSocket refused" }, 403);
+  }
+  await next();
+});
+
 export const showRoutes = new Hono<ShowEnv>()
   .use("/shows", requireAuth)
   .use("/shows/*", requireAuth)
@@ -80,10 +95,7 @@ export const showRoutes = new Hono<ShowEnv>()
     const meta = await showStub(c.env, c.var.show.id).sync(c.var.show.id, c.var.show.name);
     return c.json({ show: meta, role: c.var.role } satisfies ShowResponse);
   })
-  .get("/shows/:id/ws", requireMembership, async (c) => {
-    if (c.req.header("Upgrade")?.toLowerCase() !== "websocket") {
-      return c.json({ error: "Expected a WebSocket upgrade" }, 426);
-    }
+  .get("/shows/:id/ws", requireSameOriginUpgrade, requireMembership, async (c) => {
     const headers = new Headers(c.req.raw.headers);
     headers.set(USER_ID_HEADER, c.var.user.id);
     return showStub(c.env, c.var.show.id).fetch(new Request(c.req.raw, { headers }));

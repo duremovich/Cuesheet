@@ -1,7 +1,12 @@
 import type { ShowSocketState } from "../lib/useShowSocket";
 import styles from "./PresenceIndicator.module.css";
 
-const LABEL = { connecting: "Connecting…", connected: "Live", disconnected: "Offline" } as const;
+const LABEL = {
+  connecting: "Connecting…",
+  connected: "Live",
+  disconnected: "Offline",
+  unauthorized: "No access",
+} as const satisfies Record<ShowSocketState["status"], string>;
 
 export function PresenceIndicator({ status, clients }: ShowSocketState) {
   return (

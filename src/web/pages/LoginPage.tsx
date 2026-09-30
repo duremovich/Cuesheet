@@ -3,18 +3,14 @@ import { Navigate, useNavigate, useSearchParams } from "react-router";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { safeNext } from "../lib/safeNext";
 import styles from "./pages.module.css";
-
-/** Only allow same-app paths as a post-login destination. */
-export function safeNext(next: string | null): string {
-  return next?.startsWith("/") && !next.startsWith("//") ? next : "/";
-}
 
 export function LoginPage() {
   const { user, setUser } = useAuth();
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const next = safeNext(params.get("next"));
+  const next = safeNext(params.get("next"), window.location.origin);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 

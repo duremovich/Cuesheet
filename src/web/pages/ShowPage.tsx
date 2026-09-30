@@ -4,6 +4,7 @@ import type { ShowResponse } from "../../shared/api";
 import { AppHeader } from "../components/AppHeader";
 import { PresenceIndicator } from "../components/PresenceIndicator";
 import { ApiError, api } from "../lib/api";
+import { useApiErrorHandler } from "../lib/auth";
 import { useShowSocket } from "../lib/useShowSocket";
 import styles from "./pages.module.css";
 
@@ -11,6 +12,7 @@ export function ShowPage() {
   const { id = "" } = useParams();
   const [data, setData] = useState<ShowResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const handleError = useApiErrorHandler();
 
   useEffect(() => {
     setData(null);
@@ -19,9 +21,9 @@ export function ShowPage() {
       .getShow(id)
       .then(setData)
       .catch((e: unknown) =>
-        setError(e instanceof ApiError && e.status === 404 ? "Show not found" : String(e)),
+        setError(e instanceof ApiError && e.status === 404 ? "Show not found" : handleError(e)),
       );
-  }, [id]);
+  }, [id, handleError]);
 
   if (error) {
     return (

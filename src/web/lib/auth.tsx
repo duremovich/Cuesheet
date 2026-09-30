@@ -1,7 +1,7 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useState } from "react";
 import { Navigate, useLocation } from "react-router";
 import type { UserDTO } from "../../shared/api";
-import { ApiError, api } from "./api";
+import { api, UnauthorizedError } from "./api";
 
 interface AuthState {
   /** undefined while the initial /api/me is in flight. */
@@ -22,7 +22,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .then((r) => !cancelled && setUser(r.user))
       .catch((e: unknown) => {
         if (!cancelled) setUser(null);
-        if (!(e instanceof ApiError && e.status === 401)) console.error(e);
+        console.error(e);
       });
     return () => {
       cancelled = true;
@@ -41,6 +41,25 @@ export function useAuth(): AuthState {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error("useAuth outside AuthProvider");
   return ctx;
+}
+
+/**
+ * Central handling for errors from `api` calls on signed-in pages. A 401 (expired or
+ * revoked session) signs the client out, so `RequireAuth` redirects to
+ * /login?next=<current path>, and returns null. Anything else becomes a message to show.
+ */
+export function useApiErrorHandler(): (e: unknown) => string | null {
+  const { setUser } = useAuth();
+  return useCallback(
+    (e: unknown) => {
+      if (e instanceof UnauthorizedError) {
+        setUser(null);
+        return null;
+      }
+      return e instanceof Error ? e.message : String(e);
+    },
+    [setUser],
+  );
 }
 
 /** Renders children for signed-in users; sends everyone else to /login?next=... */

@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import { type DrizzleSqliteDODatabase, drizzle } from "drizzle-orm/durable-sqlite";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import type { ShowMetaDTO } from "../../shared/api";
-import type { ClientMessage, ServerMessage } from "../../shared/ws";
+import { PING_FRAME, PONG_FRAME, type ServerMessage } from "../../shared/ws";
 import migrations from "../db/do/migrations/migrations.js";
 import * as schema from "../db/do/schema";
 
@@ -23,6 +23,8 @@ export class ShowDO extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.db = drizzle(ctx.storage, { schema });
+    // Answer client heartbeats in the runtime so they don't wake a hibernating object.
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING_FRAME, PONG_FRAME));
     // Nothing else runs until migrations have been applied.
     ctx.blockConcurrencyWhile(async () => {
       await migrate(this.db, migrations);
@@ -79,15 +81,10 @@ export class ShowDO extends DurableObject<Env> {
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  override async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    if (typeof message !== "string") return;
-    let msg: ClientMessage;
-    try {
-      msg = JSON.parse(message) as ClientMessage;
-    } catch {
-      return;
-    }
-    if (msg.type === "ping") this.send(ws, { type: "pong" });
+  override async webSocketMessage(_ws: WebSocket, _message: string | ArrayBuffer): Promise<void> {
+    // Heartbeat pings never get here: the runtime answers PING_FRAME with PONG_FRAME
+    // without waking the object (see the constructor). M0 has no other client messages;
+    // M1 adds edits.
   }
 
   override async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {

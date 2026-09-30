@@ -26,6 +26,13 @@ export interface PingMessage {
 
 export type ClientMessage = PingMessage;
 
+/**
+ * Exact heartbeat frames. The ShowDO registers these with `setWebSocketAutoResponse`, which
+ * matches the request byte-for-byte, so clients must send PING_FRAME verbatim.
+ */
+export const PING_FRAME = JSON.stringify({ type: "ping" } satisfies PingMessage);
+export const PONG_FRAME = JSON.stringify({ type: "pong" } satisfies PongMessage);
+
 export function parseServerMessage(data: unknown): ServerMessage | null {
   if (typeof data !== "string") return null;
   try {

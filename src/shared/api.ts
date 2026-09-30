@@ -10,8 +10,14 @@ export interface UserDTO {
   isAdmin: boolean;
 }
 
+/** Returned by login and invite accept. */
 export interface MeResponse {
   user: UserDTO;
+}
+
+/** GET /api/me: always 200; `user` is null when signed out. */
+export interface SessionResponse {
+  user: UserDTO | null;
 }
 
 export interface LoginRequest {

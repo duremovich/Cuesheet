@@ -11,6 +11,8 @@ import type {
 import { DEFAULT_ITERATIONS, hashPassword } from "../../src/worker/auth/password";
 
 const ADMIN = { email: "admin@test.local", password: "test-password-123" };
+/** A same-origin browser WebSocket handshake (requests below go to http://localhost). */
+const WS_HEADERS = { Upgrade: "websocket", Origin: "http://localhost" };
 
 async function api(path: string, init: RequestInit & { cookie?: string } = {}) {
   const headers = new Headers(init.headers);
@@ -62,7 +64,7 @@ describe("API", () => {
   });
 
   it("seeds the admin, logs in with a secure cookie, and logs out", async () => {
-    expect((await api("/api/me")).status).toBe(401);
+    expect(await (await api("/api/me")).json()).toEqual({ user: null });
     expect((await post("/api/auth/login", { ...ADMIN, password: "wrong" })).status).toBe(401);
     expect((await post("/api/auth/login", { email: "nobody@x.io", password: "x" })).status).toBe(
       401,
@@ -81,7 +83,9 @@ describe("API", () => {
     const out = await post("/api/auth/logout", {}, cookie);
     expect(out.status).toBe(200);
     expect(out.headers.get("Set-Cookie")).toContain("Max-Age=0");
-    expect((await api("/api/me", { cookie })).status).toBe(401);
+    const after = await api("/api/me", { cookie });
+    expect(after.status).toBe(200);
+    expect(await after.json()).toEqual({ user: null });
   });
 
   it("creates shows, lists them, and proxies GET /api/shows/:id to the DO", async () => {
@@ -150,8 +154,7 @@ describe("API", () => {
 
     expect((await api(`/api/shows/${show.id}`, { cookie: other })).status).toBe(404);
     expect(
-      (await api(`/api/shows/${show.id}/ws`, { cookie: other, headers: { Upgrade: "websocket" } }))
-        .status,
+      (await api(`/api/shows/${show.id}/ws`, { cookie: other, headers: WS_HEADERS })).status,
     ).toBe(404);
     expect((await api("/api/shows/does-not-exist", { cookie: admin })).status).toBe(404);
     const list = (await (await api("/api/shows", { cookie: other })).json()) as ShowsResponse;
@@ -165,10 +168,7 @@ describe("API", () => {
     };
     expect((await api(`/api/shows/${show.id}/ws`, { cookie })).status).toBe(426);
 
-    const res = await api(`/api/shows/${show.id}/ws`, {
-      cookie,
-      headers: { Upgrade: "websocket" },
-    });
+    const res = await api(`/api/shows/${show.id}/ws`, { cookie, headers: WS_HEADERS });
     expect(res.status).toBe(101);
     const ws = res.webSocket as WebSocket;
     const first = new Promise<unknown>((resolve) =>
@@ -177,6 +177,21 @@ describe("API", () => {
     ws.accept();
     expect(await first).toEqual({ type: "hello", showId: show.id, clients: 1 });
     ws.close(1000, "done");
+  });
+
+  it("refuses WebSocket upgrades from a foreign or missing Origin, even with a valid cookie", async () => {
+    const cookie = await loginAdmin();
+    const { show } = (await (await post("/api/shows", { name: "Hijack" }, cookie)).json()) as {
+      show: ShowSummaryDTO;
+    };
+    const url = `/api/shows/${show.id}/ws`;
+    for (const origin of ["https://evil.example", "http://localhost.evil.example", "null"]) {
+      const res = await api(url, { cookie, headers: { Upgrade: "websocket", Origin: origin } });
+      expect(res.status, origin).toBe(403);
+      expect(res.webSocket).toBeNull();
+    }
+    const noOrigin = await api(url, { cookie, headers: { Upgrade: "websocket" } });
+    expect(noOrigin.status).toBe(403);
   });
 
   it("invites: admin-only, one-time, and the new user is signed in", async () => {

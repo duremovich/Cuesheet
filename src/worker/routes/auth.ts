@@ -1,10 +1,15 @@
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
-import type { MeResponse } from "../../shared/api";
+import type { MeResponse, SessionResponse } from "../../shared/api";
 import { clearSessionCookie, readSessionToken, serializeSessionCookie } from "../auth/cookie";
-import { requireAuth } from "../auth/middleware";
 import { hashPassword, needsRehash, verifyPassword } from "../auth/password";
-import { createSession, deleteSession, normalizeEmail, toUserDTO } from "../auth/session";
+import {
+  createSession,
+  deleteSession,
+  getSessionUser,
+  normalizeEmail,
+  toUserDTO,
+} from "../auth/session";
 import { schema } from "../db/d1/client";
 import type { AppEnv } from "../types";
 import { isHttps, readJsonObject, str } from "./util";
@@ -53,4 +58,10 @@ export const authRoutes = new Hono<AppEnv>()
     c.header("Set-Cookie", clearSessionCookie({ secure: isHttps(c) }));
     return c.json({ ok: true });
   })
-  .get("/me", requireAuth, (c) => c.json({ user: c.var.user } satisfies MeResponse));
+  // "Who am I?" is answered for everyone: signed out is `{ user: null }`, not an error, so
+  // signed-out pages don't log 401s. Protected routes still use `requireAuth`.
+  .get("/me", async (c) => {
+    const token = readSessionToken(c.req.header("Cookie"));
+    const user = token ? await getSessionUser(c.var.db, token) : null;
+    return c.json({ user } satisfies SessionResponse);
+  });

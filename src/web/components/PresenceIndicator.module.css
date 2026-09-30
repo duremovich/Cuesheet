@@ -1,4 +1,5 @@
 .presence {
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
@@ -23,7 +24,8 @@
   background: var(--color-warning);
 }
 
-.disconnected {
+.disconnected,
+.unauthorized {
   background: var(--color-danger);
 }
 

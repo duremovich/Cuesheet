@@ -79,17 +79,38 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   4. Add or extend a test in `test/worker/`.
 - **Adding an API route.** Add a handler in the relevant `src/worker/routes/*.ts` (or a new
   file mounted in `app.ts`). Put request/response types in `src/shared/api.ts`, add a method
-  to `src/web/lib/api.ts`, protect with `requireAuth` / `requireAdmin` / the show
-  `requireMembership` middleware, and cover it in `test/worker/api.test.ts`. Errors are JSON
-  `{ error }`; show-not-found and not-a-member are both 404. Browser clients must send JSON
-  (the CSRF middleware rejects cross-origin form posts).
+  to `src/web/lib/api.ts`, and cover it in `test/worker/api.test.ts`. Protect it with
+  `requireAuth` / `requireAdmin` (exported from `src/worker/auth/middleware.ts`). Routes
+  under `/shows/:id` also use `requireMembership`, a middleware local to
+  `src/worker/routes/shows.ts` (not exported) that loads the show + the caller's role into
+  `c.var.show` / `c.var.role`; put show routes in that file, or export it if another file
+  needs it. Errors are JSON `{ error }`; show-not-found and not-a-member are both 404.
+  Browser clients must send JSON (the CSRF middleware rejects cross-origin form posts).
+  `GET /api/me` is the one exception to "401 when signed out": it returns `{ user: null }`.
+- **WebSockets.** `GET /api/shows/:id/ws` requires `Origin` to equal the request's own
+  origin (403 otherwise), because upgrades bypass CORS and carry the SameSite=Lax cookie.
+  Heartbeats use the exact `PING_FRAME`/`PONG_FRAME` strings from `src/shared/ws.ts`, which
+  the DO answers via `setWebSocketAutoResponse` without waking from hibernation. The client
+  (`useShowSocket`) retries network drops with backoff but stops with status
+  `unauthorized` when the upgrade was refused (it probes `GET /api/shows/:id` to tell the two
+  apart, since browsers hide the upgrade's HTTP status).
+- **Client API errors.** `src/web/lib/api.ts` throws `ApiError`, and `UnauthorizedError` for
+  401. Signed-in pages pass caught errors to `useApiErrorHandler()` (`lib/auth.tsx`): a 401
+  signs the client out, so `RequireAuth` redirects to `/login?next=<current path>`. Post-login
+  `next` values go through `lib/safeNext.ts`.
+- **Deferred to M1:** a `ShowDO.disconnectUser(userId)` RPC called on logout and membership
+  removal (sockets carry `userId` as a hibernation tag and attachment, so this is a lookup via
+  `ctx.getWebSockets(userId)`), and an endpoint to add members to a show.
 - **Writing an e2e test.** Add `e2e/<feature>.spec.ts`. Use helpers in `e2e/helpers.ts`
   (`login`, `createShow`, `uniqueName`). Tests run in parallel against one server whose DB
   persists for the run, so make data unique (`uniqueName`) and don't assume an empty DB.
   Prefer role/label locators; use `data-testid` for things without a good accessible name.
   Use separate `browser.newContext()`s to simulate multiple users.
 - **Every feature gets a test** (unit, worker or e2e).
-- TypeScript strict everywhere (`noUncheckedIndexedAccess` on). Biome formats and lints.
+- TypeScript strict everywhere (`noUncheckedIndexedAccess` on). Biome formats and lints
+  with `"rules": { "preset": "recommended" }` (Biome 2.5's replacement for the deprecated
+  `recommended: true`). Don't disable rules globally; if you run `biome migrate`, check it
+  didn't turn the linter's rules off.
 
 ## Theme and colors
 
@@ -119,8 +140,13 @@ same logic plus `useTheme()`; the toggle is `components/ThemeToggle.tsx` in the 
 
 Also spacing (`--space-1..8`), radii (`--radius-sm/md/lg`) and fonts (`--font-sans`,
 `--font-mono`). Both themes must define the same variables; dark surfaces are never pure
-black/white; text pairs are WCAG AA. `src/web/styles/theme.test.ts` enforces all three, so
-add new pairs there when you add tokens.
+black/white (pure white surfaces are intended in **light mode only**, e.g. `--color-surface`,
+with an off-white page background); text pairs are WCAG AA. `src/web/styles/theme.test.ts`
+enforces these, so add new pairs there when you add tokens.
+
+Layouts must work down to phone width (390px). The header wraps below 600px (page content
+such as the show title + presence moves to a second row; the user name hides).
+`e2e/responsive.spec.ts` checks this.
 
 ## Environment (Claude sandbox)
 

@@ -57,5 +57,5 @@ test("sign out ends the session", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
   await page.goto("/");
   await expect(page).toHaveURL(/\/login/);
-  expect((await page.request.get("/api/me")).status()).toBe(401);
+  expect(await (await page.request.get("/api/me")).json()).toEqual({ user: null });
 });

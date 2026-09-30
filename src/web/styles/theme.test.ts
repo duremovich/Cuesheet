@@ -99,15 +99,24 @@ describe("theme tokens", () => {
     });
   }
 
+  const SURFACES = [
+    "--color-bg-sunken",
+    "--color-bg",
+    "--color-surface",
+    "--color-surface-raised",
+    "--color-surface-hover",
+  ];
+
   it("dark mode has no pure black or pure white surfaces", () => {
-    for (const k of [
-      "--color-bg-sunken",
-      "--color-bg",
-      "--color-surface",
-      "--color-surface-raised",
-      "--color-surface-hover",
-    ]) {
+    for (const k of SURFACES) {
       expect(["#000000", "#ffffff"]).not.toContain(themes.dark.get(k)?.toLowerCase());
     }
+  });
+
+  // Intended: pure white cards/panels are fine in LIGHT mode (only dark mode is restricted),
+  // but the light page background itself stays off-white so white surfaces read as raised.
+  it("light mode may use pure white surfaces, but not as the page background", () => {
+    expect(themes.light.get("--color-surface")?.toLowerCase()).toBe("#ffffff");
+    expect(themes.light.get("--color-bg")?.toLowerCase()).not.toBe("#ffffff");
   });
 });

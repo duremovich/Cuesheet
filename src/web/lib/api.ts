@@ -7,6 +7,7 @@ import type {
   InviteInfoResponse,
   LoginRequest,
   MeResponse,
+  SessionResponse,
   ShowResponse,
   ShowSummaryDTO,
   ShowsResponse,
@@ -21,6 +22,17 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * The session is missing or expired (HTTP 401). Pages pass caught errors to
+ * `useApiErrorHandler()` (lib/auth.tsx), which signs the client out so `RequireAuth`
+ * redirects to /login?next=<current path>.
+ */
+export class UnauthorizedError extends ApiError {
+  constructor(message = "Not signed in") {
+    super(401, message);
+  }
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`/api${path}`, {
     method,
@@ -29,12 +41,14 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = (await res.json().catch(() => null)) as { error?: string } | null;
-  if (!res.ok) throw new ApiError(res.status, data?.error ?? `Request failed (${res.status})`);
+  const message = data?.error ?? `Request failed (${res.status})`;
+  if (res.status === 401) throw new UnauthorizedError(message);
+  if (!res.ok) throw new ApiError(res.status, message);
   return data as T;
 }
 
 export const api = {
-  me: () => request<MeResponse>("GET", "/me"),
+  me: () => request<SessionResponse>("GET", "/me"),
   login: (body: LoginRequest) => request<MeResponse>("POST", "/auth/login", body),
   logout: () => request<{ ok: true }>("POST", "/auth/logout", {}),
   listShows: () => request<ShowsResponse>("GET", "/shows"),

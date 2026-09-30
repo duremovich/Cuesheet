@@ -1,12 +1,14 @@
 /*
  * Theme tokens. Every color in the app comes from these variables; never hardcode colors
  * in components. Dark is the default; <html data-theme="light"> switches to light.
- * The choice is made before first paint by the inline script in index.html
- * (stored choice > prefers-color-scheme: light > dark). See src/web/lib/theme.ts.
+ * The choice is made before first paint by the inline script in index.html: the user's
+ * stored choice, otherwise dark. The system color scheme (prefers-color-scheme) is ignored.
+ * See src/web/lib/theme.ts.
  *
  * Contrast: text / text-muted / status colors / option fg-on-bg pairs meet WCAG AA (4.5:1)
- * on bg, surface and surface-raised in both themes. src/web/styles/theme.test.ts checks this;
- * keep it passing when you change a value.
+ * on bg, surface and surface-raised in both themes. Dark surfaces are never pure black or
+ * white; pure white surfaces are intended in LIGHT mode only. src/web/styles/theme.test.ts
+ * checks all of this; keep it passing when you change a value.
  */
 
 :root,
