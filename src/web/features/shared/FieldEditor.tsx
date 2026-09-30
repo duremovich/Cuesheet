@@ -29,6 +29,9 @@ export function FieldEditor<Row>({
     const v = panelCommit(col, row, next);
     if (v !== undefined) onCommit(v);
   };
+  if (col.masked) {
+    return <MaskedField col={col} value={value} editable={editable} onCommit={commit} />;
+  }
 
   if (!editable) return <ReadValue col={col} value={value} />;
   switch (col.type) {
@@ -56,6 +59,54 @@ export function FieldEditor<Row>({
     default:
       return <ReadValue col={col} value={value} />;
   }
+}
+
+/**
+ * A sensitive field (a password): dots until "Reveal" (per panel visit), then the value,
+ * editable for editors. "Hide" masks it again.
+ */
+function MaskedField<Row>({
+  col,
+  value,
+  editable,
+  onCommit,
+}: {
+  col: Column<Row>;
+  value: unknown;
+  editable: boolean;
+  onCommit: (v: unknown) => void;
+}) {
+  const [shown, setShown] = useState(false);
+  const text = formatValue(col, value);
+  const plain = { ...col, masked: false };
+  return (
+    <span className={styles.pickerField} data-testid="masked-field">
+      {shown ? (
+        editable ? (
+          <TextField col={plain} value={value} onCommit={onCommit} />
+        ) : (
+          <span className={styles.value}>{text || "—"}</span>
+        )
+      ) : text ? (
+        <span className={styles.value} role="img" aria-label={`${col.title} hidden`}>
+          ••••••
+        </span>
+      ) : (
+        <Empty />
+      )}
+      {(text || editable) && (
+        <button
+          type="button"
+          className={styles.pickButton}
+          aria-pressed={shown}
+          aria-label={`${shown ? "Hide" : "Reveal"} ${col.title}`}
+          onClick={() => setShown((x) => !x)}
+        >
+          {shown ? "Hide" : "Reveal"}
+        </button>
+      )}
+    </span>
+  );
 }
 
 function ReadValue<Row>({ col, value }: { col: Column<Row>; value: unknown }) {

@@ -1,6 +1,6 @@
 // One-click color rule presets (ux.md §Conditional formatting). Adding one: return it from
 // `colorPresets` for its table (see CLAUDE.md "Saved views").
-import type { DataTableName } from "../../../shared/tables";
+import type { ViewTable } from "../../../shared/tables";
 import type { ColorRule, OptionColor } from "../../../shared/views";
 import { OPTION_COLORS } from "../../components/grid/types";
 import type { FieldDef } from "./evaluate";
@@ -25,7 +25,7 @@ export function rowsBySelect(field: Pick<FieldDef<unknown>, "key" | "options">):
 }
 
 export function colorPresets<V>(
-  table: DataTableName,
+  table: ViewTable,
   fields: ReadonlyMap<string, FieldDef<V>>,
 ): ColorPreset[] {
   const out: ColorPreset[] = [];

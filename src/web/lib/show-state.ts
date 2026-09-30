@@ -1,6 +1,8 @@
 // Pure, immutable show state for the client store (./show-store.ts): building it from a
 // snapshot, resolving ops locally the way the server will (optimistic updates), and
 // applying resolved ops. Untouched rows keep their identity so React selectors stay cheap.
+
+import { customTableRef, fieldTableOf, refitValue, targetNameOf } from "../../shared/custom-fields";
 import {
   type AnyOp,
   type AnyResolvedOp,
@@ -16,9 +18,9 @@ import { compareOrder, effectivePlacement, orderKeyFor } from "../../shared/orde
 import { pageForBlock } from "../../shared/script";
 import {
   type AnyRow,
-  ATTACHMENT_FIELDS,
   type ContentVersionRow,
   type CueAnchorRow,
+  type CustomFieldRow,
   FIELDS,
   type FieldOptions,
   type FieldSpec,
@@ -70,8 +72,13 @@ export function emptyData(): ShowData {
       scripts: new Map(),
       script_versions: new Map(),
       cue_anchors: new Map(),
+      custom_fields: new Map(),
+      custom_tables: new Map(),
+      custom_rows: new Map(),
+      shot_lists: new Map(),
+      shots: new Map(),
     },
-    order: { scenes: [], cues: [], content: [], surfaces: [] },
+    order: { scenes: [], cues: [], content: [], surfaces: [], shots: [], custom_rows: [] },
     joins: {
       cueContent: new Map(),
       cueAssignees: new Map(),
@@ -79,6 +86,8 @@ export function emptyData(): ShowData {
       noteAssignees: new Map(),
       sceneSurfaces: new Map(),
       contentSurfaces: new Map(),
+      shotTalent: new Map(),
+      shotContent: new Map(),
     },
     fieldOptions: {},
     meta: NO_META,
@@ -218,6 +227,82 @@ export function resolveLocal(data: ShowData, ops: AnyOp[], ctx: LocalContext): A
       state = applyResolved(state, more);
       out.push(...more);
     }
+    if (op.table === "custom_fields" && op.op === "update") {
+      const before = data.tables.custom_fields.get(op.id);
+      const after = state.tables.custom_fields.get(op.id);
+      const more = before && after ? refitOps(state, before, after, ctx) : [];
+      state = applyResolved(state, more);
+      out.push(...more);
+    }
+  }
+  return out;
+}
+
+/** Rows (table + row) of a field table whose `custom` holds `key`. */
+function rowsWithKey(
+  data: ShowData,
+  fieldTable: string,
+  key: string,
+): { table: TableName; row: AnyRow }[] {
+  const out: { table: TableName; row: AnyRow }[] = [];
+  if (fieldTable.startsWith("custom:")) {
+    const tid = fieldTable.slice(7);
+    for (const id of data.order.custom_rows) {
+      const row = data.tables.custom_rows.get(id);
+      if (row && row.table_id === tid && Object.hasOwn(row.custom, key)) {
+        out.push({ table: "custom_rows", row });
+      }
+    }
+    return out;
+  }
+  const map = (data.tables as Record<string, RowMap | undefined>)[fieldTable];
+  for (const row of map?.values() ?? []) {
+    if (Object.hasOwn(row.custom, key)) out.push({ table: fieldTable as TableName, row });
+  }
+  return out;
+}
+
+/** Like the server: values that no longer fit a changed field are cleared. */
+function refitOps(
+  data: ShowData,
+  before: CustomFieldRow,
+  after: CustomFieldRow,
+  ctx: LocalContext,
+): ResolvedOp[] {
+  if (before.type === after.type && jsonEqual(before.options, after.options)) return [];
+  const stamp = { updated_at: ctx.now, updated_by: ctx.userId };
+  const out: ResolvedOp[] = [];
+  for (const { table, row } of rowsWithKey(data, after.table, after.key)) {
+    const v = row.custom[after.key];
+    const next = refitValue(before.type, after, v);
+    if (jsonEqual(next ?? null, v ?? null)) continue;
+    const custom = { ...row.custom };
+    if (next === null) delete custom[after.key];
+    else custom[after.key] = next as never;
+    out.push({ op: "update", table, id: row.id, fields: { custom, ...stamp } });
+  }
+  return out;
+}
+
+/** Updates that remove a key (or one linked id) from rows' custom values. */
+function customValueOps(
+  data: ShowData,
+  fieldTable: string,
+  key: string,
+  stamp: { updated_at: number; updated_by: string },
+  removeId?: string,
+): ResolvedOp[] {
+  const out: ResolvedOp[] = [];
+  for (const { table, row } of rowsWithKey(data, fieldTable, key)) {
+    const custom = { ...row.custom };
+    if (removeId !== undefined) {
+      const list = custom[key];
+      if (!Array.isArray(list) || !list.includes(removeId)) continue;
+      const next = list.filter((x) => x !== removeId);
+      if (next.length) custom[key] = next;
+      else delete custom[key];
+    } else delete custom[key];
+    out.push({ op: "update", table, id: row.id, fields: { custom, ...stamp } });
   }
   return out;
 }
@@ -504,6 +589,45 @@ function cascade(
   stamp: { updated_at: number; updated_by: string },
 ): ResolvedOp[] {
   const out: ResolvedOp[] = [];
+  const row = (data.tables[table] as RowMap).get(id) as unknown as
+    | Record<string, unknown>
+    | undefined;
+  if (table === "custom_fields" && row) {
+    const f = row as unknown as CustomFieldRow;
+    out.push(...customValueOps(data, f.table, f.key, stamp));
+    if (f.type === "attachment") {
+      for (const a of data.tables.attachments.values()) {
+        if (a.field !== f.key) continue;
+        const owner =
+          a.table === "custom_rows" ? data.tables.custom_rows.get(a.record_id) : undefined;
+        const ft = fieldTableOf(a.table, owner ?? null);
+        if (ft === f.table) out.push({ op: "delete", table: "attachments", id: a.id });
+      }
+    }
+  }
+  if (table === "custom_tables") {
+    const ref = customTableRef(id);
+    for (const f of data.tables.custom_fields.values()) {
+      if (f.table === ref || f.options.target === ref) {
+        out.push(...cascade(data, "custom_fields", f.id, stamp), {
+          op: "delete",
+          table: "custom_fields",
+          id: f.id,
+        });
+      }
+    }
+    for (const v of data.tables.views.values()) {
+      if (v.table === ref) out.push({ op: "delete", table: "views", id: v.id });
+    }
+  }
+  const target = row ? targetNameOf(table, row) : null;
+  if (target) {
+    for (const f of data.tables.custom_fields.values()) {
+      if (f.type === "link" && f.options.target === target) {
+        out.push(...customValueOps(data, f.table, f.key, stamp, id));
+      }
+    }
+  }
   for (const spec of Object.values(LINKS) as LinkSpec[]) {
     const field = linkFieldName(spec);
     if (spec.from === table) {
@@ -541,7 +665,7 @@ function cascade(
       }
     }
   }
-  if (ATTACHMENT_FIELDS[table]) {
+  if (table !== "attachments" && table !== "custom_fields") {
     const files = [...data.tables.attachments.values()]
       .filter((a) => a.table === table && a.record_id === id)
       .sort((a, b) => (a.position ?? 0) - (b.position ?? 0) || (a.id < b.id ? -1 : 1));

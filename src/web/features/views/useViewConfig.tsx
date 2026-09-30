@@ -16,11 +16,11 @@ import {
 import { useSearchParams } from "react-router";
 import { newId } from "../../../shared/ids";
 import type { Op } from "../../../shared/ops";
-import type { DataTableName, ViewRow } from "../../../shared/tables";
+import type { ViewRow, ViewTable } from "../../../shared/tables";
 import type { Unit } from "../../../shared/units";
 import {
-  DEFAULT_VIEW_NAMES,
   defaultViewConfig,
+  defaultViewName,
   normalizeViewConfig,
   type ViewConfig,
   type ViewLayout,
@@ -42,6 +42,9 @@ import {
   useShowStoreInstance,
   useViewsFor,
 } from "../../lib/show-store";
+import { setActiveExport } from "../export/activeExport";
+import { csvFileName, downloadText, toCsv } from "../export/csv";
+import { type ExportOptions, exportRows } from "../export/exportView";
 import { groupOrder, placementFor } from "../shared/ops";
 import { readPref, writePref } from "../shared/prefs";
 import { useMediaQuery } from "../shared/useMediaQuery";
@@ -87,7 +90,7 @@ export interface SortPreset {
 }
 
 export interface ViewSetup<V> {
-  table: DataTableName;
+  table: ViewTable;
   /** Every column in default order (the view picks, orders and sizes them). */
   columns: Column<V>[];
   /** Fields to filter/color by that aren't columns (e.g. a cue's open-note count). */
@@ -117,6 +120,17 @@ export interface ViewSetup<V> {
   sortNow?: { label: string; run: () => Promise<boolean> };
   /** The table can be shown as a gallery (R19): the view bar offers the toggle and preset. */
   gallery?: { presetName: string };
+  /**
+   * The table's custom fields live on this field table (`cues`, `custom:<id>`): the Fields
+   * popover offers the Fields manager (R9). Omit: no custom fields.
+   */
+  fieldTable?: string;
+  /** One-click personal views under My views (e.g. the shots' "Shot list" print layout). */
+  viewPresets?: { name: string; config: ViewConfig }[];
+  /** The table's name in export file names ("Cues"). */
+  exportTitle?: string;
+  /** Rows left out of exports (section dividers). */
+  isSection?: (v: V) => boolean;
 }
 
 export interface ViewState<V> {
@@ -164,6 +178,8 @@ export interface ViewState<V> {
   viewUnit: Unit | undefined;
   /** The saved view shown (null: the built-in default), e.g. for the Print view link. */
   viewId: string | null;
+  /** Download the view as CSV (R26). */
+  exportCsv: (opts?: ExportOptions & { bom?: boolean }) => void;
 }
 
 const NO_IDS: string[] = [];
@@ -596,7 +612,7 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
                 id,
                 fields: {
                   table,
-                  name: DEFAULT_VIEW_NAMES[table],
+                  name: defaultViewName(table),
                   is_default: true,
                   config: entry.config,
                 },
@@ -991,6 +1007,32 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
   const shownCount = shownIds.size;
   const filtered = config.filters.some(isComplete) && shownCount < setup.rows.length;
 
+  // --- CSV export (R26): what's on screen, as the grid shows it ---
+  const exportRef = useRef({ columns, out, sort, allColumns, groupField, current, setup });
+  exportRef.current = { columns, out, sort, allColumns, groupField, current, setup };
+  const exportCsv = useCallback(
+    (opts: ExportOptions & { bom?: boolean } = {}) => {
+      const x = exportRef.current;
+      const rows = exportRows(
+        {
+          columns: x.columns,
+          ...(x.out.groups ? { groups: x.out.groups } : { rows: x.out.rows ?? [] }),
+          sort: x.sort,
+          sortColumns: x.allColumns,
+          ...(x.groupField ? { groupTitle: x.groupField.title } : {}),
+          ...(x.setup.isSection ? { isSection: x.setup.isSection } : {}),
+        },
+        opts,
+      );
+      downloadText(
+        toCsv(rows, { bom: opts.bom ?? false }),
+        csvFileName(x.setup.exportTitle ?? table, x.current?.name ?? defaultViewName(table)),
+      );
+    },
+    [table],
+  );
+  useEffect(() => setActiveExport(() => exportCsv({ bom: true })), [exportCsv]);
+
   const toolbar = (
     <>
       <ViewBar
@@ -1011,6 +1053,10 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
         sortNow={canEdit ? setup.sortNow : undefined}
         unitOverride={showUnits ? { editable: canEdit || isPersonal } : undefined}
         gallery={setup.gallery}
+        fieldTable={setup.fieldTable}
+        viewPresets={setup.viewPresets}
+        onExport={exportCsv}
+        canExportSensitive={ws.role === "owner"}
       />
       {showUnits && (
         <>
@@ -1048,6 +1094,7 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
     unit,
     viewUnit: config.unit,
     viewId: current?.id ?? null,
+    exportCsv,
   };
 }
 

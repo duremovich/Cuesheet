@@ -1,7 +1,11 @@
 // Thin fetch wrapper for /api. Every call is same-origin and sends the session cookie.
+
+import type { ImportMapping } from "../../shared/airtable-columns";
 import type {
   AcceptInviteRequest,
   AddMemberRequest,
+  CloneShowRequest,
+  CloneShowResponse,
   CreateInviteRequest,
   CreateInviteResponse,
   CreateShowRequest,
@@ -113,15 +117,26 @@ export const api = {
     for (const [k, v] of Object.entries(q)) if (v !== undefined) params.set(k, String(v));
     return request<HistoryResponse>("GET", showPath(id, `/history?${params}`));
   },
-  /** `append`: import into a show that already has data (else the server answers 409). */
+  /**
+   * Copy a show's structure into a new show (R27): surfaces, scenes (unless
+   * `includeScenes: false`), custom tables and fields, shared views; `asTemplate` makes the
+   * copy a template.
+   */
+  cloneShow: (id: string, body: CloneShowRequest) =>
+    request<CloneShowResponse>("POST", showPath(id, "/clone"), body),
+  /**
+   * `append`: import into a show that already has data (else the server answers 409).
+   * `mapping`: the preview's choices (custom fields for unmapped columns, custom tables).
+   */
   importAirtable: (
     id: string,
     files: File[],
-    opts: { clientId?: string; append?: boolean } = {},
+    opts: { clientId?: string; append?: boolean; mapping?: ImportMapping } = {},
   ) => {
     const form = new FormData();
     for (const f of files) form.append("files", f);
     if (opts.clientId) form.append("clientId", opts.clientId);
+    if (opts.mapping) form.append("mapping", JSON.stringify(opts.mapping));
     const q = opts.append ? "?append=1" : "";
     return request<ImportResponse>("POST", showPath(id, `/import/airtable${q}`), form);
   },

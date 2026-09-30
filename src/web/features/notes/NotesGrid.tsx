@@ -24,6 +24,8 @@ const DONE_COLLAPSED = [statusGroupId("Done")];
 const ADD_TO_OPEN = { groupId: statusGroupId("Open") };
 const selectState = (s: ShowState) => s;
 
+const CUSTOM = { fieldTable: "notes", rowOf: (v: NoteView) => v.note };
+
 export function NotesGrid() {
   const ws = useWorkspace();
   const store = useShowStoreInstance();
@@ -90,6 +92,7 @@ export function NotesGrid() {
   return (
     <TableGrid<NoteView>
       tab="notes"
+      custom={CUSTOM}
       title="Notes"
       label="Notes"
       noun="note"

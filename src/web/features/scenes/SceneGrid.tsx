@@ -8,6 +8,8 @@ import { TableGrid } from "../shared/TableGrid";
 import { useWorkspace } from "../show/workspace";
 import { type SceneView, sceneColumns, sceneEditOps } from "./columns";
 
+const CUSTOM = { fieldTable: "scenes", rowOf: (v: SceneView) => v.scene };
+
 export function SceneGrid() {
   const { canEdit } = useWorkspace();
   const scenes = useShowStore((s) => s.tables.scenes);
@@ -58,6 +60,7 @@ export function SceneGrid() {
   return (
     <TableGrid<SceneView>
       tab="scenes"
+      custom={CUSTOM}
       title="Scenes"
       label="Scene list"
       noun="scene"

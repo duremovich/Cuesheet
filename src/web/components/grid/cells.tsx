@@ -97,8 +97,34 @@ export function CellContent<Row>({
       return <span className={styles.readonly}>{formatValue(col, value)}</span>;
     case "attachment":
       return <span className={styles.readonly}>{formatValue(col, value)}</span>;
-    default:
-      return <span className={styles.text}>{formatValue(col, value)}</span>;
+    default: {
+      const text = formatValue(col, value);
+      if (col.masked && text) {
+        return (
+          <span className={styles.text} data-masked="">
+            <span aria-hidden="true">••••••</span>
+            <span className={styles.visuallyHidden}>hidden</span>
+          </span>
+        );
+      }
+      const url = text ? col.href?.(value) : null;
+      if (url) {
+        return (
+          <span className={styles.text}>
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              tabIndex={-1}
+              className={styles.cellLink}
+            >
+              {text}
+            </a>
+          </span>
+        );
+      }
+      return <span className={styles.text}>{text}</span>;
+    }
   }
 }
 

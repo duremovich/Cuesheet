@@ -14,6 +14,7 @@ import { api } from "../../lib/api";
 import { useApiErrorHandler } from "../../lib/auth";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
 import { setUserUnit, useUserUnit } from "../views/units";
+import { ShowStructureSettings } from "./ShowStructureSettings";
 import styles from "./ShowWorkspace.module.css";
 import { useWorkspace } from "./workspace";
 
@@ -133,6 +134,7 @@ function SettingsBody({
         </section>
       )}
       <StorageUsage />
+      <ShowStructureSettings close={close} />
       <section>
         <h3>Members</h3>
         {members === null && <p className="muted">Loading…</p>}

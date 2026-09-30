@@ -10,6 +10,7 @@ import {
 } from "react-router";
 import { ContentGrid } from "./features/content/ContentGrid";
 import { CueGrid } from "./features/cues/CueGrid";
+import { CustomTableGrid } from "./features/custom/CustomTableGrid";
 import { NotesGrid } from "./features/notes/NotesGrid";
 import { PeopleGrid } from "./features/people/PeopleGrid";
 import { CallingScriptPrint } from "./features/print/CallingScriptPrint";
@@ -17,6 +18,7 @@ import { TablePrintRoute } from "./features/print/TablePrintRoute";
 import { QuickAddPage } from "./features/quick/QuickAddPage";
 import { SceneGrid } from "./features/scenes/SceneGrid";
 import { ScriptPage } from "./features/script/ScriptPage";
+import { ShotGrid } from "./features/shots/ShotGrid";
 import { SurfaceGrid } from "./features/surfaces/SurfaceGrid";
 import { TechPage } from "./features/tech/TechPage";
 import { AuthProvider, RequireAuth } from "./lib/auth";
@@ -33,6 +35,7 @@ const GRIDS = {
   scenes: SceneGrid,
   content: ContentGrid,
   surfaces: SurfaceGrid,
+  shots: ShotGrid,
   notes: NotesGrid,
   people: PeopleGrid,
 };
@@ -50,6 +53,8 @@ const router = createBrowserRouter([
       { path: "scenes", element: <SceneGrid /> },
       { path: "content", element: <ContentGrid /> },
       { path: "surfaces", element: <SurfaceGrid /> },
+      { path: "shots", element: <ShotGrid /> },
+      { path: "tables/:tableId", element: <CustomTableGrid /> },
       { path: "notes", element: <NotesGrid /> },
       { path: "people", element: <PeopleGrid /> },
       { path: "script", element: <ScriptPage /> },

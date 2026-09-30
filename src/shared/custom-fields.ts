@@ -233,7 +233,8 @@ export function checkCustomValue(
     }
     case "date": {
       const m = typeof value === "string" ? DATE_RE.exec(value) : null;
-      if (!m || !validDate(Number(m[1]), Number(m[2]), Number(m[3]))) return bad("a YYYY-MM-DD date");
+      if (!m || !validDate(Number(m[1]), Number(m[2]), Number(m[3])))
+        return bad("a YYYY-MM-DD date");
       return { value };
     }
     case "datetime": {
@@ -255,7 +256,12 @@ export function checkCustomValue(
       if (typeof value !== "string" || !TIMECODE_RE.test(value)) return bad("hh:mm:ss:ff");
       return { value };
     case "measurement":
-      if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > MAX_LENGTH_M) {
+      if (
+        typeof value !== "number" ||
+        !Number.isFinite(value) ||
+        value < 0 ||
+        value > MAX_LENGTH_M
+      ) {
         return bad(`a length in meters (0–${MAX_LENGTH_M})`);
       }
       return { value };
@@ -304,7 +310,8 @@ export function checkFieldOptions(
       const value = (c as CustomOption).value;
       if (seen.has(value)) return { error: `choice "${value}" is listed twice` };
       seen.add(value);
-      const color = typeof (c as CustomOption).color === "string" ? (c as CustomOption).color : "gray";
+      const color =
+        typeof (c as CustomOption).color === "string" ? (c as CustomOption).color : "gray";
       choices.push({ value, color });
     }
     out.choices = choices;
@@ -340,6 +347,45 @@ export function isSensitive(field: Pick<CustomFieldDef, "options">): boolean {
 const TEXT_LIKE = new Set<CustomFieldType>(["text", "longtext", "url"]);
 export function keepsValues(from: CustomFieldType, to: CustomFieldType): boolean {
   return from === to || (TEXT_LIKE.has(from) && TEXT_LIKE.has(to));
+}
+
+/**
+ * A stored value after its field changed from `oldType` (or its options changed): kept when
+ * it still fits, else null (cleared). A multi-select keeps the choices that still exist.
+ * The engine and the client's optimistic mirror both use this.
+ */
+export function refitValue(
+  oldType: string,
+  def: Pick<CustomFieldDef, "type" | "options" | "label" | "key">,
+  v: unknown,
+): unknown {
+  const typeChanged = oldType !== def.type;
+  if (typeChanged && !(isCustomFieldType(oldType) && keepsValues(oldType, def.type))) return null;
+  if (!isStoredType(def.type)) return null;
+  if (def.type === "multiselect" && Array.isArray(v)) {
+    const ok = new Set((def.options.choices ?? []).map((c) => c.value));
+    const kept = v.filter((x) => typeof x === "string" && ok.has(x));
+    return kept.length ? kept : null;
+  }
+  const r = checkCustomValue(def, v);
+  return "error" in r ? null : r.value;
+}
+
+/** The field table of a row: its core table, or `custom:<table_id>` for a custom row. */
+export function fieldTableOf(table: string, row: { table_id?: unknown } | null): string | null {
+  if ((CUSTOM_FIELD_CORE_TABLES as readonly string[]).includes(table)) return table;
+  if (table === "custom_rows" && row && typeof row.table_id === "string") {
+    return customTableRef(row.table_id);
+  }
+  return null;
+}
+
+/** The link target name a record of `table` answers to (custom rows: their table). */
+export function targetNameOf(table: string, row: { table_id?: unknown }): string | null {
+  if (table === "custom_rows") {
+    return typeof row.table_id === "string" ? customTableRef(row.table_id) : null;
+  }
+  return (LINK_TARGET_TABLES as readonly string[]).includes(table) ? table : null;
 }
 
 /** How a custom field filters in a view (see views.ts `FieldKind`). */
@@ -407,7 +453,8 @@ export function guessFieldType(header: string, rawValues: readonly string[]): Fi
   if (values.every((v) => v.toLowerCase() === "checked")) return { type: "checkbox", options: {} };
   if (values.every((v) => URL_VALUE.test(v))) return { type: "url", options: {} };
   if (values.every((v) => IP_VALUE.test(v))) return { type: "text", options: {} };
-  if (values.every((v) => ISO_DATE.test(v) || US_DATE.test(v))) return { type: "date", options: {} };
+  if (values.every((v) => ISO_DATE.test(v) || US_DATE.test(v)))
+    return { type: "date", options: {} };
   if (values.every((v) => NUMBER_VALUE.test(v))) return { type: "number", options: {} };
   if (values.some((v) => v.length > 100 || v.includes("\n"))) {
     return { type: "longtext", options: {} };
@@ -422,7 +469,10 @@ export function guessFieldType(header: string, rawValues: readonly string[]): Fi
     return {
       type: "select",
       options: {
-        choices: distinct.map((value, i) => ({ value, color: colors[i % colors.length] as string })),
+        choices: distinct.map((value, i) => ({
+          value,
+          color: colors[i % colors.length] as string,
+        })),
       },
     };
   }

@@ -13,7 +13,7 @@ import {
   isCustomKey,
   isFieldTable,
   isStoredType,
-  keepsValues,
+  refitValue,
 } from "../../shared/custom-fields";
 import { isValidId, newId } from "../../shared/ids";
 import type {
@@ -1332,7 +1332,8 @@ export class Batch {
       if (def.type === "link") {
         const target = def.options.target ?? "";
         for (const tid of (r.value as string[] | null) ?? []) {
-          if (!this.targetExists(target, tid)) this.fail(`${table}.custom.${k}: ${target} ${tid} not found`);
+          if (!this.targetExists(target, tid))
+            this.fail(`${table}.custom.${k}: ${target} ${tid} not found`);
         }
       }
       out[k] = r.value;
@@ -1369,7 +1370,12 @@ export class Batch {
         this.fail("custom_fields.key must be a lowercase slug (a-z, 0-9, _), at most 40 long");
       }
       const dup = this.sql
-        .exec('SELECT 1 FROM custom_fields WHERE "table" = ? AND key = ? AND id != ?', row.table, row.key, id)
+        .exec(
+          'SELECT 1 FROM custom_fields WHERE "table" = ? AND key = ? AND id != ?',
+          row.table,
+          row.key,
+          id,
+        )
         .toArray();
       if (dup.length > 0) this.fail(`${row.table} already has a field "${row.key}"`);
     }
@@ -1396,21 +1402,10 @@ export class Batch {
     const oldType = String(before.type);
     const typeChanged = oldType !== def.type;
     if (!typeChanged && before.options === after.options) return;
-    const clearAll = typeChanged && !(isCustomFieldType(oldType) && keepsValues(oldType, def.type));
     for (const { table, row } of this.rowsWithKey(def.table, def.key)) {
       const custom = parseJson<Record<string, unknown>>(row.custom, {});
       const v = custom[def.key];
-      let next: unknown = null;
-      if (!clearAll && isStoredType(def.type)) {
-        if (def.type === "multiselect" && Array.isArray(v)) {
-          const ok = new Set((def.options.choices ?? []).map((c) => c.value));
-          const kept = v.filter((x) => typeof x === "string" && ok.has(x));
-          next = kept.length ? kept : null;
-        } else {
-          const r = checkCustomValue(def, v);
-          next = "error" in r ? null : r.value;
-        }
-      }
+      const next = refitValue(oldType, def, v);
       if (sameValue(next, v)) continue;
       const merged = { ...custom };
       if (next === null) delete merged[def.key];
@@ -1490,7 +1485,8 @@ export class Batch {
       .toArray()
       .filter((f) => f.table === ref || toFieldDef(f).options.target === ref);
     for (const f of fields) {
-      if (this.getRow("custom_fields", f.id as string)) this.remove("custom_fields", f.id as string, f);
+      if (this.getRow("custom_fields", f.id as string))
+        this.remove("custom_fields", f.id as string, f);
     }
     const views = this.sql
       .exec<DbRow>('SELECT * FROM views WHERE "table" = ? ORDER BY id', ref)

@@ -620,3 +620,13 @@
   cursor: help;
   white-space: nowrap;
 }
+
+/* A URL cell (Column.href): a link that doesn't steal the cell's focus. */
+.cellLink {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.cellLink:hover {
+  color: var(--color-accent-hover);
+}

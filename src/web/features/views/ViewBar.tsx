@@ -4,7 +4,7 @@
 // `actions.update`, which decides between a draft, a save, or a personal copy.
 
 import { type RefObject, useLayoutEffect, useRef, useState } from "react";
-import type { DataTableName, ViewRow } from "../../../shared/tables";
+import type { ViewRow, ViewTable } from "../../../shared/tables";
 import { isUnit, UNIT_LABELS, UNITS } from "../../../shared/units";
 import {
   type ColorRule,
@@ -14,6 +14,7 @@ import {
   type ViewConfig,
 } from "../../../shared/views";
 import { type Column, OPTION_COLORS } from "../../components/grid/types";
+import { FieldsManager } from "../custom/FieldsManager";
 import { type FieldDef, fieldList, isComplete, withFieldOrder } from "./evaluate";
 import { FilterEditor, newFilter } from "./FilterEditor";
 import { isGroupable } from "./grouping";
@@ -23,7 +24,7 @@ import type { SortPreset, ViewActions } from "./useViewConfig";
 import styles from "./ViewBar.module.css";
 
 export interface ViewBarProps<V> {
-  table: DataTableName;
+  table: ViewTable;
   current: ViewRow | null;
   shared: ViewRow[];
   mine: ViewRow[];
@@ -46,6 +47,14 @@ export interface ViewBarProps<V> {
    * wins over everyone's own unit). `editable`: editors (and a personal view's owner).
    */
   unitOverride?: { editable: boolean } | undefined;
+  /** The table's custom fields (Fields → the Fields manager, R9); omit: none. */
+  fieldTable?: string | undefined;
+  /** One-click personal views under My views. */
+  viewPresets?: { name: string; config: ViewConfig }[] | undefined;
+  /** Export CSV (R26). */
+  onExport?: ((opts: { bom?: boolean; includeSensitive?: boolean }) => void) | undefined;
+  /** Owners may include sensitive (masked) fields in an export. */
+  canExportSensitive?: boolean;
 }
 
 function move<T>(list: readonly T[], from: number, to: number): T[] {
@@ -93,7 +102,54 @@ export function ViewBar<V>(p: ViewBarProps<V>) {
       <RowHeightPanel {...p} />
       <ColorPanel {...p} />
       {p.gallery && <LayoutToggle {...p} />}
+      {p.onExport && <ExportPanel {...p} />}
     </div>
+  );
+}
+
+// ---- Export (R26) ----
+
+function ExportPanel<V>({ onExport, canExportSensitive, columns }: ViewBarProps<V>) {
+  const [bom, setBom] = useState(true);
+  const [sensitive, setSensitive] = useState(false);
+  const hasSensitive = columns.some((c) => c.masked);
+  return (
+    <Popover label="Export CSV" testId="view-export" button="Export">
+      {(close) => (
+        <div className={styles.stack}>
+          <p className={styles.muted}>
+            The rows and fields of this view, as shown (filters, sort and grouping).
+          </p>
+          <label className={styles.check}>
+            <input type="checkbox" checked={bom} onChange={(e) => setBom(e.target.checked)} />
+            For Excel (UTF-8 byte order mark)
+          </label>
+          {hasSensitive && (
+            <label className={styles.check}>
+              <input
+                type="checkbox"
+                checked={sensitive}
+                disabled={!canExportSensitive}
+                onChange={(e) => setSensitive(e.target.checked)}
+              />
+              Include sensitive fields{canExportSensitive ? "" : " (owner only)"}
+            </label>
+          )}
+          <div className={styles.row}>
+            <button
+              type="button"
+              className={styles.primary}
+              onClick={() => {
+                onExport?.({ bom, includeSensitive: sensitive && !!canExportSensitive });
+                close();
+              }}
+            >
+              Download CSV
+            </button>
+          </div>
+        </div>
+      )}
+    </Popover>
   );
 }
 
@@ -108,6 +164,7 @@ function ViewSwitcher<V>({
   actions,
   dirty,
   gallery,
+  viewPresets,
 }: ViewBarProps<V>) {
   const [form, setForm] = useState<null | { kind: "mine" | "shared" | "rename"; name: string }>(
     null,
@@ -182,6 +239,22 @@ function ViewSwitcher<V>({
                   </button>
                 </li>
               )}
+              {viewPresets
+                ?.filter((p) => !mine.some((v) => v.name === p.name))
+                .map((p) => (
+                  <li key={p.name}>
+                    <button
+                      type="button"
+                      className={styles.linkButton}
+                      onClick={() => {
+                        actions.createPersonal(p.name, p.config);
+                        close();
+                      }}
+                    >
+                      + {p.name}
+                    </button>
+                  </li>
+                ))}
             </ul>
           </section>
           {form ? (
@@ -577,7 +650,14 @@ function GroupPanel<V>({ config, fields, actions }: ViewBarProps<V>) {
 
 // ---- Fields ----
 
-function FieldsPanel<V>({ config, columns, actions, unitOverride }: ViewBarProps<V>) {
+function FieldsPanel<V>({
+  config,
+  columns,
+  actions,
+  unitOverride,
+  fieldTable,
+  canEdit,
+}: ViewBarProps<V>) {
   const list = fieldList(columns, config);
   const hiddenCount = list.filter((f) => f.hidden).length;
   const [dragging, setDragging] = useState<number | null>(null);
@@ -705,6 +785,7 @@ function FieldsPanel<V>({ config, columns, actions, unitOverride }: ViewBarProps
             </label>
           </div>
         )}
+        {fieldTable && <FieldsManager fieldTable={fieldTable} canEdit={canEdit} />}
       </div>
     </Popover>
   );

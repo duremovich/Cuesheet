@@ -2,7 +2,7 @@
 // normalisation (client), and the default view each data table starts with.
 // Filters, sorts, grouping and color rules are evaluated on the client, over the grid's
 // columns (src/web/features/views/). See CLAUDE.md "Saved views".
-import { customFieldKind, customColumnKey, type CustomFieldDef } from "./custom-fields";
+import { type CustomFieldDef, customColumnKey, customFieldKind } from "./custom-fields";
 import { type DataTableName, isDataTable, OPTION_COLORS, type ViewTable } from "./tables";
 import { isUnit, UNITS, type Unit } from "./units";
 

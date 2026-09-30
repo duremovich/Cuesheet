@@ -32,7 +32,6 @@ export interface CsvFile {
 
 type CsvRow = Record<string, string>;
 
-
 export function parseCsv(text: string): { headers: string[]; rows: CsvRow[] } {
   const res = Papa.parse<CsvRow>(text.replace(/^﻿/, ""), {
     header: true,

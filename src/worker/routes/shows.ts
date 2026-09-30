@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
+import type { ImportMapping } from "../../shared/airtable-columns";
 import {
   type CreateShowRequest,
   GRANTABLE_ROLES,
@@ -26,7 +27,6 @@ import { normalizeEmail } from "../auth/session";
 import { schema } from "../db/d1/client";
 import { RESERVED_KEYS } from "../do/ops-engine";
 import { SESSION_ID_HEADER, USER_ID_HEADER } from "../do/ShowDO";
-import type { ImportMapping } from "../../shared/airtable-columns";
 import { buildAirtableImport, type CsvFile } from "../import/airtable";
 import type { AppEnv } from "../types";
 import * as attachments from "./attachments";

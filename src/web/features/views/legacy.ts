@@ -3,7 +3,7 @@
 // layout overlay on the shared view you're on, collapsed groups move to the per-view key,
 // the old live sort is dropped (useViewConfig does the moving). Pure apart from the
 // injected storage, so it's unit-tested (legacy.test.ts).
-import type { DataTableName } from "../../../shared/tables";
+import type { ViewTable } from "../../../shared/tables";
 
 export interface KeyValueStore {
   getItem(key: string): string | null;
@@ -49,7 +49,7 @@ export function readLegacyPrefs(
   store: KeyValueStore,
   showId: string,
   userId: string,
-  table: DataTableName,
+  table: ViewTable,
 ): LegacyPrefs | null {
   const w = readJson(store, legacyKey.widths(showId, table));
   const widths: Record<string, number> = {};
@@ -80,7 +80,7 @@ export function clearLegacyPrefs(
   store: KeyValueStore,
   showId: string,
   userId: string,
-  table: DataTableName,
+  table: ViewTable,
 ): void {
   for (const key of [
     legacyKey.widths(showId, table),

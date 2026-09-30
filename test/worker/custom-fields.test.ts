@@ -4,8 +4,8 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import networkCsv from "../../examples/Network-Grid view.csv?raw";
-import referenceCsv from "../../examples/Reference Links-Grid view.csv?raw";
 import personnelCsv from "../../examples/Personnel-Grid view.csv?raw";
+import referenceCsv from "../../examples/Reference Links-Grid view.csv?raw";
 import type { Role } from "../../src/shared/api";
 import { customTableRef } from "../../src/shared/custom-fields";
 import { newId } from "../../src/shared/ids";
@@ -102,9 +102,9 @@ describe("custom fields: definitions", () => {
   it("is for editors and owners only", async () => {
     const stub = await freshShow();
     for (const role of ["commenter", "viewer"] as const) {
-      expect(fail(await stub.mutate(ctx(role, `u-${role}`), [field("cues", "x", "text")])).status).toBe(
-        403,
-      );
+      expect(
+        fail(await stub.mutate(ctx(role, `u-${role}`), [field("cues", "x", "text")])).status,
+      ).toBe(403);
     }
     ok(await stub.mutate(ctx("owner", "u-owner"), [field("cues", "x", "text")]));
   });
@@ -280,7 +280,14 @@ describe("custom fields: values", () => {
     expect(m.status).toBe(200);
     const bad = await post(
       `/api/shows/${show.id}/attachments/upload-url`,
-      { table: "cues", recordId: cue, field: "nope", filename: "a.png", contentType: "image/png", size: 3 },
+      {
+        table: "cues",
+        recordId: cue,
+        field: "nope",
+        filename: "a.png",
+        contentType: "image/png",
+        size: 3,
+      },
       admin,
     );
     expect(bad.status).toBe(400);
@@ -326,7 +333,12 @@ describe("custom tables", () => {
     const view = newId();
     ok(
       await stub.mutate(ctx(), [
-        { op: "create", table: "custom_tables", id: net, fields: { label: "Network", position: 1 } },
+        {
+          op: "create",
+          table: "custom_tables",
+          id: net,
+          fields: { label: "Network", position: 1 },
+        },
         { op: "create", table: "custom_tables", id: gear, fields: { label: "Gear", position: 2 } },
         field(customTableRef(net), "name", "text"),
         field(customTableRef(net), "ip", "text"),
@@ -338,8 +350,18 @@ describe("custom tables", () => {
           id: view,
           fields: { table: customTableRef(net), name: "All rows", is_default: true },
         },
-        { op: "create", table: "custom_rows", id: r1, fields: { table_id: net, custom: { name: "Mac" } } },
-        { op: "create", table: "custom_rows", id: r2, fields: { table_id: net, custom: { name: "LED" } } },
+        {
+          op: "create",
+          table: "custom_rows",
+          id: r1,
+          fields: { table_id: net, custom: { name: "Mac" } },
+        },
+        {
+          op: "create",
+          table: "custom_rows",
+          id: r2,
+          fields: { table_id: net, custom: { name: "LED" } },
+        },
         {
           op: "create",
           table: "custom_rows",
@@ -467,14 +489,24 @@ describe("custom tables", () => {
       ]),
     );
     const view = (await snapshot(stub)).tables.views.find((x) => x.id === v);
-    expect(view?.config).toMatchObject({ filters: [], group: { key: null }, fields: [], rowHeight: "tall" });
+    expect(view?.config).toMatchObject({
+      filters: [],
+      group: { key: null },
+      fields: [],
+      rowHeight: "tall",
+    });
   });
 
   it("views can't name a custom table that doesn't exist", async () => {
     const stub = await freshShow();
     fail(
       await stub.mutate(ctx(), [
-        { op: "create", table: "views", id: newId(), fields: { table: customTableRef(newId()), name: "x" } },
+        {
+          op: "create",
+          table: "views",
+          id: newId(),
+          fields: { table: customTableRef(newId()), name: "x" },
+        },
       ]),
     );
   });
@@ -487,13 +519,21 @@ describe("import: other CSVs become custom tables", () => {
     const personnel = `${personnelCsv.trimEnd().split("\n")[0]},Shirt size\r\nAlex Doe,Actor,alex@example.com,,Example Theatre,checked,,,M\r\n`;
     const form = new FormData();
     form.append("files", new File([networkCsv], "Network-Grid view.csv", { type: "text/csv" }));
-    form.append("files", new File([referenceCsv], "Reference Links-Grid view.csv", { type: "text/csv" }));
+    form.append(
+      "files",
+      new File([referenceCsv], "Reference Links-Grid view.csv", { type: "text/csv" }),
+    );
     form.append("files", new File([personnel], "Personnel-Grid view.csv", { type: "text/csv" }));
     form.append(
       "mapping",
       JSON.stringify({
         columns: [
-          { file: "Personnel-Grid view.csv", column: "Shirt size", label: "Shirt size", type: "select" },
+          {
+            file: "Personnel-Grid view.csv",
+            column: "Shirt size",
+            label: "Shirt size",
+            type: "select",
+          },
         ],
         tables: [{ file: "Reference Links-Grid view.csv", label: "Links" }],
       }),
@@ -528,7 +568,9 @@ describe("import: other CSVs become custom tables", () => {
     expect(snap.tables.views.filter((v) => v.table === ref)).toHaveLength(1);
     // Reference links: URL and checkbox columns.
     const links = snap.tables.custom_tables.find((t) => t.label === "Links");
-    const linkFields = snap.tables.custom_fields.filter((f) => f.table === customTableRef(links?.id ?? ""));
+    const linkFields = snap.tables.custom_fields.filter(
+      (f) => f.table === customTableRef(links?.id ?? ""),
+    );
     expect(linkFields.find((f) => f.key === "notes")?.type).toBe("url");
     expect(linkFields.find((f) => f.key === "pin")?.type).toBe("checkbox");
     // Personnel's extra column became a select custom field with a value.

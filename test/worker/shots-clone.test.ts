@@ -34,7 +34,12 @@ describe("shots", () => {
     const [list, s1, s2, person, content] = [newId(), newId(), newId(), newId(), newId()];
     ok(
       await stub.mutate(ctx, [
-        { op: "create", table: "shot_lists", id: list, fields: { name: "Day 1", shoot_date: "2026-10-02" } },
+        {
+          op: "create",
+          table: "shot_lists",
+          id: list,
+          fields: { name: "Day 1", shoot_date: "2026-10-02" },
+        },
         { op: "create", table: "persons", id: person, fields: { name: "Alex" } },
         { op: "create", table: "content", id: content, fields: { name: "101-001-X" } },
         {
@@ -71,9 +76,19 @@ describe("shots", () => {
       "Insert",
     ]);
     // Options and shapes are checked; a shot needs a list.
-    fail(await stub.mutate(ctx, [{ op: "update", table: "shots", id: s1, fields: { framing: "XL" } }]));
-    fail(await stub.mutate(ctx, [{ op: "update", table: "shots", id: s1, fields: { resolution: "4k" } }]));
-    fail(await stub.mutate(ctx, [{ op: "create", table: "shots", id: newId(), fields: { number: "3" } }]));
+    fail(
+      await stub.mutate(ctx, [{ op: "update", table: "shots", id: s1, fields: { framing: "XL" } }]),
+    );
+    fail(
+      await stub.mutate(ctx, [
+        { op: "update", table: "shots", id: s1, fields: { resolution: "4k" } },
+      ]),
+    );
+    fail(
+      await stub.mutate(ctx, [
+        { op: "create", table: "shots", id: newId(), fields: { number: "3" } },
+      ]),
+    );
     // The default view groups by `group`.
     expect(snap.tables.views.find((v) => v.table === "shots")?.config).toMatchObject({
       group: { key: "group" },
@@ -92,7 +107,11 @@ describe("shots", () => {
   it("commenters and viewers can't touch shots", async () => {
     const stub = await freshShow();
     const list = newId();
-    ok(await stub.mutate(ctx, [{ op: "create", table: "shot_lists", id: list, fields: { name: "L" } }]));
+    ok(
+      await stub.mutate(ctx, [
+        { op: "create", table: "shot_lists", id: list, fields: { name: "L" } },
+      ]),
+    );
     for (const role of ["commenter", "viewer"] as const) {
       const r = fail(
         await stub.mutate({ ...ctx, role }, [
@@ -108,13 +127,26 @@ describe("clone / templates", () => {
   it("copies structure (scenes optional), never data; roles; templates listed", async () => {
     const admin = await loginAdmin();
     const source = await createShow(admin, "clone-source");
-    const [scene, surface, region, cue, table, cf, tf, view, list] = Array.from({ length: 9 }, () =>
+    const [scene, surface, region, cue, table, cf, tf, view, list] = [
       newId(),
-    );
+      newId(),
+      newId(),
+      newId(),
+      newId(),
+      newId(),
+      newId(),
+      newId(),
+      newId(),
+    ];
     const ops: AnyOp[] = [
       { op: "meta", fields: { default_unit: "ft-in" } },
       { op: "create", table: "surfaces", id: surface, fields: { name: "WALL", width: 4 } },
-      { op: "create", table: "surfaces", id: region, fields: { name: "WALL L", parent_id: surface } },
+      {
+        op: "create",
+        table: "surfaces",
+        id: region,
+        fields: { name: "WALL L", parent_id: surface },
+      },
       { op: "create", table: "scenes", id: scene, fields: { number: "101", name: "Open" } },
       { op: "link", table: "scenes", id: scene, field: "surfaces", targetId: surface },
       { op: "create", table: "cues", id: cue, fields: { number: "1", scene_id: scene } },
@@ -165,18 +197,20 @@ describe("clone / templates", () => {
       },
       { op: "create", table: "shot_lists", id: list, fields: { name: "Day 1" } },
     ];
-    expect((await post(`/api/shows/${source.id}/mutate`, { clientId: "c", ops }, admin)).status).toBe(
-      200,
-    );
+    expect(
+      (await post(`/api/shows/${source.id}/mutate`, { clientId: "c", ops }, admin)).status,
+    ).toBe(200);
 
     // Viewers can't copy; strangers get 404.
     const viewer = await newUser(admin, "Viewer");
     await post(`/api/shows/${source.id}/members`, { email: viewer.email, role: "viewer" }, admin);
-    expect((await post(`/api/shows/${source.id}/clone`, { name: "x" }, viewer.cookie)).status).toBe(403);
-    const stranger = await newUser(admin, "Stranger");
-    expect((await post(`/api/shows/${source.id}/clone`, { name: "x" }, stranger.cookie)).status).toBe(
-      404,
+    expect((await post(`/api/shows/${source.id}/clone`, { name: "x" }, viewer.cookie)).status).toBe(
+      403,
     );
+    const stranger = await newUser(admin, "Stranger");
+    expect(
+      (await post(`/api/shows/${source.id}/clone`, { name: "x" }, stranger.cookie)).status,
+    ).toBe(404);
     expect((await post(`/api/shows/${source.id}/clone`, { name: "" }, admin)).status).toBe(400);
 
     const res = await post(
@@ -213,10 +247,12 @@ describe("clone / templates", () => {
     // The view's scene filter follows the copied scene.
     expect(byCam?.config).toMatchObject({ filters: [{ key: "scene", value: newScene }] });
     // One set of cue views: the copies replaced the seeded default.
-    expect(snap.tables.views.filter((v) => v.table === "cues").map((v) => v.name).sort()).toEqual([
-      "All cues",
-      "By cam",
-    ]);
+    expect(
+      snap.tables.views
+        .filter((v) => v.table === "cues")
+        .map((v) => v.name)
+        .sort(),
+    ).toEqual(["All cues", "By cam"]);
 
     // Templates are flagged in the list; a show from the template without scenes.
     const list1 = (await (await api("/api/shows", { cookie: admin })).json()) as ShowsResponse;
