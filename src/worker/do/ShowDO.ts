@@ -6,12 +6,37 @@ import { eq } from "drizzle-orm";
 import { type DrizzleSqliteDODatabase, drizzle } from "drizzle-orm/durable-sqlite";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import type { ShowMetaDTO } from "../../shared/api";
+import type { HistoryEntry, MutateResponse, SnapshotResponse } from "../../shared/ops";
+import type { FieldOptions } from "../../shared/tables";
 import { PING_FRAME, PONG_FRAME, type ServerMessage } from "../../shared/ws";
 import migrations from "../db/do/migrations/migrations.js";
 import * as schema from "../db/do/schema";
+import {
+  Batch,
+  currentVersion,
+  type HistoryQuery,
+  loadFieldOptions,
+  type MutationContext,
+  OpError,
+  readHistory,
+  readSnapshot,
+} from "./ops-engine";
 
 /** Header the Worker uses to tell the DO who opened a WebSocket. */
 export const USER_ID_HEADER = "X-Cuesheet-User";
+
+/** Close code sent to sockets whose user lost access (logout, removed from the show). */
+export const ACCESS_REVOKED_CODE = 4003;
+
+/**
+ * Broadcasts bigger than this send `{type:"version"}` instead of the ops; clients then
+ * refetch the snapshot. Keeps imports from pushing megabytes through every socket.
+ */
+const MAX_BROADCAST_BYTES = 256 * 1024;
+
+export type MutateResult =
+  | ({ ok: true } & MutateResponse)
+  | { ok: false; status: 400 | 403; error: string; opIndex?: number };
 
 interface SocketAttachment {
   userId: string;
@@ -60,6 +85,78 @@ export class ShowDO extends DurableObject<Env> {
     return this.openSockets().length;
   }
 
+  /**
+   * Apply a batch of ops atomically, then broadcast the resolved ops. The Worker has
+   * checked membership and passes the caller's role; the op engine enforces what each
+   * role may do. Errors come back as values (not thrown) so the Worker can map them to
+   * HTTP statuses.
+   */
+  async mutate(ctx: MutationContext, ops: unknown): Promise<MutateResult> {
+    let result: MutateResponse;
+    try {
+      result = this.ctx.storage.transactionSync(() =>
+        new Batch(this.ctx.storage.sql, ctx).run(ops),
+      );
+    } catch (e) {
+      if (e instanceof OpError) {
+        return {
+          ok: false,
+          status: e.status,
+          error: e.message,
+          ...(e.opIndex !== undefined ? { opIndex: e.opIndex } : {}),
+        };
+      }
+      throw e;
+    }
+    if (result.version !== result.prevVersion) {
+      const msg: ServerMessage = {
+        type: "ops",
+        prevVersion: result.prevVersion,
+        version: result.version,
+        clientId: ctx.clientId ?? "",
+        ops: result.ops,
+      };
+      const text = JSON.stringify(msg);
+      if (text.length <= MAX_BROADCAST_BYTES) this.broadcastRaw(text);
+      else this.broadcast({ type: "version", version: result.version });
+    }
+    return { ok: true, ...result };
+  }
+
+  /**
+   * The whole show as a JSON string (a SnapshotResponse). Serialised here so the Worker
+   * passes it straight through instead of structured-cloning and re-encoding it.
+   */
+  async snapshotJson(): Promise<string> {
+    return JSON.stringify(readSnapshot(this.ctx.storage.sql) satisfies SnapshotResponse);
+  }
+
+  async history(query: HistoryQuery): Promise<HistoryEntry[]> {
+    return readHistory(this.ctx.storage.sql, query);
+  }
+
+  async fieldOptions(): Promise<FieldOptions> {
+    return loadFieldOptions(this.ctx.storage.sql);
+  }
+
+  async version(): Promise<number> {
+    return currentVersion(this.ctx.storage.sql);
+  }
+
+  /** Close every socket belonging to a user (logout, removal from the show). */
+  async disconnectUser(userId: string): Promise<number> {
+    const sockets = this.ctx.getWebSockets(userId);
+    for (const ws of sockets) {
+      try {
+        ws.close(ACCESS_REVOKED_CODE, "access revoked");
+      } catch {
+        // already closed
+      }
+    }
+    if (sockets.length > 0) this.onDisconnect(...sockets);
+    return sockets.length;
+  }
+
   // ---- WebSocket (Hibernation API) ----
 
   override async fetch(request: Request): Promise<Response> {
@@ -77,6 +174,8 @@ export class ShowDO extends DurableObject<Env> {
 
     const clients = this.openSockets().length;
     this.send(server, { type: "hello", showId: meta.showId, clients });
+    // Lets the client notice changes it missed while disconnected (and refetch).
+    this.send(server, { type: "version", version: currentVersion(this.ctx.storage.sql) });
     this.broadcast({ type: "presence", clients }, server);
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -100,8 +199,8 @@ export class ShowDO extends DurableObject<Env> {
     this.onDisconnect(ws);
   }
 
-  private onDisconnect(gone: WebSocket): void {
-    const remaining = this.openSockets().filter((ws) => ws !== gone);
+  private onDisconnect(...gone: WebSocket[]): void {
+    const remaining = this.openSockets().filter((ws) => !gone.includes(ws));
     for (const ws of remaining) this.send(ws, { type: "presence", clients: remaining.length });
   }
 
@@ -111,6 +210,17 @@ export class ShowDO extends DurableObject<Env> {
 
   private broadcast(msg: ServerMessage, except?: WebSocket): void {
     for (const ws of this.openSockets()) if (ws !== except) this.send(ws, msg);
+  }
+
+  /** Broadcast an already-serialised message to every open socket. */
+  private broadcastRaw(text: string): void {
+    for (const ws of this.openSockets()) {
+      try {
+        ws.send(text);
+      } catch {
+        // closing; its close handler updates presence
+      }
+    }
   }
 
   private send(ws: WebSocket, msg: ServerMessage): void {

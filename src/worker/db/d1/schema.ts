@@ -47,7 +47,7 @@ export const memberships = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    role: text("role", { enum: ["editor", "commenter", "viewer"] }).notNull(),
+    role: text("role", { enum: ["owner", "editor", "commenter", "viewer"] }).notNull(),
     createdAt: integer("created_at").notNull().default(now),
   },
   (t) => [

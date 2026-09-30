@@ -19,3 +19,11 @@ export function str(v: unknown): string {
 export function isHttps(c: Context): boolean {
   return new URL(c.req.url).protocol === "https:";
 }
+
+/**
+ * JSON response without Hono's typed `c.json`, whose type-level JSON conversion recurses
+ * forever on the recursive `Json` type used for custom field values.
+ */
+export function jsonBody<T>(c: Context, data: T, status: 200 | 201 = 200): Response {
+  return c.body(JSON.stringify(data), status, { "Content-Type": "application/json" });
+}
