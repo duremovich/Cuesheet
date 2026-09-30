@@ -701,7 +701,10 @@ export class Batch {
     if (table === "cue_anchors") this.syncCuePage(row);
   }
 
-  /** Auto fields a create/update may set: the upload route's attachments, the script route's versions. */
+  /**
+   * Server-set fields a create may carry: attachments (the upload route, or a restore
+   * rebuilt from the stored row) and the script route's versions. Updates: only the latter.
+   */
   private allowAuto(table: TableName): boolean {
     return table === "attachments" || (table === "script_versions" && !!this.ctx.script);
   }
@@ -1013,7 +1016,13 @@ export class Batch {
         if (spec.immutable && !sameValue(decodeRow(table, before)[name], value)) {
           this.fail(`${table}.${name} can't be changed`);
         }
-        changes[name] = this.validate(table, name, spec, value, this.allowAuto(table));
+        changes[name] = this.validate(
+          table,
+          name,
+          spec,
+          value,
+          table === "script_versions" && !!this.ctx.script,
+        );
       }
     }
     if (table === "scripts") this.prepareScript(id, changes, false);

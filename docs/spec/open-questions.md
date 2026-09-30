@@ -33,6 +33,15 @@ example base: 17 inferred, 28 left Unassigned). See CLAUDE.md, "Airtable import"
 - **Script formats.** What do scripts usually arrive as: text PDF, scanned PDF, Word,
   Google Doc? How often do new versions come during rehearsal, and are the changes usually
   cuts/rewrites or reformatting? Scanned PDFs need OCR and anchor less reliably.
+  (M4a: text PDFs, DOCX, TXT and Markdown import; scanned PDFs are refused with guidance to
+  OCR them first, since tesseract.js in the browser is large and slow; Google Docs via
+  File → Download as PDF/DOCX. Revisit OCR if scans turn out to be common.)
+- **Re-anchoring thresholds** (M4a): fuzzy match accepted at bigram Dice ≥ 0.8, searched
+  ±15% of the script around the predicted place first; "matched" = same printed page and ≤ 3
+  blocks from the prediction. Tune against a real pair of script drafts when we have one.
+- **Version stats** (M4a): `script_versions.stats` is the count by state right after
+  re-anchoring (a report), not a live count; the resolve screen computes live counts from
+  the anchors. OK?
 - **Whose cues on the script?** Video only, or should SM be able to put LX/SQ cues on the
   same script for a full calling script?
 - **Which calculations matter** beyond PPI, screen dimensions and unit conversion: throw

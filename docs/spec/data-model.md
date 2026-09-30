@@ -224,15 +224,15 @@ One script per show, with versions as they arrive.
 | Field | Type | Notes |
 | --- | --- | --- |
 | `label` | text | "Rehearsal draft 9/12", "v4" |
-| `source_file` | attachment | the PDF / DOCX as received; or a Google Doc URL |
+| `source_file` | attachment | the PDF / DOCX / text file as received (`attachment_id` points at it); a Google Doc is downloaded as PDF/DOCX first |
 | `imported_at` | datetime | |
-| `text` | structured | extracted text, split into pages → blocks (paragraph / line / stage direction where detectable), each with a stable index |
-| `page_labels` | map | printed page number per physical page ("14", "14a") |
+| `text` | structured | extracted text (`ScriptText`: blocks with a stable index, physical page and kind: heading / character / dialogue / direction / lyric / other), gzipped JSON in R2 at `text_key`, not in the database (decision 0007) |
+| `page_labels` | map | printed page number per physical page ("14", "14a"); stored compactly as `page_map` (`[{startBlock, page, label}]`) |
 | `stats` | computed | anchor counts by state after re-anchoring |
 
 Only the extracted text and structure are stored for display; the original file is kept as
-an attachment for reference and for print. Scanned PDFs are OCR'd on import and flagged as
-lower-confidence.
+an attachment for reference and for print. Scanned PDFs (no text layer) aren't OCR'd yet:
+the import asks for an OCR'd PDF or a Word file (open-questions.md).
 
 ### CueAnchor
 
@@ -242,8 +242,8 @@ Where a cue sits in a given script version.
 | --- | --- | --- |
 | `cue` | link → Cue | |
 | `script_version` | link → ScriptVersion | |
-| `page` | int | physical page index; `page_label` derived |
-| `block_index`, `char_offset` | int | exact position in the extracted text |
+| `page` | int | physical page (1-based), derived from `block` by the server; `page_label` from the version's `page_map` |
+| `block`, `offset`, `length` | int | exact position in the version's text (blocks joined by one space; a selection may span blocks); null only when `missing` |
 | `quote` | text | the trigger text as it appeared ("Sweet Sue needs a sax and a bass") |
 | `prefix`, `suffix` | text | ~32 characters of context either side |
 | `state` | select | `matched` / `moved` / `changed` / `missing` / `manual` |
@@ -252,7 +252,8 @@ Where a cue sits in a given script version.
 A cue placed on a Line trigger anchors to the selected text. A cue with an LX, timecode or
 visual trigger anchors to a position (its `quote` is the nearest text, used only for
 re-anchoring). When a new ScriptVersion is imported, every anchor from the previous version
-is re-matched: exact quote+context → fuzzy quote → prefix/suffix only → nothing. The new
+is re-matched: exact quote+context → exact quote → fuzzy quote → prefix/suffix only →
+nothing (states and thresholds: CLAUDE.md "Script"). The new
 anchor's `state` records the result; old anchors are kept so any version can still be viewed.
 See [ux.md](ux.md#script-view).
 
