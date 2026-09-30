@@ -31,7 +31,9 @@ describe("type guessing (CSV import)", () => {
       type: "text",
       options: { sensitive: true },
     });
-    expect(guess("Notes", ["https://example.com/a", "https://x.org/b - SOURCE/IMAGES"])).toBe("url");
+    expect(guess("Notes", ["https://example.com/a", "https://x.org/b - SOURCE/IMAGES"])).toBe(
+      "url",
+    );
     expect(guess("PIN", ["checked", "", "checked"])).toBe("checkbox");
     expect(guess("Date", ["2026-09-01", "9/12/2026"])).toBe("date");
     expect(guess("Count", ["1", "2.5", "-3"])).toBe("number");
@@ -59,9 +61,11 @@ describe("values and options", () => {
   it("checks values by type", () => {
     expect(checkCustomValue(f("number"), 3)).toEqual({ value: 3 });
     expect(checkCustomValue(f("number"), "3")).toMatchObject({ error: expect.any(String) });
-    expect(checkCustomValue(f("select", { choices: [{ value: "A", color: "red" }] }), "A")).toEqual({
-      value: "A",
-    });
+    expect(checkCustomValue(f("select", { choices: [{ value: "A", color: "red" }] }), "A")).toEqual(
+      {
+        value: "A",
+      },
+    );
     expect(checkCustomValue(f("link"), [])).toEqual({ value: null });
     expect(checkCustomValue(f("link", { multiple: false }), ["a", "b"])).toMatchObject({
       error: expect.any(String),
@@ -79,13 +83,17 @@ describe("values and options", () => {
     expect(checkFieldOptions("select", { choices: [{ value: "A" }] })).toEqual({
       options: { choices: [{ value: "A", color: "gray" }] },
     });
-    expect(checkFieldOptions("select", { choices: [{ value: "A" }, { value: "A" }] })).toMatchObject({
+    expect(
+      checkFieldOptions("select", { choices: [{ value: "A" }, { value: "A" }] }),
+    ).toMatchObject({
       error: expect.any(String),
     });
     expect(checkFieldOptions("link", { target: "custom:bad" })).toMatchObject({
       error: expect.any(String),
     });
-    expect(checkFieldOptions("number", { decimals: 9 })).toMatchObject({ error: expect.any(String) });
+    expect(checkFieldOptions("number", { decimals: 9 })).toMatchObject({
+      error: expect.any(String),
+    });
   });
 
   it("refit on a type or choice change", () => {

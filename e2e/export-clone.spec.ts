@@ -123,7 +123,9 @@ test("set a field for a selection of cues, then Undo", async ({ browser }) => {
   await expect(cellOf(a, "measure")).toHaveText("m. 12");
   await expect(cellOf(c, "measure")).toHaveText("m. 12");
   const selected = async () =>
-    (await snapshot(page, showId)).tables.cues.filter((x) => (x as { measure?: string | null }).measure === "m. 12").length;
+    (await snapshot(page, showId)).tables.cues.filter(
+      (x) => (x as { measure?: string | null }).measure === "m. 12",
+    ).length;
   await expect.poll(selected).toBeGreaterThanOrEqual(3);
   await page.getByTestId("toast").getByRole("button", { name: "Undo" }).click();
   await expect(cellOf(a, "measure")).toHaveText("");
@@ -134,7 +136,11 @@ test("save as template → new show from it: structure, no cues", async ({ brows
   const page = await newPage(browser);
   const name = uniqueName("Source");
   const showId = await apiCreateShow(page, name);
-  await importExamples(page, showId, ["Breakdown-Grid view.csv", "Surfaces-Gallery.csv", "Cue List-Video Cue List View.csv"]);
+  await importExamples(page, showId, [
+    "Breakdown-Grid view.csv",
+    "Surfaces-Gallery.csv",
+    "Cue List-Video Cue List View.csv",
+  ]);
   const viewId = recordId();
   await mutate(page, showId, [
     {

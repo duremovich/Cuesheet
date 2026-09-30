@@ -4,8 +4,8 @@ import { describe, expect, it } from "vitest";
 import { qty } from "../../../shared/formula";
 import type { CustomFieldRow, CustomValues } from "../../../shared/tables";
 import type { Column } from "../../components/grid/types";
-import type { ShowStore } from "../../lib/show-store";
 import { emptyData } from "../../lib/show-state";
+import type { ShowStore } from "../../lib/show-store";
 import { customColumns, customEditOps } from "./columns";
 import { formulaDependencies, readsLinks } from "./formula";
 
@@ -124,9 +124,7 @@ describe("formula custom fields", () => {
     ]);
     expect(
       customEditOps("surfaces", "r1", fields, "custom.who", [{ id: "p1", label: "Casey" }]),
-    ).toEqual([
-      { op: "update", table: "surfaces", id: "r1", fields: { custom: { who: ["p1"] } } },
-    ]);
+    ).toEqual([{ op: "update", table: "surfaces", id: "r1", fields: { custom: { who: ["p1"] } } }]);
     expect(customEditOps("surfaces", "r1", fields, "name", "x")).toBeNull();
   });
 });

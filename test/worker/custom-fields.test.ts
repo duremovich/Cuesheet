@@ -3,9 +3,17 @@
 // Airtable CSVs into custom tables.
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import breakdownCsv from "../../examples/Breakdown-Grid view.csv?raw";
+import calendarCsv from "../../examples/Calendar-Grid view.csv?raw";
+import contentCsv from "../../examples/Content-Grid view.csv?raw";
+import cueListCsv from "../../examples/Cue List-Video Cue List View.csv?raw";
+import directoryCsv from "../../examples/Directory-Grid view.csv?raw";
+import milluminCsv from "../../examples/Millumin-Grid view.csv?raw";
 import networkCsv from "../../examples/Network-Grid view.csv?raw";
+import notesCsv from "../../examples/Notes-NOTES.csv?raw";
 import personnelCsv from "../../examples/Personnel-Grid view.csv?raw";
 import referenceCsv from "../../examples/Reference Links-Grid view.csv?raw";
+import surfacesCsv from "../../examples/Surfaces-Gallery.csv?raw";
 import type { Role } from "../../src/shared/api";
 import { customTableRef } from "../../src/shared/custom-fields";
 import { newId } from "../../src/shared/ids";
@@ -19,6 +27,20 @@ import type { MutationContext } from "../../src/worker/do/ops-engine";
 import { HIDDEN_VALUE } from "../../src/worker/do/ops-engine";
 import type { MutateResult } from "../../src/worker/do/ShowDO";
 import { api, createShow, loginAdmin, ORIGIN, post } from "./helpers";
+
+const ALL_EXAMPLES: Record<string, string> = {
+  "Breakdown-Grid view.csv": breakdownCsv,
+  "Personnel-Grid view.csv": personnelCsv,
+  "Content-Grid view.csv": contentCsv,
+  "Cue List-Video Cue List View.csv": cueListCsv,
+  "Notes-NOTES.csv": notesCsv,
+  "Surfaces-Gallery.csv": surfacesCsv,
+  "Calendar-Grid view.csv": calendarCsv,
+  "Directory-Grid view.csv": directoryCsv,
+  "Reference Links-Grid view.csv": referenceCsv,
+  "Network-Grid view.csv": networkCsv,
+  "Millumin-Grid view.csv": milluminCsv,
+};
 
 let seq = 0;
 async function freshShow() {
@@ -509,6 +531,50 @@ describe("custom tables", () => {
         },
       ]),
     );
+  });
+});
+
+describe("import: the whole example base", () => {
+  it("core tables plus five custom tables (Calendar, Directory, Reference Links, Network, Millumin)", async () => {
+    const admin = await loginAdmin();
+    const show = await createShow(admin, "import-everything");
+    const form = new FormData();
+    for (const [name, text] of Object.entries(ALL_EXAMPLES)) {
+      form.append("files", new File([text], name, { type: "text/csv" }));
+    }
+    const res = await api(`/api/shows/${show.id}/import/airtable`, {
+      method: "POST",
+      body: form,
+      cookie: admin,
+      headers: { Origin: ORIGIN },
+    });
+    expect(res.status, await res.clone().text()).toBe(200);
+    const body = (await res.json()) as ImportResponse;
+    expect(body.created).toMatchObject({ cues: 120, custom_tables: 5 });
+    const stub = env.SHOW.get(env.SHOW.idFromName(show.id));
+    const snap = await snapshot(stub);
+    const byLabel = (label: string) => {
+      const t = snap.tables.custom_tables.find((x) => x.label === label);
+      const ref = customTableRef(t?.id ?? "");
+      return {
+        fields: Object.fromEntries(
+          snap.tables.custom_fields.filter((f) => f.table === ref).map((f) => [f.key, f.type]),
+        ),
+        rows: snap.tables.custom_rows.filter((r) => r.table_id === t?.id),
+      };
+    };
+    const calendar = byLabel("Calendar");
+    expect(calendar.fields).toMatchObject({
+      milestone: "text",
+      date: "date",
+      attachments: "attachment",
+    });
+    expect(calendar.rows.find((r) => r.custom.milestone === "Opening")?.custom.date).toBe(
+      "2026-09-24",
+    );
+    expect(byLabel("Directory").fields).toMatchObject({ name: "text", link: "url" });
+    expect(byLabel("Millumin").fields).toMatchObject({ notes: "text", toggle: "checkbox" });
+    expect(byLabel("Reference Links").rows).toHaveLength(11);
   });
 });
 

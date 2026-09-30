@@ -80,7 +80,9 @@ test("a select custom field on Cues: column, edit, filter, color, reload", async
   await expect(grid.getByRole("columnheader", { name: "Camera" })).toBeVisible();
 
   // Edit: typing opens the option picker, Enter picks.
-  const row = rows.filter({ has: page.locator('[data-col="number"]').getByText("0.10", { exact: true }) });
+  const row = rows.filter({
+    has: page.locator('[data-col="number"]').getByText("0.10", { exact: true }),
+  });
   const cell = cellOf(row, "custom.camera");
   await cell.click();
   await page.keyboard.type("Cam A");
@@ -232,9 +234,9 @@ test("the Network CSV imports into a custom table from the preview", async ({ br
   await page.getByRole("link", { name: "Network", exact: true }).click();
   const grid = page.getByRole("grid", { name: "Network" });
   await expect(page.getByTestId("row-count")).toHaveText("10 rows");
-  const mac = grid
-    .getByTestId("grid-row")
-    .filter({ has: page.locator('[data-col="custom.name"]').getByText("Mac pro", { exact: true }) });
+  const mac = grid.getByTestId("grid-row").filter({
+    has: page.locator('[data-col="custom.name"]').getByText("Mac pro", { exact: true }),
+  });
   await expect(cellOf(mac, "custom.ip")).toHaveText("192.168.11.162");
   await expect(cellOf(mac, "custom.type")).toHaveText("Media Server");
   await expect(cellOf(mac, "custom.password")).toContainText("••••••");

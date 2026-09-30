@@ -46,9 +46,7 @@ async function newList(page: Page, name: string) {
   page.once("dialog", (d) => void d.accept(name));
   await page.getByRole("button", { name: "+ New list" }).click();
   await expect(page.getByLabel("Current shot list")).toHaveValue(/.+/);
-  await expect(
-    page.getByLabel("Current shot list").locator("option:checked"),
-  ).toHaveText(name);
+  await expect(page.getByLabel("Current shot list").locator("option:checked")).toHaveText(name);
 }
 
 test("shots: a list, ghost numbers, groups, drag across groups, print preset", async ({
@@ -120,7 +118,10 @@ test("shots: a list, ghost numbers, groups, drag across groups, print preset", a
 
   // The "Shot list" preset (a personal view) → Print shows it by group.
   await page.getByTestId("view-switcher").click();
-  await page.getByRole("dialog", { name: "Views" }).getByRole("button", { name: "+ Shot list" }).click();
+  await page
+    .getByRole("dialog", { name: "Views" })
+    .getByRole("button", { name: "+ Shot list" })
+    .click();
   await expect(page.getByTestId("current-view")).toHaveText("Shot list");
   await expect(grid(page).getByRole("columnheader", { name: "Camera" })).toHaveCount(0);
   await page.getByTestId("print-view-link").click();
@@ -159,7 +160,5 @@ test("shot lists: rename, a second list, delete; the tab at 390 px", async ({ br
   page.once("dialog", (d) => void d.accept());
   await page.getByRole("button", { name: "Delete list" }).click();
   await expect.poll(async () => (await serverShots(page, showId)).length).toBe(0);
-  await expect(page.getByLabel("Current shot list").locator("option:checked")).toHaveText(
-    "Day 2",
-  );
+  await expect(page.getByLabel("Current shot list").locator("option:checked")).toHaveText("Day 2");
 });

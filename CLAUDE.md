@@ -205,7 +205,9 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   and owners; 4 MB max). A show that already has rows in any core table gets 409
   `{error:"Show already has data"}` unless the request has `?append=1` (the UI asks for
   confirmation first; appended rows are added, not merged). Files are recognised by Airtable's `<Table>-<View>.csv` name or by their
-  headers; the five core tables and Surfaces are imported, others skipped with a warning.
+  headers; the five core tables and Surfaces are imported, every other CSV becomes a
+  custom table (M5a; see "Custom fields and custom tables" for types, the preview and
+  `mapping`).
   Surfaces: Name, Channel Name, `Width (<unit>)`/`Height (<unit>)` (the header's unit;
   meters when none), blank rows skipped (the example has 16 rows → 15 surfaces); a
   region's parent comes from its channel (`CH02.1` → `CH02`), set in the create when the

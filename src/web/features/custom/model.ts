@@ -14,6 +14,7 @@ import type {
   CustomFieldRow,
   CustomRowRow,
   CustomTableRow,
+  CustomValues,
   TableName,
 } from "../../../shared/tables";
 import type { PickerItem } from "../../components/grid/types";
@@ -254,6 +255,39 @@ export function newFieldOps(
       },
     ],
   };
+}
+
+/**
+ * Records that link to `id` (a record of link target `target`) through custom link fields:
+ * one entry per field with the linking records' labels (the reverse side of a link).
+ */
+export function reverseLinks(
+  data: ShowData,
+  target: string,
+  id: string,
+): { field: CustomFieldRow; tableLabel: string; items: PickerItem[] }[] {
+  const out: { field: CustomFieldRow; tableLabel: string; items: PickerItem[] }[] = [];
+  for (const f of data.tables.custom_fields.values()) {
+    if (f.type !== "link" || f.options.target !== target) continue;
+    const items: PickerItem[] = [];
+    for (const rid of targetIds(data, f.table)) {
+      const custom = customOf(data, f.table, rid);
+      const v = custom?.[f.key];
+      if (Array.isArray(v) && v.includes(id)) {
+        items.push({ id: rid, label: targetLabel(data, f.table, rid) ?? "Untitled" });
+      }
+    }
+    if (items.length) out.push({ field: f, tableLabel: targetTableLabel(data, f.table), items });
+  }
+  return out;
+}
+
+function customOf(data: ShowData, fieldTable: string, id: string) {
+  if (customTableId(fieldTable)) return data.tables.custom_rows.get(id)?.custom;
+  const map = (data.tables as Record<string, Map<string, { custom: CustomValues }> | undefined>)[
+    fieldTable
+  ];
+  return map?.get(id)?.custom;
 }
 
 /** How many rows of the field table have a value for `key` (the delete confirmation). */

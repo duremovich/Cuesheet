@@ -415,7 +415,11 @@ function FieldForm({
             placeholder="{PPI} * 2"
             onChange={(e) => set({ formula: e.target.value })}
           />
-          <span id={`${id}-help`} className={styles.muted} role={formulaError ? "alert" : undefined}>
+          <span
+            id={`${id}-help`}
+            className={styles.muted}
+            role={formulaError ? "alert" : undefined}
+          >
             {formulaError ??
               'Name fields in braces: {Width} / 2, IF({Status} = "Done", 1, 0), {Venue}.Name'}
           </span>

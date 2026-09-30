@@ -13,7 +13,7 @@ import frame from "../shared/TableFrame.module.css";
 import { TableGrid } from "../shared/TableGrid";
 import { customTabKey } from "../show/tabs";
 import { useWorkspace } from "../show/workspace";
-import { customRowLabel, fieldsFor } from "./model";
+import { customRowLabel, fieldsFor, reverseLinks } from "./model";
 
 const NO_COLUMNS: never[] = [];
 const rowOf = (r: CustomRowRow) => r;
@@ -101,6 +101,14 @@ export function CustomTableGrid() {
           }
         : {})}
       panelTitle={(r) => customRowLabel(store.getState(), r)}
+      // The reverse side of links into this table (R9): who links here, per field.
+      panelSections={(r) =>
+        reverseLinks(store.getState(), customTableRef(tableId), r.id).map((x) => ({
+          title: `${x.tableLabel} · ${x.field.label || x.field.key}`,
+          items: x.items.map((i) => ({ id: i.id, content: i.label })),
+          empty: "",
+        }))
+      }
       empty={
         <p className={frame.empty}>
           {fieldCount === 0

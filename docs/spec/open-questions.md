@@ -136,6 +136,36 @@ Things the first build had to decide; each is easy to change.
 - **Print** is the browser's print dialog / Save as PDF: no server-side PDF. The calling
   script prints the whole script; a page range isn't offered.
 
+## Custom fields, shots, export, templates (M5a decisions to confirm)
+
+- **Custom field keys** are slugs made from the name and never change; renaming a field
+  changes only its label. Formulas may name fields by label or key (`{Camera}`,
+  `camera`), so renaming a field breaks formulas that use its old label: key references
+  are the stable form.
+- **Changing a field's type** clears the values that don't fit (text ↔ long text ↔ URL
+  keep them), after a confirmation that says how many rows have values. Removing a select
+  choice clears it from the rows.
+- **Link fields** store ids on the linking side only; the other side shows them read-only
+  (a custom row's panel lists who links to it). Two-way editable links (Airtable's
+  automatic reverse field) aren't built.
+- **Sensitive fields** are masked for everyone and revealed per panel visit; they're
+  still synced to every member (no per-role hiding), kept out of history, ⌘K and exports
+  (owners can include them in an export).
+- **Custom field values on notes** are editable by editors only (commenters edit their
+  own notes' core fields).
+- **Templates** are shows flagged in D1 (`is_template`): you open and edit them like any
+  show; they copy scenes (optional), surfaces, custom fields and tables (no rows), shared
+  views and the default unit. Personal views, shot lists and core select options aren't
+  copied (options are the same in every show until they become editable).
+- **Shot numbers** reuse the cue-number rules (ghost midpoint, duplicate warning) within
+  one list. A shot list's own `content` link isn't built (each shot links content).
+- **Printing a custom table** isn't offered yet (the Print view knows the core tabs); CSV
+  export works.
+- **Bulk edit Undo** puts each row's previous value back from the toast (8 s); it isn't
+  part of the grid's ⌘Z stack.
+- **CSV exports** show values as the grid does (lengths in your unit, formulas rounded as
+  displayed). "Export all" is the raw form (meters, ids, stored text).
+
 ## Infrastructure
 
 - **Sign-in for SM/director.** Do they need accounts, or is a read-only link enough?
@@ -148,7 +178,8 @@ Things the first build had to decide; each is easy to change.
 
 - A second show's base would confirm the model generalizes (especially scenes, surfaces
   and naming conventions).
-- A shot list example for the Shot table.
+- A shot list example for the Shot table (the M5a fields follow data-model.md; confirm
+  framing and status lists with a real shoot).
 
 ## Answered
 
@@ -225,5 +256,5 @@ Things the first build had to decide; each is easy to change.
   lengths in the active unit.
 - **Surface calculator (M3b)**: for a region of a parent with a pixel canvas, the pixel
   size is the *default lock*, not read-only.
-- **Custom formula columns**: deferred to M5 with custom fields (the engine and the
-  built-in surface formulas are in M3b).
+- **Custom formula columns**: built in M5a as formula custom fields (see "Custom fields,
+  shots, export, templates" above).
