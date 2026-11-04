@@ -1,0 +1,18 @@
+# LF everywhere, regardless of core.autocrlf (Biome and CI expect LF).
+* text=auto eol=lf
+
+# Airtable exports in examples/ are reference data: keep their bytes as committed.
+examples/*.csv -text
+
+# Binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.wasm binary
+*.pdf binary
+*.zip binary
+*.woff binary
+*.woff2 binary
