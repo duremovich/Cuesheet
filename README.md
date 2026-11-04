@@ -216,8 +216,8 @@ command checklist is [scripts/cf-setup.md](scripts/cf-setup.md).
   example CSVs; the cue grid (`cue-grid.spec.ts`: insert with a suggested number, show
   order, live sort, Sort now, drag across scenes, content picker, two browsers live, ⌘K,
   viewer read-only, 390 px); the other tabs; commenters; members. Playwright's
-  `webServer` runs `pnpm build`, applies migrations into `.wrangler/e2e-state`, and serves
-  the built Worker with `vite preview` on port 4317.
+  `webServer` (`scripts/e2e-server.ts`) builds, applies migrations into
+  `.wrangler/e2e-state-<port>`, and serves the built Worker with `vite preview` on port 4317.
 
 ## Source layout
 
@@ -248,7 +248,7 @@ src/
     styles/           theme.css (color tokens), global.css
 test/worker/          Tests that run inside workerd
 e2e/                  Playwright tests
-scripts/              seed-example.ts (pnpm seed:example)
+scripts/              seed-example.ts (pnpm seed:example), e2e-server.ts (Playwright's webServer)
 ```
 
 ## Repo layout

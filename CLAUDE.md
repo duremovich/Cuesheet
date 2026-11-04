@@ -1487,3 +1487,14 @@ such as the show title + presence moves to a second row; the user name hides).
 - `.dev.vars` (git-ignored) holds `ADMIN_EMAIL` / `ADMIN_PASSWORD`; copy from
   `.dev.vars.example`. The e2e config creates it from the example if missing and reads the
   same credentials.
+
+## Dylan's live instance (Windows)
+
+- Dylan's real Cuesheet runs on **http://localhost:4318** from the main checkout's built `dist/`
+  (`C:\Users\Dylan\tools\Cuesheet`), with all data in `C:\Users\Dylan\tools\cuesheet-live\state`.
+  Its scripts and README live in `C:\Users\Dylan\tools\cuesheet-live\`.
+- **Never work in that main checkout.** Use a git worktree (`.claude/worktrees/`) or a branch;
+  its `pnpm dev` (5173) and `pnpm e2e` (4317) keep their own `.wrangler/state` / e2e state.
+- **Never point `--persist-to` or `CUESHEET_PERSIST` at the live `state` folder.**
+- Promote by merging to main, then `Update-CuesheetLive.ps1` (it backs up first, then pulls,
+  builds and restarts). Undo with `Restore-CuesheetLive.ps1 <backup dir>`.

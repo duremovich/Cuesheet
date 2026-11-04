@@ -41,13 +41,8 @@ export default defineConfig({
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
-    command: [
-      `rm -rf ${STATE_DIR}`,
-      // VITE_DEV_PAGES=1 includes the /dev/* pages (e2e/grid.spec.ts) in this build only.
-      "VITE_DEV_PAGES=1 pnpm build",
-      `pnpm exec wrangler d1 migrations apply DB --local --persist-to ${STATE_DIR}`,
-      `CUESHEET_PERSIST=${STATE_DIR} pnpm exec vite preview --port ${PORT} --strictPort`,
-    ].join(" && "),
+    // Wipe the state dir, build with the /dev/* pages, migrate, `vite preview` (see the script).
+    command: `node scripts/e2e-server.ts ${PORT} ${STATE_DIR}`,
     url: `${ORIGIN}/api/health`,
     reuseExistingServer: false,
     timeout: 180_000,
