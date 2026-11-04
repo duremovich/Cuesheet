@@ -32,7 +32,7 @@ import {
   galleryItems,
   HEADER_HEIGHT,
   moveInGallery,
-} from "./gallery";
+} from "./gallery-layout";
 
 const FIELDS_SHOWN = 4;
 const KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"]);

@@ -6,7 +6,7 @@ import {
   galleryColumns,
   galleryItems,
   moveInGallery,
-} from "./gallery";
+} from "./gallery-layout";
 
 const id = (v: string) => v;
 
