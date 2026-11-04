@@ -287,7 +287,7 @@ export function TableGrid<V>(config: TableConfig<V>) {
   const addAtEnd = () => {
     const last = view.groups?.at(-1);
     const id = insert(config.addPosition ?? (last ? { groupId: last.id } : {}));
-    requestAnimationFrame(() => chrome.grid.current?.focusRow(id));
+    chrome.grid.current?.focusRow(id);
   };
 
   const panelView = chrome.panelRow ? byId.get(chrome.panelRow) : undefined;

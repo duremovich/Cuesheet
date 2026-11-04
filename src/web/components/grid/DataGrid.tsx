@@ -186,6 +186,8 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     focus: boolean;
     /** Scroll it to the vertical middle (focusRow), not just into view. */
     center?: boolean;
+    /** focusRow before the row reached the grid (a fresh insert): expand its group on arrival. */
+    expand?: boolean;
   } | null>(null);
   const pendingScroll = useRef<string | null>(null);
   const scrollActive = useRef(false);
@@ -931,6 +933,11 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     const pf = pendingFocus.current;
     if (pf) {
       const i = indexById.get(pf.id);
+      const entry = pf.expand ? ref.current.allRows.get(pf.id) : undefined;
+      if (entry) {
+        pf.expand = false;
+        expandGroup(entry.groupId);
+      }
       if (i !== undefined) {
         pendingFocus.current = null;
         const it = items[i];
@@ -1068,10 +1075,11 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     props.ref,
     () => ({
       focusRow(id: string, columnKey?: string) {
+        // A row the grid hasn't rendered yet (an optimistic insert) is focused in the commit
+        // that adds it, so keys typed right after "+ Add" land in it.
         const entry = ref.current.allRows.get(id);
-        if (!entry) return;
-        expandGroupRef.current(entry.groupId);
-        pendingFocus.current = { id, key: columnKey, focus: true, center: true };
+        if (entry) expandGroupRef.current(entry.groupId);
+        pendingFocus.current = { id, key: columnKey, focus: true, center: true, expand: !entry };
         bump();
       },
       stepRow(delta: number) {

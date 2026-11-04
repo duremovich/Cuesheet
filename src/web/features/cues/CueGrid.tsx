@@ -394,7 +394,7 @@ export function CueGrid() {
           label: "Insert section divider below",
           onSelect: () => {
             const id = insert({ afterRowId: rowId }, { is_section: true, description: "SECTION" });
-            requestAnimationFrame(() => chrome.grid.current?.focusRow(id, "description"));
+            chrome.grid.current?.focusRow(id, "description");
           },
         });
       }
@@ -406,7 +406,7 @@ export function CueGrid() {
   const addCueAtEnd = () => {
     const last = vc.groups?.at(-1);
     const id = insert(last ? { groupId: last.id } : {});
-    requestAnimationFrame(() => chrome.grid.current?.focusRow(id));
+    chrome.grid.current?.focusRow(id);
   };
 
   const cueCount = views.filter((v) => !v.cue.is_section).length;

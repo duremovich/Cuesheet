@@ -849,7 +849,7 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
     held.current.add(id);
     quiet.current.add(id);
     setHeldTick((t) => t + 1);
-    requestAnimationFrame(() => focusRowRef.current?.(id));
+    focusRowRef.current?.(id);
   }, []);
   const hiddenToast = useCallback(
     (id: string) =>

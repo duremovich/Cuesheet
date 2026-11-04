@@ -174,7 +174,10 @@ export interface CellDecoration {
 
 /** Imperative handle (`ref` prop). */
 export interface DataGridHandle {
-  /** Make a row's cell (default: its first editable column) active and focus it. */
+  /**
+   * Make a row's cell (default: its first editable column) active and focus it. A row not in
+   * the grid yet (an optimistic insert) is focused in the commit that adds it.
+   */
   focusRow(rowId: string, columnKey?: string): void;
   /**
    * Make the next (`delta` 1) or previous (-1) row active, in display order, keeping the
