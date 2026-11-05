@@ -146,6 +146,9 @@ export interface InsertPosition {
   groupId?: string;
 }
 
+/** Where a dragged column header was dropped: directly before or after a shown column. */
+export type ColumnMoveTarget = { before: string } | { after: string };
+
 export type RowHeight = "compact" | "normal" | "tall";
 
 /** An entry of the row context menu. */
@@ -223,6 +226,11 @@ export interface DataGridProps<Row> {
   onSelectionChange?: (ids: string[]) => void;
   /** The user resized a column (persist it per view). */
   onColumnResize?: (key: string, width: number) => void;
+  /**
+   * The user dragged a column header to a new place (or ⌘/Ctrl+Shift+←/→ on its resize
+   * handle). Persist the order and pass the columns back reordered; omit: no column drag.
+   */
+  onColumnMove?: (key: string, to: ColumnMoveTarget) => void;
   /** Accessible name of the grid. */
   "aria-label"?: string;
   /** Imperative handle: `focusRow`, `scrollToRow`. */

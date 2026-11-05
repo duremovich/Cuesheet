@@ -16,6 +16,7 @@ import {
   layoutOverlayOf,
   matchesFilter,
   migrateLinkFilters,
+  moveField,
   opsFor,
   withFieldOrder,
 } from "./evaluate";
@@ -308,6 +309,53 @@ describe("layout and sort", () => {
       { key: "status" },
       { key: "people" },
     ]);
+  });
+
+  it("moveField: a dragged header lands next to its target; hidden fields and widths stay", () => {
+    // Shown: body, number, people (status hidden between number and people).
+    const config = {
+      ...defaultViewConfig("cues"),
+      fields: [{ key: "body", width: 300 }, { key: "number" }, { key: "status", hidden: true }],
+      frozenCount: 1,
+    };
+    const keys = (f: ReturnType<typeof moveField>) => f?.map((x) => x.key);
+    expect(keys(moveField(cols, config, "people", { before: "number" }))).toEqual([
+      "body",
+      "people",
+      "number",
+      "status",
+    ]);
+    expect(keys(moveField(cols, config, "body", { after: "people" }))).toEqual([
+      "number",
+      "status",
+      "people",
+      "body",
+    ]);
+    // Before people: after the hidden status, which keeps its place after number.
+    const next = moveField(cols, config, "body", { before: "people" });
+    expect(next).toEqual([
+      { key: "number" },
+      { key: "status", hidden: true },
+      { key: "body", width: 300 },
+      { key: "people" },
+    ]);
+    // The frozen region is still the first column, now number.
+    const laid = layoutColumns(cols, { ...config, fields: next ?? [] });
+    expect(laid.map((c) => [c.key, !!c.frozen])).toEqual([
+      ["number", true],
+      ["body", false],
+      ["people", false],
+    ]);
+    // Dropped where it already is, onto itself, or next to an unknown column: no change.
+    expect(moveField(cols, config, "number", { after: "body" })).toBeNull();
+    expect(moveField(cols, config, "number", { before: "status" })).toBeNull();
+    expect(moveField(cols, config, "body", { before: "body" })).toBeNull();
+    expect(moveField(cols, config, "body", { before: "gone" })).toBeNull();
+    expect(moveField(cols, config, "gone", { before: "body" })).toBeNull();
+    // A view that lists nothing yet gets every column listed.
+    expect(keys(moveField(cols, defaultViewConfig("cues"), "people", { after: "number" }))).toEqual(
+      ["number", "people", "body", "status"],
+    );
   });
 
   it("gridSort applies only in live mode, over known columns (hidden ones too)", () => {

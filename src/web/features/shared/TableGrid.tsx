@@ -394,6 +394,7 @@ export function TableGrid<V>(config: TableConfig<V>) {
             collapsed={view.collapsed}
             onCollapsedChange={view.onCollapsedChange}
             onColumnResize={view.onColumnResize}
+            onColumnMove={view.onColumnMove}
             onActiveRowChange={onActive}
             onOpenRow={chrome.onOpenRow}
             {...(chrome.onEscape ? { onEscape: chrome.onEscape } : {})}

@@ -14,7 +14,13 @@ import type {
 } from "../../../shared/views";
 import { type FieldKind, LIST_OPS, OPS_BY_KIND, VALUELESS_OPS } from "../../../shared/views";
 import { compareNumericText, isEmptyValue } from "../../components/grid/ordering";
-import type { ColorRule, Column, ColumnType, PickerItem } from "../../components/grid/types";
+import type {
+  ColorRule,
+  Column,
+  ColumnMoveTarget,
+  ColumnType,
+  PickerItem,
+} from "../../components/grid/types";
 import { jsonEqual } from "../../lib/show-state";
 
 /**
@@ -458,6 +464,30 @@ export function withFieldOrder<V>(
       const width = saved.get(o.key)?.width;
       return { key: o.key, ...(width ? { width } : {}), ...(o.hidden ? { hidden: true } : {}) };
     });
+}
+
+/**
+ * `config.fields` with column `key` moved directly before or after column `to` (a header
+ * dragged in the grid; the targets are shown columns, so hidden ones keep their place among
+ * the rest). Widths and hidden flags are kept; `frozenCount` isn't touched, so the frozen
+ * region stays the first N columns, as in the Fields popover. Null when nothing moves.
+ */
+export function moveField<V>(
+  columns: readonly Column<V>[],
+  config: ViewConfig,
+  key: string,
+  to: ColumnMoveTarget,
+): ViewConfig["fields"] | null {
+  const list = fieldList(columns, config);
+  const moving = list.find((f) => f.key === key);
+  const target = "before" in to ? to.before : to.after;
+  if (!moving || target === key) return null;
+  const rest = list.filter((f) => f.key !== key);
+  const at = rest.findIndex((f) => f.key === target);
+  if (at < 0) return null;
+  rest.splice("before" in to ? at : at + 1, 0, moving);
+  if (rest.every((f, i) => f.key === list[i]?.key)) return null;
+  return withFieldOrder(columns, config, rest);
 }
 
 /** The grid's `sort` prop: the view's sorts (hidden columns too) when the sort is live. */

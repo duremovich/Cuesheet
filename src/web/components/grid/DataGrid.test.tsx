@@ -973,3 +973,128 @@ describe("DataGrid selection, groups and menus", () => {
     expect(document.querySelector('[role="status"]')?.textContent).toMatch(/live sort/);
   });
 });
+
+describe("DataGrid column drag", () => {
+  const Ctor = () => (window.PointerEvent ?? MouseEvent) as typeof MouseEvent;
+  const header = (key: string) =>
+    document.querySelector(`[data-testid="header-${key}"]`) as HTMLElement;
+  const headerKeys = () =>
+    [...document.querySelectorAll<HTMLElement>('[data-testid^="header-"]')].map((el) =>
+      (el.dataset.testid ?? "").replace("header-", ""),
+    );
+
+  /** Applies moves to its own columns, like a tab does through its view. */
+  function Reorderable({ onColumnMove }: { onColumnMove: Fn }) {
+    const [cols, setCols] = useState(() => makeColumns({}));
+    return (
+      <DataGrid<R>
+        columns={cols}
+        rows={THREE}
+        rowId={(r) => r.id}
+        onEdit={() => {}}
+        onColumnMove={(key, to) => {
+          onColumnMove(key, to);
+          setCols((cs) => {
+            const moving = cs.find((c) => c.key === key);
+            if (!moving) return cs;
+            const rest = cs.filter((c) => c.key !== key);
+            const target = "before" in to ? to.before : to.after;
+            const at = rest.findIndex((c) => c.key === target) + ("before" in to ? 0 : 1);
+            rest.splice(at, 0, moving);
+            return rest;
+          });
+        }}
+      />
+    );
+  }
+
+  // Default widths are 160 px after the 76 px row-number column: name 76–236, qty 236–396,
+  // kind 396–556, done 556–716, ref 716–876, note 876–1036, info 1036–1196.
+  function drag(key: string, fromX: number, toX: number, end = "pointerup") {
+    const P = Ctor();
+    act(() => {
+      header(key).dispatchEvent(
+        new P("pointerdown", { bubbles: true, cancelable: true, button: 0, clientX: fromX }),
+      );
+      window.dispatchEvent(new P("pointermove", { clientX: fromX + 20 }));
+      window.dispatchEvent(new P("pointermove", { clientX: toX }));
+    });
+    const line = document.querySelector('[data-testid="column-drop-line"]') as HTMLElement | null;
+    const gap = line?.dataset.gap;
+    act(() => {
+      if (end === "Escape")
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      else window.dispatchEvent(new P(end, { clientX: toX }));
+    });
+    return gap;
+  }
+
+  it("dragging a header right drops it before the column under the pointer", () => {
+    const moved = vi.fn<(...args: unknown[]) => unknown>();
+    render(<Reorderable onColumnMove={moved} />);
+    expect(header("name").dataset.movable).toBe("true");
+    // 500 is past Kind's middle (476), before Done's (636): the gap before Done.
+    expect(drag("name", 100, 500)).toBe("3");
+    expect(moved).toHaveBeenCalledWith("name", { before: "done" });
+    expect(headerKeys()).toEqual(["qty", "kind", "name", "done", "ref", "note", "info"]);
+    expect(document.querySelector('[data-testid="column-drop-line"]')).toBeNull();
+    // Cells follow the header order.
+    const r1 = [...document.querySelectorAll<HTMLElement>('[data-row-id="r1"] [data-col]')];
+    expect(r1.slice(0, 3).map((c) => c.dataset.col)).toEqual(["qty", "kind", "name"]);
+  });
+
+  it("dragging left, and past the last column", () => {
+    const moved = vi.fn<(...args: unknown[]) => unknown>();
+    render(<Reorderable onColumnMove={moved} />);
+    drag("note", 900, 80);
+    expect(moved).toHaveBeenLastCalledWith("note", { before: "name" });
+    drag("name", 300, 1500);
+    expect(moved).toHaveBeenLastCalledWith("name", { after: "info" });
+    expect(headerKeys()).toEqual(["note", "qty", "kind", "done", "ref", "info", "name"]);
+  });
+
+  it("a click, a drop where it started, Escape and pointercancel move nothing", () => {
+    const moved = vi.fn<(...args: unknown[]) => unknown>();
+    render(<Reorderable onColumnMove={moved} />);
+    pointerDown(header("qty"));
+    act(() => {
+      window.dispatchEvent(new (Ctor())("pointermove", { clientX: 2 }));
+      window.dispatchEvent(new (Ctor())("pointerup", { clientX: 2 }));
+    });
+    drag("qty", 300, 380); // still Qty's own gap
+    drag("qty", 300, 700, "Escape");
+    drag("qty", 300, 700, "pointercancel");
+    expect(moved).not.toHaveBeenCalled();
+    expect(headerKeys()[1]).toBe("qty");
+  });
+
+  it("without onColumnMove headers don't drag", () => {
+    const s = spies();
+    render(<Harness initial={THREE} s={s} />);
+    expect(header("name").dataset.movable).toBeUndefined();
+    drag("name", 100, 500);
+    expect(document.querySelector('[data-testid="column-drop-line"]')).toBeNull();
+  });
+
+  it("⌘/Ctrl+Shift+←/→ on a resize handle moves the column and keeps focus there", () => {
+    const moved = vi.fn<(...args: unknown[]) => unknown>();
+    render(<Reorderable onColumnMove={moved} />);
+    const handle = () => document.querySelector('[data-testid="resize-qty"]') as HTMLElement;
+    act(() => handle().focus());
+    press("ArrowRight", { mod: true, shift: true });
+    expect(moved).toHaveBeenLastCalledWith("qty", { after: "kind" });
+    expect(headerKeys().slice(0, 3)).toEqual(["name", "kind", "qty"]);
+    expect(document.activeElement).toBe(handle());
+    expect(document.querySelector('[role="status"]')?.textContent).toBe("Qty: column 3 of 7");
+    press("ArrowLeft", { mod: true, shift: true });
+    press("ArrowLeft", { mod: true, shift: true });
+    expect(moved).toHaveBeenLastCalledWith("qty", { before: "name" });
+    expect(headerKeys()[0]).toBe("qty");
+    // At the start: nothing to move past. Plain arrows still resize.
+    press("ArrowLeft", { mod: true, shift: true });
+    expect(moved).toHaveBeenCalledTimes(3);
+    const before = header("qty").style.width;
+    press("ArrowRight");
+    expect(header("qty").style.width).not.toBe(before);
+  });
+});

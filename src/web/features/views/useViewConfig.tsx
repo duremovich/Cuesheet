@@ -27,6 +27,7 @@ import {
 } from "../../../shared/views";
 import type {
   Column,
+  ColumnMoveTarget,
   Group,
   InsertPosition,
   PickerItem,
@@ -63,6 +64,7 @@ import {
   layoutOverlayOf,
   linkItems,
   migrateLinkFilters,
+  moveField,
 } from "./evaluate";
 import { filterGroups, groupRows, isGroupable } from "./grouping";
 import { clearLegacyPrefs, collapsedKey, lastViewKey, layoutKey, readLegacyPrefs } from "./legacy";
@@ -146,6 +148,11 @@ export interface ViewState<V> {
   collapsed: string[];
   onCollapsedChange: (ids: string[]) => void;
   onColumnResize: (key: string, width: number) => void;
+  /**
+   * A header dragged to a new place: the view's field order, saved like any other change
+   * to it (personal: saved; shared, editor: a draft; viewer: their copy of the view).
+   */
+  onColumnMove: (key: string, to: ColumnMoveTarget) => void;
   /** Rows shown (excluding group headers) and whether a filter is hiding any. */
   shownCount: number;
   filtered: boolean;
@@ -781,6 +788,15 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
     [update, setup.columns],
   );
 
+  const onColumnMove = useCallback(
+    (key: string, to: ColumnMoveTarget) =>
+      update((c) => {
+        const fields = moveField(allColumns, c, key, to);
+        return fields ? { ...c, fields } : c;
+      }),
+    [update, allColumns],
+  );
+
   // --- Filtering, with held rows ---
   const rowIdRef = useRef(setup.rowId);
   rowIdRef.current = setup.rowId;
@@ -1081,6 +1097,7 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
     collapsed,
     onCollapsedChange,
     onColumnResize,
+    onColumnMove,
     shownCount,
     filtered,
     mapPosition,

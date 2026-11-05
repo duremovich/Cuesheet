@@ -463,6 +463,131 @@ test("a link filter keeps working when the record is renamed; sorting by a hidde
     .toEqual(descBefore);
 });
 
+/** The grid's column keys in header order. */
+async function headerOrder(grid: Locator) {
+  return grid
+    .locator('[data-testid^="header-"]')
+    .evaluateAll((els) =>
+      els.map((el) => (el as HTMLElement).dataset.testid?.replace("header-", "") ?? ""),
+    );
+}
+
+async function viewsOf(page: Page, showId: string) {
+  const res = await page.request.get(`/api/shows/${showId}/snapshot`);
+  expect(res.status()).toBe(200);
+  return (
+    (await res.json()) as {
+      tables: {
+        views: {
+          id: string;
+          table: string;
+          owner_user_id: string | null;
+          config: { fields: { key: string }[] };
+        }[];
+      };
+    }
+  ).tables.views;
+}
+
+/** Drags column `key`'s header with the mouse and drops it just inside `x`. */
+async function dragHeader(page: Page, grid: Locator, key: string, x: number) {
+  const box = await grid.getByTestId(`header-${key}`).boundingBox();
+  if (!box) throw new Error(`no header ${key}`);
+  const y = box.y + box.height / 2;
+  await page.mouse.move(box.x + box.width / 2, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y, { steps: 12 });
+  await expect(grid.getByTestId("column-drop-line")).toBeVisible();
+  await page.mouse.up();
+  await expect(grid.getByTestId("column-drop-line")).toHaveCount(0);
+}
+
+test("dragging a column header reorders it; the order survives a tab switch and a reload", async ({
+  browser,
+}) => {
+  const { page, showId } = await exampleShow(browser, { width: 1900, height: 1000 });
+  await page.goto(`/shows/${showId}/notes`);
+  const notes = page.getByRole("grid", { name: "Notes" });
+  await expect(notes.getByTestId("grid-row").first()).toBeVisible();
+  const initial = await headerOrder(notes);
+  expect(initial[0]).toBe("body");
+  expect(initial.indexOf("content")).toBeGreaterThan(2);
+  const expected = ["body", "content", ...initial.slice(1).filter((k) => k !== "content")];
+
+  // Content, dropped on the right half of Note: directly after it.
+  const note = await notes.getByTestId("header-body").boundingBox();
+  await dragHeader(page, notes, "content", (note?.x ?? 0) + (note?.width ?? 0) - 6);
+  await expect.poll(() => headerOrder(notes)).toEqual(expected);
+  // Cells follow the headers.
+  const firstRow = notes.getByTestId("grid-row").first();
+  await expect(firstRow.locator("[data-col]").nth(1)).toHaveAttribute("data-col", "content");
+  // On the shared view an editor's change is a draft (like a resize) until Save view.
+  await expect(page.getByTestId("view-dirty")).toBeVisible();
+
+  await page.getByRole("link", { name: "Cues", exact: true }).click();
+  await expect(grid(page)).toBeVisible();
+  await page.getByRole("link", { name: "Notes", exact: true }).click();
+  await expect(notes.getByTestId("grid-row").first()).toBeVisible();
+  expect(await headerOrder(notes)).toEqual(expected);
+
+  await page.reload();
+  await waitForShowReady(page);
+  await expect(notes.getByTestId("grid-row").first()).toBeVisible();
+  expect(await headerOrder(notes)).toEqual(expected);
+
+  // Saved: the shared view's fields list the new order for everyone.
+  await page.getByRole("button", { name: "Save view" }).click();
+  await expect(page.getByTestId("view-dirty")).toHaveCount(0);
+  await expect
+    .poll(async () => {
+      const views = await viewsOf(page, showId);
+      const shared = views.find((v) => v.table === "notes" && v.owner_user_id === null);
+      return shared?.config.fields.map((f) => f.key).slice(0, 2);
+    })
+    .toEqual(["body", "content"]);
+});
+
+test("a header dragged in a personal view saves to it; Escape cancels a drag", async ({
+  browser,
+}) => {
+  const { page, showId } = await exampleShow(browser, { width: 1900, height: 1000 });
+  await duplicateView(page, uniqueName("Mine"));
+  const g = grid(page);
+  const initial = await headerOrder(g);
+  // A column a few to the right of Description (on screen; later ones may not be).
+  const moving = initial[initial.indexOf("description") + 3] as string;
+  const desc = await g.getByTestId("header-description").boundingBox();
+
+  // Escape mid-drag: nothing moves.
+  const box = await g.getByTestId(`header-${moving}`).boundingBox();
+  await page.mouse.move((box?.x ?? 0) + 20, (box?.y ?? 0) + 10);
+  await page.mouse.down();
+  await page.mouse.move((desc?.x ?? 0) + 10, (box?.y ?? 0) + 10, { steps: 8 });
+  await expect(g.getByTestId("column-drop-line")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(g.getByTestId("column-drop-line")).toHaveCount(0);
+  await page.mouse.up();
+  expect(await headerOrder(g)).toEqual(initial);
+
+  // Dropped on Description's left half: right before it.
+  await dragHeader(page, g, moving, (desc?.x ?? 0) + 10);
+  const rest = initial.filter((k) => k !== moving);
+  const at = rest.indexOf("description");
+  const expected = [...rest.slice(0, at), moving, ...rest.slice(at)];
+  await expect.poll(() => headerOrder(g)).toEqual(expected);
+  await expect(page.getByTestId("view-dirty")).toHaveCount(0);
+  const viewId = new URL(page.url()).searchParams.get("view");
+  await expect
+    .poll(async () => {
+      const views = await viewsOf(page, showId);
+      return views.find((v) => v.id === viewId)?.config.fields.map((f) => f.key);
+    })
+    .toEqual(expected);
+  await page.reload();
+  await expect(g.getByTestId("grid-row").first()).toBeVisible();
+  expect(await headerOrder(g)).toEqual(expected);
+});
+
 test("notes can be grouped by assignee", async ({ browser }) => {
   const { page, showId } = await exampleShow(browser);
   await page.goto(`/shows/${showId}/notes`);

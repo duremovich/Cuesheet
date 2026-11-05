@@ -501,6 +501,7 @@ export function CueGrid() {
           collapsed={vc.collapsed}
           onCollapsedChange={vc.onCollapsedChange}
           onColumnResize={vc.onColumnResize}
+          onColumnMove={vc.onColumnMove}
           onActiveRowChange={onActive}
           onOpenRow={chrome.onOpenRow}
           {...(chrome.onEscape ? { onEscape: chrome.onEscape } : {})}

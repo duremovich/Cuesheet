@@ -52,6 +52,7 @@ underlined; an unnumbered cue suggests the midpoint number). Source: `src/web/pa
 | `onActiveRowChange` | `(rowId \| null) => void` | The active row changed (`null`: none, or a group header). Drive the detail panel / presence from it |
 | `extraMenuItems` | `({rowId, selectedRowIds}) => MenuItem[]` | Extra context-menu entries ("Show in script", "Move to scene…"), inserted before Delete |
 | `onColumnResize` | `(key, width) => void` | Persist widths per view; pass them back as `column.width` |
+| `onColumnMove` | `(key, {before: key} \| {after: key}) => void` | A header was dragged to a new place (next to a shown column). Persist the order and pass `columns` back reordered; omit and headers don't drag |
 | `onError` | `(error, action) => void` | A callback threw or rejected (`action`: edit / insert / duplicate / move / delete). The grid also shows a short inline message. Default: `console.error` |
 | `onEscape` | `() => void` | Escape with nothing left to cancel in the grid (not editing; no range, row selection, or held row that would move). E.g. close a detail panel |
 | `addRowLabel` | `string` | The group header's add button ("Add cue"; default "Add row"); its accessible name is "<label> to <group>" |
@@ -187,6 +188,14 @@ changed by someone else" message. The step is still consumed.
   group). These buttons aren't tab stops; the header row itself is (via arrow keys).
 - Drag a header's right edge to resize; or Tab to the resizer (they're in the tab order
   before the cells) and use ←/→ (Shift for 50 px steps).
+- With `onColumnMove`: drag a header (anywhere but its right edge) left or right to move
+  the column; a vertical line shows where it lands, Escape cancels, a click without moving
+  5 px does nothing. Near the grid's edges (or the frozen columns' edge) it scrolls
+  sideways. Frozen columns are the leading ones, so a column dropped among them becomes
+  frozen and the last frozen one moves out (the count is the consumer's; Cuesheet keeps
+  the view's `frozenCount`). Mouse and pen only: a touch swipe on the header scrolls. On a
+  focused resizer, ⌘/Ctrl+Shift+←/→ moves the column one place (announced in the status
+  line; focus stays on its resizer).
 
 ## Focus
 

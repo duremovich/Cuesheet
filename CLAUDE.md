@@ -515,7 +515,11 @@ views" below).
   field's kind doesn't take (`OPS_BY_KIND`), a value of the wrong shape for its operator,
   grouping by a non-select/link field, duplicate sort keys, or frozenCount above the column
   count). `fields` lists order/width/hidden; unlisted columns follow in default order,
-  shown, so new columns appear in old views. The client reads configs with
+  shown, so new columns appear in old views. Order changes come from the Fields popover
+  (drag / ↑↓) or from dragging a grid header (`onColumnMove` → `moveField` in
+  `evaluate.ts`: next to the shown target, hidden fields keep their place, `frozenCount`
+  unchanged so the frozen region stays the first N); both go through `update` like any
+  other view change (see "Saving": not a layout overlay for viewers). The client reads configs with
   `normalizeViewConfig` (lenient; bad parts fall back to the table default).
 - **Where it runs.** All on the client, over the store rows the tab already builds:
   `useViewConfig(setup)` (one hook per tab; `CueGrid` and `TableGrid` call it) picks the

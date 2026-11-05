@@ -55,6 +55,18 @@
   min-width: 0;
 }
 
+.hcell[data-movable] {
+  cursor: grab;
+}
+
+.hcell[data-dragging] {
+  opacity: 0.45;
+}
+
+.root[data-dragging] .hcell {
+  cursor: grabbing;
+}
+
 .hcell[data-frozen],
 .rownumHeader {
   position: sticky;
@@ -489,6 +501,16 @@
   height: 2px;
   background: var(--color-accent);
   z-index: 5;
+  pointer-events: none;
+}
+
+/* A dragged column header's drop position, over the header and the visible rows. */
+.colDropLine {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  background: var(--color-accent);
+  z-index: 6;
   pointer-events: none;
 }
 

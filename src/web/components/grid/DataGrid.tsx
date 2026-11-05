@@ -32,6 +32,7 @@ import type {
   CellDecoration,
   ColorRule,
   Column,
+  ColumnMoveTarget,
   DataGridProps,
   GridAction,
   InsertPosition,
@@ -66,6 +67,8 @@ const PASTE_TYPES = new Set(["text", "longtext", "number", "select", "measuremen
 const PICKER_TYPES = new Set(["select", "multiselect", "link", "multilink"]);
 const GHOST_TYPES = new Set(["text", "longtext", "number"]);
 const MRU_SIZE = 5;
+/** How far (px) a header must be dragged before it moves (a shorter one is a click). */
+const COL_DRAG_SLOP = 5;
 const GROUP_COL = "__group";
 
 /** The active cell: a row cell, or a group header (`group: true`, `rowId` = group id). */
@@ -171,6 +174,13 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
   const [widths, setWidths] = useState<Record<string, number>>({});
   const [menu, setMenu] = useState<{ x: number; y: number; rowId: string } | null>(null);
   const [drag, setDrag] = useState<{ rowId: string; gap: number | null } | null>(null);
+  /** A header being dragged: the gap it would drop into and the drop line's x in the viewport. */
+  const [colDrag, setColDrag] = useState<{
+    key: string;
+    gap: number;
+    x: number;
+    height: number;
+  } | null>(null);
   const [confirm, setConfirm] = useState<string[] | null>(null);
   const [hint, setHint] = useState<string>("");
   const [viewportWidth, setViewportWidth] = useState(0);
@@ -1683,6 +1693,190 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     props.onColumnResize?.(key, w);
   };
 
+  // --- Drag a header to reorder columns ---
+  // Pointer events like the row drag (not HTML5 drag and drop, which the file drop uses).
+  // The drag starts after COL_DRAG_SLOP px, so a plain click on a header does nothing new.
+  const colPointer = useRef<{
+    key: string;
+    startX: number;
+    clientX: number;
+    active: boolean;
+    gap: number | null;
+    timer: number;
+  } | null>(null);
+  /** The resize handle to refocus after a keyboard move (if the move lands soon). */
+  const refocusResizer = useRef<{ key: string; at: number } | null>(null);
+
+  /** Where a shown column sits in the scroll viewport: frozen ones stick, the rest scroll under them. */
+  const colEdges = (c: ColLayout<Row>, scrollLeft: number, frozenW: number) =>
+    c.frozen
+      ? { l: c.left, r: c.left + c.width }
+      : { l: Math.max(frozenW, c.left - scrollLeft), r: c.left + c.width - scrollLeft };
+
+  /** The gap (0..cols.length) nearest viewport x, and where its drop line goes. */
+  const columnGapAt = (x: number): { gap: number; lineX: number } => {
+    const { cols: cs, frozenWidth: fw } = ref.current;
+    const sl = scrollRef.current?.scrollLeft ?? 0;
+    const inFrozen = x < fw;
+    let gap = -1;
+    for (let i = 0; i < cs.length; i++) {
+      const c = cs[i] as ColLayout<Row>;
+      if (c.frozen !== inFrozen) continue;
+      const e = colEdges(c, sl, fw);
+      if (e.r <= e.l) continue; // scrolled under the frozen columns
+      if (x < (e.l + e.r) / 2) {
+        gap = i;
+        break;
+      }
+    }
+    if (gap < 0) gap = inFrozen ? cs.filter((c) => c.frozen).length : cs.length;
+    const prev = cs[gap - 1];
+    const next = cs[gap];
+    const lineX =
+      prev && (prev.frozen || !next)
+        ? colEdges(prev, sl, fw).r
+        : next
+          ? colEdges(next, sl, fw).l
+          : ROWNUM_WIDTH;
+    return { gap, lineX };
+  };
+
+  /** The move a drop at `gap` asks for, or null when the column would stay put. */
+  const columnTarget = (key: string, gap: number): ColumnMoveTarget | null => {
+    const cs = ref.current.cols;
+    const from = ref.current.colIndex.get(key);
+    if (from === undefined || gap === from || gap === from + 1) return null;
+    const next = cs[gap];
+    if (next) return { before: next.key };
+    const last = cs[cs.length - 1];
+    return last ? { after: last.key } : null;
+  };
+
+  const updateColGap = () => {
+    const p = colPointer.current;
+    const el = scrollRef.current;
+    if (!p?.active || !el) return;
+    const r = el.getBoundingClientRect();
+    const { gap, lineX } = columnGapAt(p.clientX - r.left);
+    p.gap = gap;
+    const x = Math.max(0, Math.min(el.clientWidth, lineX));
+    setColDrag((cur) =>
+      cur && cur.gap === gap && cur.x === x ? cur : { key: p.key, gap, x, height: el.clientHeight },
+    );
+  };
+
+  const onColMove = (e: PointerEvent) => {
+    const p = colPointer.current;
+    if (!p) return;
+    p.clientX = e.clientX;
+    if (!p.active) {
+      if (Math.abs(e.clientX - p.startX) < COL_DRAG_SLOP) return;
+      p.active = true;
+      commitAny();
+      p.timer = window.setInterval(() => {
+        const d = colPointer.current;
+        const el = scrollRef.current;
+        if (!d || !el) return;
+        const r = el.getBoundingClientRect();
+        const fw = ref.current.frozenWidth;
+        const leftEdge = r.left + fw + 24;
+        // Near the frozen columns' edge, not over them (that's aiming at a frozen spot).
+        const overFrozen = fw > ROWNUM_WIDTH && d.clientX < r.left + fw;
+        if (d.clientX < leftEdge && !overFrozen && el.scrollLeft > 0)
+          el.scrollLeft -= Math.min(30, (leftEdge - d.clientX) / 2 + 4);
+        else if (d.clientX > r.right - 24)
+          el.scrollLeft += Math.min(30, (d.clientX - r.right + 24) / 2 + 4);
+        else return;
+        updateColGap();
+      }, 30);
+    }
+    updateColGap();
+  };
+
+  const endColDrag = (drop: boolean) => {
+    const p = colPointer.current;
+    removeColListeners();
+    colPointer.current = null;
+    if (!p) return;
+    clearInterval(p.timer);
+    setColDrag(null);
+    if (!drop || !p.active || p.gap === null) return;
+    const to = columnTarget(p.key, p.gap);
+    if (to) ref.current.props.onColumnMove?.(p.key, to);
+  };
+  const onColMoveRef = useRef(onColMove);
+  const endColDragRef = useRef(endColDrag);
+  onColMoveRef.current = onColMove;
+  endColDragRef.current = endColDrag;
+  const stableColMove = useCallback((e: PointerEvent) => onColMoveRef.current(e), []);
+  const stableColUp = useCallback(() => endColDragRef.current(true), []);
+  const stableColCancel = useCallback(() => endColDragRef.current(false), []);
+  const stableColKey = useCallback((e: KeyboardEvent) => {
+    if (e.key !== "Escape") return;
+    e.preventDefault();
+    e.stopPropagation();
+    endColDragRef.current(false);
+  }, []);
+  function removeColListeners() {
+    window.removeEventListener("pointermove", stableColMove);
+    window.removeEventListener("pointerup", stableColUp);
+    window.removeEventListener("pointercancel", stableColCancel);
+    window.removeEventListener("keydown", stableColKey, true);
+  }
+  useEffect(
+    () => () => {
+      window.removeEventListener("pointermove", stableColMove);
+      window.removeEventListener("pointerup", stableColUp);
+      window.removeEventListener("pointercancel", stableColCancel);
+      window.removeEventListener("keydown", stableColKey, true);
+      if (colPointer.current) clearInterval(colPointer.current.timer);
+    },
+    [stableColMove, stableColUp, stableColCancel, stableColKey],
+  );
+
+  const headerPointerDown = (key: string, e: ReactPointerEvent) => {
+    // Touch swipes on the header scroll the grid; phones reorder in the Fields popover.
+    if (e.button !== 0 || e.pointerType === "touch" || !props.onColumnMove) return;
+    if (colPointer.current) endColDrag(false);
+    e.preventDefault(); // no text selection while dragging
+    colPointer.current = {
+      key,
+      startX: e.clientX,
+      clientX: e.clientX,
+      active: false,
+      gap: null,
+      timer: 0,
+    };
+    window.addEventListener("pointermove", stableColMove);
+    window.addEventListener("pointerup", stableColUp);
+    window.addEventListener("pointercancel", stableColCancel);
+    window.addEventListener("keydown", stableColKey, true);
+  };
+
+  /** ⌘/Ctrl+Shift+←/→ on a resize handle: move that column one place. */
+  const moveColumnBy = (key: string, dir: -1 | 1) => {
+    const from = colIndex.get(key);
+    if (from === undefined || !props.onColumnMove) return;
+    const other = cols[from + dir];
+    const c = cols[from];
+    if (!other || !c) return;
+    refocusResizer.current = { key, at: Date.now() };
+    props.onColumnMove(key, dir < 0 ? { before: other.key } : { after: other.key });
+    showHint(`${c.col.title}: column ${from + dir + 1} of ${cols.length}`);
+  };
+  // The moved header may be re-inserted in the DOM, which drops focus: put it back.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the columns move
+  useEffect(() => {
+    const pending = refocusResizer.current;
+    refocusResizer.current = null;
+    if (!pending || Date.now() - pending.at > 2000) return;
+    const want = `resize-${pending.key}`;
+    const el = [
+      ...(rootRef.current?.querySelectorAll<HTMLElement>('[role="separator"]') ?? []),
+    ].find((x) => x.dataset.testid === want);
+    if (el && document.activeElement !== el) el.focus();
+  }, [cols]);
+
   function toggleGroup(id: string) {
     setCollapsed((s) => {
       if (s.has(id)) s.delete(id);
@@ -1969,7 +2163,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       aria-colcount={cols.length + 1}
       aria-multiselectable="true"
       data-row-height={rowHeight}
-      data-dragging={drag ? true : undefined}
+      data-dragging={drag || colDrag ? true : undefined}
       onKeyDown={onKeyDown}
       onCopy={onCopy}
       onPaste={onPaste}
@@ -2011,8 +2205,12 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
                 aria-sort={s ? (s.dir === "asc" ? "ascending" : "descending") : undefined}
                 className={styles.hcell}
                 data-frozen={c.frozen || undefined}
+                data-movable={props.onColumnMove ? true : undefined}
+                data-dragging={colDrag?.key === c.key || undefined}
+                data-testid={`header-${c.key}`}
                 style={{ width: c.width, left: c.frozen ? c.left : undefined }}
                 title={c.col.title}
+                onPointerDown={(e) => headerPointerDown(c.key, e)}
               >
                 <span className={styles.typeIcon}>
                   <TypeIcon type={c.col.type} />
@@ -2034,11 +2232,18 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
                   className={styles.resizer}
                   data-testid={`resize-${c.key}`}
                   onPointerDown={(e) => startResize(c.key, e)}
+                  aria-keyshortcuts={
+                    props.onColumnMove
+                      ? "Control+Shift+ArrowLeft Control+Shift+ArrowRight Meta+Shift+ArrowLeft Meta+Shift+ArrowRight"
+                      : undefined
+                  }
                   onKeyDown={(e) => {
                     if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
                       e.preventDefault();
                       e.stopPropagation();
-                      resizeBy(c.key, (e.key === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? 50 : 10));
+                      const dir = e.key === "ArrowLeft" ? -1 : 1;
+                      if ((e.metaKey || e.ctrlKey) && e.shiftKey) moveColumnBy(c.key, dir);
+                      else resizeBy(c.key, dir * (e.shiftKey ? 50 : 10));
                     }
                   }}
                 />
@@ -2064,6 +2269,14 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
           {items.length === 0 && <div className={styles.empty}>No rows</div>}
         </div>
       </div>
+      {colDrag && (
+        <div
+          className={styles.colDropLine}
+          style={{ left: colDrag.x - 1, height: colDrag.height }}
+          data-testid="column-drop-line"
+          data-gap={colDrag.gap}
+        />
+      )}
       <div role="status" aria-live="polite" className={hint ? styles.hint : styles.visuallyHidden}>
         {hint}
       </div>
