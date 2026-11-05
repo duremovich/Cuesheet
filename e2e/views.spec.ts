@@ -6,6 +6,7 @@ import {
   apiCreateShow,
   apiLogin,
   importExamples,
+  recordId,
   snapshot,
   trackErrors,
   uniqueName,
@@ -482,6 +483,46 @@ test("notes can be grouped by assignee", async ({ browser }) => {
   await expect.poll(async () => (await headers.allTextContents()).length).toBeGreaterThan(2);
   const titles = await headers.allTextContents();
   expect(titles.some((t) => /^(Open|In progress|Done)\b/.test(t.trim()))).toBe(false);
+});
+
+test("a saved collapse of the first notes group keeps its header clickable", async ({
+  browser,
+}) => {
+  // The ST repro: every note Open, "Open" collapsed and remembered (localStorage), reload.
+  // The "In progress" header used to stick over "Open", so there was nothing to expand.
+  const page = await newPage(browser);
+  const showId = await apiCreateShow(page, uniqueName("Collapsed"));
+  const ops = ["one", "two", "three"].map((body) => ({
+    op: "create",
+    table: "notes",
+    id: recordId(),
+    fields: { body, status: "Open" },
+  }));
+  const res = await page.request.post(`/api/shows/${showId}/mutate`, {
+    data: { clientId: "e2e", ops },
+  });
+  expect(res.status(), await res.text()).toBe(200);
+  await page.goto(`/shows/${showId}/notes`);
+  const notes = page.getByRole("grid", { name: "Notes" });
+  const noteRows = notes.getByTestId("grid-row");
+  await expect(noteRows).toHaveCount(3);
+  await notes.getByRole("button", { name: "Collapse Open" }).click();
+  await expect(noteRows).toHaveCount(0);
+  await page.reload();
+  await waitForShowReady(page);
+  const headers = notes.getByTestId("group-header");
+  await expect(headers).toHaveText([/^Open\s*3/, /^In progress\s*0/, /^Done\s*0/]);
+  const open = headers.first();
+  await expect(open).toHaveAttribute("aria-expanded", "false");
+  // Open's header is the one on top at its own spot (not covered by "In progress").
+  const onTop = await open.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + 40, r.top + r.height / 2);
+    return hit?.closest<HTMLElement>('[data-testid="group-header"]')?.dataset.groupId ?? null;
+  });
+  expect(onTop).toBe(await open.getAttribute("data-group-id"));
+  await notes.getByRole("button", { name: "Expand Open" }).click();
+  await expect(noteRows).toHaveCount(3);
 });
 
 test.describe("at phone width", () => {

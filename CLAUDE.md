@@ -311,6 +311,9 @@ column type, ordering rules (show order vs live sort with the focused row held u
 the keyboard map and an integration example. The grid never fetches or persists; it calls
 `onEdit` / `onInsert` / `onMove` / `onDelete` and renders what it's given. `RecordPicker`
 (find-or-create, R5a) is exported for reuse outside the grid. Try it at `/dev/grid`.
+`buildLayout` always emits every group's header: if one seems gone (its rows look
+deleted), suspect the stuck group header drawn over it. See the README's "Scroll
+container" for the stuck-header rule and its tests.
 
 ## Table views (`src/web/features/`)
 

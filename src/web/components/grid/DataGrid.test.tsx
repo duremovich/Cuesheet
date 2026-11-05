@@ -888,6 +888,35 @@ describe("DataGrid selection, groups and menus", () => {
     expect(focused()).toBe("new3:name");
   });
 
+  it("a collapsed first group keeps its header (the next header doesn't stick over it)", () => {
+    // Regression: a saved collapse of the first group (Notes "Open") made the next group's
+    // header the stuck one at scrollTop 0, drawn over the first header, so nothing was left
+    // to click to expand it. The stuck header must be the group at the top of the list.
+    const s = spies();
+    const rows = [row("a", "one"), row("b", "two"), row("c", "three", { group: "g2" })];
+    render(<Harness initial={rows} s={s} grouped extra={{ collapsed: ["g1"] }} />);
+    expect(rowOrder()).toEqual(["c"]);
+    const stuck = document.querySelectorAll<HTMLElement>(
+      '[data-testid="group-header"][data-stuck]',
+    );
+    expect([...stuck].map((h) => h.dataset.groupId)).toEqual(["g1"]);
+    expect(stuck[0]?.style.top).toBe("34px");
+    const g2 = document.querySelector<HTMLElement>('[data-group-id="g2"]');
+    expect(g2?.dataset.stuck).toBeUndefined();
+    expect(g2?.style.transform).toBe("translateY(40px)");
+    expect(document.querySelector('[aria-label="Expand Scene One"]')).not.toBeNull();
+  });
+
+  it("an empty first group keeps its header when the next group follows it", () => {
+    const s = spies();
+    const rows = [row("c", "three", { group: "g2" })];
+    render(<Harness initial={rows} s={s} grouped />);
+    const stuck = document.querySelectorAll<HTMLElement>(
+      '[data-testid="group-header"][data-stuck]',
+    );
+    expect([...stuck].map((h) => h.dataset.groupId)).toEqual(["g1"]);
+  });
+
   it("renders section rows full width with their label", () => {
     const s = spies();
     const rows = [row("a", "one"), row("sec", "INTERMISSION", { section: true }), row("b", "two")];

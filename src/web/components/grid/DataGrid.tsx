@@ -307,11 +307,17 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
   });
   const virtualItems = virtualizer.getVirtualItems();
 
-  // The stuck group header names the group of the first item visible below it: the item
+  // The stuck group header names the group of the first row visible below it: the item
   // at body offset scrollTop + GROUP_HEIGHT (just under the column header and the stuck
   // header itself), or that item's own group header.
+  // Unless that item is itself a group header still below the top: it labels itself, and
+  // the slot above it holds the previous group (its last row, or its header when it's
+  // collapsed or empty). Sticking the lower header there drew it over the previous one: at
+  // scrollTop 0 a collapsed (or empty) first group lost its header for good. The previous
+  // group's header sticks instead, pushed up so it ends where the next header begins.
   const scrollTop = virtualizer.scrollOffset ?? 0;
   let sticky = -1;
+  let stickyPush = 0;
   if (groups && items.length) {
     const probe = scrollTop + GROUP_HEIGHT;
     let lo = 0;
@@ -321,12 +327,15 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       if ((offsets[mid] as number) <= probe) lo = mid;
       else hi = mid - 1;
     }
+    const loTop = offsets[lo] as number;
+    const nextHeader = items[lo]?.kind === "group" && loTop > scrollTop;
     for (const g of groupIndexes) {
-      if (g <= lo) sticky = g;
+      if (g < lo || (g === lo && !nextHeader)) sticky = g;
       else break;
     }
+    if (nextHeader && sticky >= 0) stickyPush = probe - loTop;
   }
-  const stickyTop = HEADER_HEIGHT;
+  const stickyTop = HEADER_HEIGHT - stickyPush;
 
   useLayoutEffect(() => {
     const el = scrollRef.current;

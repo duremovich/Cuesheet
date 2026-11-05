@@ -186,14 +186,22 @@ test("group headers collapse and expand, and stay stuck while scrolling", async 
   // Setting scrollTop only schedules the scroll event; the grid re-renders after it. Wait
   // until the grid says it has laid out this offset (data-scroll-offset), then read the
   // stuck header and the rows under it from that one settled layout.
+  // A group header right under the stuck one labels itself: then the stuck header is the
+  // previous group's, pushed up to end where that header begins. 0 and 15 are that case
+  // with collapsed Unassigned on top (at 0 the next header used to stick over Unassigned's,
+  // leaving nothing to expand it with).
   const scroller = page.getByTestId("grid-scroll");
   const stuck = grid(page).locator('[data-testid="group-header"][data-stuck]');
-  for (const y of [500, 1234, 3000]) {
+  const unassigned = await grid(page)
+    .getByTestId("group-header")
+    .filter({ hasText: "Unassigned" })
+    .getAttribute("data-group-id");
+  for (const y of [0, 15, 500, 1234, 3000]) {
     const top = await scroller.evaluate((el, t) => {
       el.scrollTop = t;
       return Math.round(el.scrollTop);
     }, y);
-    expect(top).toBeGreaterThan(0);
+    if (y > 0) expect(top).toBeGreaterThan(0);
     await expect(scroller).toHaveAttribute("data-scroll-offset", String(top));
     await expect(stuck).toHaveCount(1);
     const layout = await stuck.evaluate((el) => {
@@ -209,16 +217,25 @@ test("group headers collapse and expand, and stay stuck while scrolling", async 
         .map((e) => ({ e, top: e.getBoundingClientRect().top }))
         .filter((c) => c.top >= box.bottom - 1)
         .sort((p, q) => p.top - q.top);
-      const first = candidates[0]?.e;
+      const first = candidates[0];
       return {
         stuckGroup: el.dataset.groupId ?? null,
-        below: first?.dataset.group ?? first?.dataset.groupId ?? null,
+        below: first?.e.dataset.group ?? first?.e.dataset.groupId ?? null,
+        belowIsHeader: first?.e.dataset.testid === "group-header",
+        gap: first ? Math.round(first.top - box.bottom) : null,
         offset: Math.round(box.top - scrollBox.top),
       };
     });
     expect(layout.below, `something under the stuck header at ${top}`).not.toBeNull();
-    expect(layout.stuckGroup).toBe(layout.below);
-    expect(layout.offset).toBe(34);
+    if (y < 100) expect(layout.stuckGroup, `stuck at ${top}`).toBe(unassigned);
+    if (layout.belowIsHeader) {
+      expect(layout.gap, `next header right under the stuck one at ${top}`).toBe(0);
+      expect(layout.offset).toBeGreaterThan(34 - 40);
+      expect(layout.offset).toBeLessThanOrEqual(34);
+    } else {
+      expect(layout.stuckGroup).toBe(layout.below);
+      expect(layout.offset).toBe(34);
+    }
   }
 });
 

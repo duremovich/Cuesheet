@@ -288,7 +288,17 @@ Notes for the integration:
   remote change (see Undo).
 - **Scroll container.** The grid scrolls internally (both axes) with a sticky header row,
   a sticky group header (always the group of the first rows visible under it) and a frozen
-  row-number column. It never widens the page.
+  row-number column. It never widens the page. When the item right under the stuck slot is
+  itself a group header (the group above is collapsed or empty, or you're at its end), that
+  header labels itself: the stuck header is the previous group's, pushed up so it ends where
+  the next one begins. (Sticking the lower header instead drew it over the one above; at
+  scrollTop 0 a collapsed or empty first group lost its header, with nothing left to click
+  to expand it. Tests: `DataGrid.test.tsx` "a collapsed first group keeps its header",
+  `e2e/grid.spec.ts` "stay stuck while scrolling", `e2e/views.spec.ts` "a saved collapse of
+  the first notes group".) The stuck header is the only in-flow item in the body (every
+  other row is absolutely positioned), so it sits at the body's top and `position: sticky`
+  holds it under the column header. jsdom has no layout: test scrolled states in e2e
+  (wait on `data-scroll-offset`).
 
 ## Accessibility
 
