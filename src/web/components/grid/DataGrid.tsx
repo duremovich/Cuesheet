@@ -83,6 +83,8 @@ const MRU_SIZE = 5;
 /** How far (px) a header must be dragged before it moves (a shorter one is a click). */
 const COL_DRAG_SLOP = 5;
 const GROUP_COL = "__group";
+/** Zero-width space: the edit sizer's last character, so a trailing newline gets its line. */
+const ZWSP = String.fromCharCode(0x200b);
 /** The auto-row caps, for the stylesheet (rowHeights.ts is the source). */
 const AUTO_VARS = {
   "--auto-max-lines": AUTO_MAX_LINES,
@@ -2816,7 +2818,7 @@ function GridRowImpl<Row>(p: GridRowProps<Row>) {
                 // covers the cell. The zero-width space keeps a trailing newline's line.
                 <span className={styles.editSizer} aria-hidden="true">
                   {editing.draft}
-                  {"​"}
+                  {ZWSP}
                 </span>
               )}
               <TextEditor
