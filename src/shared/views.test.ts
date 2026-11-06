@@ -49,6 +49,17 @@ describe("view config", () => {
     expect(viewConfigError(null)).toMatch(/object/);
   });
 
+  it("row height: fit to content (auto) is the default; the fixed heights are still valid", () => {
+    expect(defaultViewConfig("notes").rowHeight).toBe("auto");
+    const ok = defaultViewConfig("cues");
+    for (const h of ["auto", "compact", "normal", "tall"]) {
+      expect(viewConfigError({ ...ok, rowHeight: h })).toBeNull();
+      expect(normalizeViewConfig({ rowHeight: h }, "cues").rowHeight).toBe(h);
+    }
+    expect(viewConfigError({ ...ok, rowHeight: "huge" })).toMatch(/rowHeight/);
+    expect(normalizeViewConfig({ rowHeight: "huge" }, "cues").rowHeight).toBe("auto");
+  });
+
   it("normalizes leniently (client): bad parts fall back to the table default", () => {
     const n = normalizeViewConfig(
       { filters: "x", rowHeight: "tall", group: { key: 5 }, colorRules: [{ bad: true }] },

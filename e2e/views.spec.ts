@@ -303,7 +303,7 @@ test("a viewer changing a shared view gets their own copy; the shared one is unc
     .toBe(1);
   const list = await views();
   const shared = list.find((v) => v.name === "All cues");
-  expect(shared?.config).toMatchObject({ rowHeight: "normal", filters: [] });
+  expect(shared?.config).toMatchObject({ rowHeight: "auto", filters: [] });
   expect(list.find((v) => v.name === "All cues (mine)")?.config.rowHeight).toBe("tall");
   // Personal views are private: the owner's snapshot doesn't carry the viewer's copy.
   expect((await views(owner)).map((v) => v.name)).toEqual(["All cues"]);

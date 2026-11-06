@@ -118,7 +118,7 @@ export function GridDevPage() {
   const version = useStore(store);
   const [grouped, setGrouped] = useState(true);
   const [sorted, setSorted] = useState(false);
-  const [rowHeight, setRowHeight] = useState<RowHeight>("normal");
+  const [rowHeight, setRowHeight] = useState<RowHeight>("auto");
   const [preset, setPreset] = useState("none");
   const [log, setLog] = useState("Ready");
 
@@ -158,6 +158,7 @@ export function GridDevPage() {
         <label className={styles.inline}>
           Row height
           <select value={rowHeight} onChange={(e) => setRowHeight(e.target.value as RowHeight)}>
+            <option value="auto">Fit to content</option>
             <option value="compact">Compact</option>
             <option value="normal">Normal</option>
             <option value="tall">Tall</option>

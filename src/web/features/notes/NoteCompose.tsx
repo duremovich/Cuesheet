@@ -19,6 +19,7 @@ import type { FieldOption } from "../../../shared/tables";
 import { Chip, type PickerItem, RecordPicker } from "../../components/grid";
 import { optionColor } from "../../components/grid/Chip";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
+import { useAutoGrow } from "../../lib/useAutoGrow";
 import { uploadQueue } from "../attachments/state";
 import { createPerson, searchPersons } from "../shared/pickers";
 import { isStringArray, readPref, writePref } from "../shared/prefs";
@@ -152,12 +153,8 @@ export const NoteCompose = forwardRef<NoteComposeHandle, NoteComposeProps>(funct
     [addFiles],
   );
 
-  useLayoutEffect(() => {
-    const el = input.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight + 2, 200)}px`;
-  });
+  // Grows to 200 px, then scrolls inside (the compose box stays pinned under the list).
+  useAutoGrow(input, { max: 200 });
   // biome-ignore lint/correctness/useExhaustiveDependencies: focus once on mount
   useLayoutEffect(() => {
     if (autoFocus) input.current?.focus({ preventScroll: true });

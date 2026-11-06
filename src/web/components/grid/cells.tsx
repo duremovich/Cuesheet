@@ -131,6 +131,7 @@ export function CellContent<Row>({
 export function TextEditor({
   multiline,
   numeric,
+  fit = false,
   value,
   label,
   placeholder,
@@ -139,6 +140,11 @@ export function TextEditor({
 }: {
   multiline: boolean;
   numeric: boolean;
+  /**
+   * Auto rows: the editor covers its cell exactly, and the cell (sized by the draft next to
+   * it) grows instead of the editor overlaying the rows below.
+   */
+  fit?: boolean;
   value: string;
   label: string;
   /** Ghost suggestion (Tab / → accepts it). */
@@ -156,7 +162,7 @@ export function TextEditor({
   }, []);
   useLayoutEffect(() => {
     const el = ref.current;
-    if (!multiline || !el) return;
+    if (!multiline || fit || !el) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight + 2, 280)}px`;
   });
@@ -165,7 +171,7 @@ export function TextEditor({
     return (
       <textarea
         ref={ref}
-        className={styles.editorArea}
+        className={fit ? styles.editorFit : styles.editorArea}
         aria-label={label}
         data-editor="true"
         placeholder={placeholder}

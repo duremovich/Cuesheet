@@ -527,6 +527,34 @@ describe("DataGrid review fixes", () => {
     expect(focused()).toBe("r3:qty");
   });
 
+  it("an insert right after a click reports the clicked row first", () => {
+    // A keypress can beat the passive effect that reports a click's row. The consumer must
+    // still hear about the clicked row before onInsert, or that late report undoes what
+    // the insert set up (the view layer's filter hold on the new row).
+    const s = spies();
+    const calls: string[] = [];
+    const onActiveRowChange = vi.fn((id: string | null) => calls.push(`active ${id}`));
+    s.onInsert.mockImplementation(() => calls.push("insert"));
+    render(<Harness initial={THREE} s={s} extra={{ onActiveRowChange }} />);
+    calls.length = 0;
+    const Ctor = (window.PointerEvent ?? MouseEvent) as typeof MouseEvent;
+    act(() => {
+      // One act: the click's effects haven't run when the key arrives.
+      cell("r2", "name").dispatchEvent(new Ctor("pointerdown", { bubbles: true, button: 0 }));
+      cell("r2", "name").dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          ctrlKey: true,
+          shiftKey: true,
+          bubbles: true,
+        }),
+      );
+    });
+    expect(calls.slice(0, 2)).toEqual(["active r2", "insert"]);
+    // Reported once, not again by the effect.
+    expect(calls.filter((c) => c === "active r2")).toHaveLength(1);
+  });
+
   it("stepRow moves the active row without taking focus; onEscape fires only when idle", () => {
     const s = spies();
     const handle: { current: DataGridHandle | null } = { current: null };

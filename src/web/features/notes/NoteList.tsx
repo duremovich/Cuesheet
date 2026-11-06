@@ -15,6 +15,7 @@ import type { FieldOption, NoteRow } from "../../../shared/tables";
 import { Chip } from "../../components/grid";
 import { optionColor } from "../../components/grid/Chip";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
+import { useAutoGrow } from "../../lib/useAutoGrow";
 import { AttachmentStrip, uploadQueue } from "../attachments/Attachments";
 import { attachmentRestoreOps, attachmentsOf } from "../attachments/selectors";
 import { useRecordUploads } from "../attachments/uploads";
@@ -318,12 +319,7 @@ function BodyEditor({
     settled.current = true;
     fn();
   };
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight + 2}px`;
-  });
+  useAutoGrow(ref);
   useLayoutEffect(() => {
     const el = ref.current;
     el?.focus();

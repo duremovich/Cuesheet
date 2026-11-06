@@ -149,7 +149,11 @@ export interface InsertPosition {
 /** Where a dragged column header was dropped: directly before or after a shown column. */
 export type ColumnMoveTarget = { before: string } | { after: string };
 
-export type RowHeight = "compact" | "normal" | "tall";
+/**
+ * `auto` (the default): each row fits its content, wrapped (capped; see rowHeights.ts).
+ * The others are fixed heights: 30 / 40 / 72 px.
+ */
+export type RowHeight = "auto" | "compact" | "normal" | "tall";
 
 /** An entry of the row context menu. */
 export interface MenuItem {

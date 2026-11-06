@@ -2,12 +2,13 @@
 // first, "Add version" (next Vnn, today, you, Available, current), set current, edit in
 // place (Enter or leaving a field saves, Escape reverts), delete with Undo. Editors only;
 // everyone else reads.
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { Op } from "../../../shared/ops";
 import type { ContentVersionRow, FieldOption } from "../../../shared/tables";
 import { Chip } from "../../components/grid";
 import { optionColor } from "../../components/grid/Chip";
 import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
+import { useAutoGrow } from "../../lib/useAutoGrow";
 import styles from "../shared/RowPanel.module.css";
 import { useWorkspace } from "../show/workspace";
 import vstyles from "./ContentVersions.module.css";
@@ -216,6 +217,8 @@ function InlineText({
   onCommit: (text: string) => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
+  const area = useRef<HTMLTextAreaElement>(null);
+  useAutoGrow(area, { enabled: !!multiline });
   const finish = () => {
     if (draft === null) return;
     const t = draft.trim();
@@ -244,5 +247,9 @@ function InlineText({
       }
     },
   };
-  return multiline ? <textarea rows={2} {...common} /> : <input type="text" {...common} />;
+  return multiline ? (
+    <textarea ref={area} rows={2} {...common} />
+  ) : (
+    <input type="text" {...common} />
+  );
 }

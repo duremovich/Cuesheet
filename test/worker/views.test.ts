@@ -66,7 +66,12 @@ describe("views: lazy defaults", () => {
       expect(v).toMatchObject({ owner_user_id: null, is_default: true, created_by: "system" });
     }
     const cues = list.find((v) => v.table === "cues");
-    expect(cues?.config).toMatchObject({ group: { key: "scene" }, sortMode: "none", fields: [] });
+    expect(cues?.config).toMatchObject({
+      group: { key: "scene" },
+      sortMode: "none",
+      fields: [],
+      rowHeight: "auto",
+    });
     expect(list.find((v) => v.table === "notes")?.config).toMatchObject({
       group: { key: "status" },
     });
@@ -92,6 +97,49 @@ describe("views: lazy defaults", () => {
     const after = await views(stub);
     expect(after).toHaveLength(7);
     expect(after.filter((v) => before.includes(v.id))).toHaveLength(6);
+  });
+});
+
+describe("views: row height migration (DO 0008)", () => {
+  it("moves views saved with the old default row height to auto; explicit choices stay", async () => {
+    const stub = await freshShow();
+    const tall = newId();
+    const compact = newId();
+    const normal = newId();
+    ok(
+      await stub.mutate(editor, [
+        createView(tall, { config: config({ rowHeight: "tall" }) }),
+        createView(compact, { config: config({ rowHeight: "compact" }) }),
+        createView(normal, { name: "Old", config: config({ rowHeight: "normal" }) }),
+      ]),
+    );
+    // Back to a show from before 0008: every other view (the seeded defaults too) said
+    // "normal", and 0008 wasn't applied yet.
+    await runInDurableObject(stub, (_i, state) => {
+      state.storage.sql.exec(
+        `UPDATE views SET config = json_set(config, '$.rowHeight', 'normal') WHERE id NOT IN (?, ?)`,
+        tall,
+        compact,
+      );
+      state.storage.sql.exec(
+        "DELETE FROM __drizzle_migrations WHERE created_at = (SELECT MAX(created_at) FROM __drizzle_migrations)",
+      );
+    });
+    const before = await snapshot(stub);
+    expect(before.tables.views.map((v) => (v.config as unknown as ViewConfig).rowHeight)).toContain(
+      "normal",
+    );
+    await evictDurableObject(stub);
+    const after = await snapshot(stub);
+    expect(after.version).toBe(before.version);
+    const heights = new Map(
+      after.tables.views.map((v) => [v.id, (v.config as unknown as ViewConfig).rowHeight]),
+    );
+    expect(heights.get(tall)).toBe("tall");
+    expect(heights.get(compact)).toBe("compact");
+    expect(heights.get(normal)).toBe("auto");
+    expect([...heights.values()].filter((h) => h === "normal")).toEqual([]);
+    expect(after.tables.views.length).toBe(before.tables.views.length);
   });
 });
 

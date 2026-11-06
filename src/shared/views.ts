@@ -71,7 +71,17 @@ export interface ViewField {
   hidden?: boolean;
 }
 
-export type RowHeightName = "compact" | "normal" | "tall";
+/**
+ * `auto`: rows fit their content (wrapped, capped), the default. `compact` / `normal` /
+ * `tall`: fixed heights. Views saved before `auto` existed said `normal` (then the
+ * default); DO migration 0008 moved those to `auto`.
+ */
+export type RowHeightName = "auto" | "compact" | "normal" | "tall";
+
+export const ROW_HEIGHT_NAMES: readonly RowHeightName[] = ["auto", "compact", "normal", "tall"];
+
+const isRowHeight = (v: unknown): v is RowHeightName =>
+  typeof v === "string" && (ROW_HEIGHT_NAMES as readonly string[]).includes(v);
 
 export interface ViewConfig {
   filters: Filter[];
@@ -206,8 +216,8 @@ export function viewConfigError(raw: unknown): string | null {
       return "config.fields hidden must be true or false";
     }
   }
-  if (c.rowHeight !== "compact" && c.rowHeight !== "normal" && c.rowHeight !== "tall") {
-    return "config.rowHeight must be compact, normal or tall";
+  if (!isRowHeight(c.rowHeight)) {
+    return "config.rowHeight must be auto, compact, normal or tall";
   }
   if (
     !(typeof c.frozenCount === "number" && Number.isInteger(c.frozenCount)) ||
@@ -254,7 +264,7 @@ export function emptyViewConfig(): ViewConfig {
     sortMode: "none",
     group: { key: null },
     fields: [],
-    rowHeight: "normal",
+    rowHeight: "auto",
     frozenCount: 1,
     colorRules: [],
   };
@@ -283,7 +293,7 @@ export function normalizeViewConfig(raw: unknown, table?: ViewTable): ViewConfig
     sortMode: pick("sortMode", (v) => v === "live" || v === "none"),
     group: pick("group", (v) => isObject(v) && (v.key === null || isKey(v.key))),
     fields: pick("fields", (v) => Array.isArray(v) && v.every((f) => isObject(f) && isKey(f.key))),
-    rowHeight: pick("rowHeight", (v) => v === "compact" || v === "normal" || v === "tall"),
+    rowHeight: pick("rowHeight", isRowHeight),
     frozenCount: pick(
       "frozenCount",
       (v) => typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 10,

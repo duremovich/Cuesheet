@@ -24,6 +24,7 @@ underlined; an unnumbered cue suggests the midpoint number). Source: `src/web/pa
 | `DataGrid.tsx` | The component (+ `GridRow`, `PickerFor`, `ConfirmDelete`) |
 | `types.ts` | All public types |
 | `ordering.ts` | Pure sort / hold / flatten logic (`sortRows`, `applyHolds`, `buildLayout`) |
+| `rowHeights.ts` | Fixed heights, the auto-row caps and estimates (`estimateRowHeight`), `editorScrollTarget` |
 | `values.ts` | Empty values, formatting, parsing typed/pasted text, TSV, `UndoStack` |
 | `RecordPicker.tsx` | Find-or-create popover, exported for reuse (panels, tech mode, script view) |
 | `ContextMenu.tsx`, `Chip.tsx`, `cells.tsx`, `icons.tsx`, `popover.ts` | Pieces |
@@ -46,7 +47,7 @@ underlined; an unnumbered cue suggests the midpoint number). Source: `src/web/pa
 | `sortColumns` | `Column<Row>[]` | Columns `sort` keys resolve against when some aren't shown (a view sorting by a hidden field). Default: `columns` |
 | `colorRules` | `ColorRule<Row>[]` | Conditional formatting. Memoize it |
 | `cellDecoration` | `(row, key) => {warning?, warningStyle?, ghost?} \| undefined` | `warning`: wavy orange underline + tooltip + screen-reader text (`warningStyle: "dashed"`: a dashed one, for "look elsewhere" warnings such as a cue's script anchor; `data-warning="dashed"`). `ghost`: a suggestion shown in the active empty cell (and as the editor's placeholder); Tab or → accepts it, typing replaces it. Text/long text/number columns. Memoize it |
-| `rowHeight` | `"compact" \| "normal" \| "tall"` | 30 / 40 / 72 px; long text clamps to 1 / 2 / 3 lines |
+| `rowHeight` | `"auto" \| "compact" \| "normal" \| "tall"` | `auto` (default, "Fit to content"): each row is as tall as its tallest cell, text and chips wrapped, up to 12 lines a cell (then an ellipsis); one line = 40 px. The others are fixed: 30 / 40 / 72 px, long text clamped to 1 / 2 / 3 lines. See "Row heights" |
 | `selectedRowIds` + `onSelectionChange` | `string[]` | Controlled row selection; omit `selectedRowIds` for internal state |
 | `collapsed` + `onCollapsedChange` | `string[]` | Controlled collapsed group ids (per user, per ux.md); omit `collapsed` for internal state |
 | `onActiveRowChange` | `(rowId \| null) => void` | The active row changed (`null`: none, or a group header). Drive the detail panel / presence from it |
@@ -309,6 +310,34 @@ Notes for the integration:
   holds it under the column header. jsdom has no layout: test scrolled states in e2e
   (wait on `data-scroll-offset`).
 
+## Row heights
+
+`rowHeight="auto"` (the default; saved views' "Fit to content") lets rows fit their content.
+
+- **Measured, not computed.** Each rendered row registers with the virtualizer's
+  `measureElement` (a ResizeObserver), so its real height (the tallest cell) positions the
+  rows after it. Rows not rendered yet use `estimateRowHeight` (text length against the
+  column width, chips packed into lines; cached per row object and column layout), so the
+  scrollbar and far jumps land close before measurement corrects them. Sizes are cached by
+  `<mode>:<item key>`: a mode switch never reuses another mode's heights, and a row keeps its
+  height across re-sorts. jsdom has no layout, so a 0 px measurement falls back to the
+  estimate.
+- **One source of positions.** `offsets` (stuck header, drag gaps, `ensureVisible`, the FLIP)
+  come from the virtualizer's measurements, in every mode.
+- **Scroll stays put** when rows above the view change height: the virtualizer compensates
+  (`overflow-anchor: none` on the scroller so the browser doesn't do it twice). A row just
+  scrolled to (`focusRow`, ↑/↓) is re-checked for 800 ms while the rows around it get
+  measured (`settle`), unless you scroll.
+- **Editing.** In an auto row the editor covers its cell and an invisible copy of the draft
+  (`.editSizer`) sizes the cell, so the row grows as you type (up to 20 lines, then the
+  editor scrolls inside); the virtualizer is told in the same frame (`resizeItem`). In
+  every mode, while the draft changes the grid scrolls so the editor's bottom (the caret,
+  when it's at the end) stays in view (`editorScrollTarget`); a fixed row's long-text editor
+  overlays the rows below (and the group headers) as before.
+- Group headers stay 40 px; section rows keep the one-line height.
+- Cost: about one ResizeObserver entry per rendered row; layout is the same as before
+  otherwise. Measured with 5,000 rows on `/dev/grid` (see the e2e "5,000 rows" test).
+
 ## Accessibility
 
 `role="grid"` with `row`/`columnheader`/`rowheader`/`gridcell`, `aria-rowindex` (header =
@@ -321,6 +350,7 @@ focus ring uses `--color-focus-ring`.
 ## Tests
 
 - `ordering.test.ts`, `values.test.ts` (node): sort, slot holds, layout, TSV, parsing, undo.
+- `rowHeights.test.ts` (node): line / chip estimates, row height caps, editor scroll target.
 - `DataGrid.test.tsx` (jsdom, `pnpm test --project dom`): keyboard, editing, IME, undo/redo
   incl. remote-change skip, live-sort holds, insert, pickers incl. create (once), clipboard
   incl. sections, selection + delete confirmation + focus after delete, group headers as
@@ -329,4 +359,7 @@ focus ring uses `--color-focus-ring`.
 - `e2e/grid.spec.ts` against `/dev/grid`: editing, insert under live sort (hold, ghost,
   Escape → slide + scroll + focus), drag (within and across groups), picker create,
   collapse + sticky header correctness, keyboard row menu, Tab into the grid, 5,000 rows,
-  390 px.
+  390 px. The dev page starts in "Fit to content", so these run on measured rows.
+- `e2e/row-height.spec.ts` (Notes tab): a long note grows its row, typing inline keeps the
+  caret in view, the row panel's note field shows everything, Compact is fixed again, and
+  the stuck header / URL jumps / ↓ with tall rows.

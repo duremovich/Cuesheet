@@ -6,7 +6,12 @@
 // biome-ignore-all lint/a11y/useSemanticElements: an ARIA grid over absolutely positioned, virtualized divs; <table> layout can't do that
 // biome-ignore-all lint/a11y/useFocusableInteractive: APG grid pattern: only the active cell is in the tab order (roving tabindex); rows and headers aren't focusable
 
-import { defaultRangeExtractor, type Range, useVirtualizer } from "@tanstack/react-virtual";
+import {
+  defaultRangeExtractor,
+  measureElement,
+  type Range,
+  useVirtualizer,
+} from "@tanstack/react-virtual";
 import {
   type CSSProperties,
   memo,
@@ -28,6 +33,15 @@ import styles from "./DataGrid.module.css";
 import { ChevronIcon, ExpandIcon, GripIcon, PlusIcon, TypeIcon } from "./icons";
 import { buildLayout, type FlatItem, type Hold, isEmptyValue } from "./ordering";
 import { type CloseReason, type PickVia, RecordPicker } from "./RecordPicker";
+import {
+  AUTO_MAX_LINES,
+  AUTO_MIN_HEIGHT,
+  EDIT_MAX_LINES,
+  editorScrollTarget,
+  estimateRowHeight,
+  LINE_HEIGHT,
+  ROW_HEIGHTS,
+} from "./rowHeights";
 import type {
   CellDecoration,
   ColorRule,
@@ -38,7 +52,6 @@ import type {
   InsertPosition,
   MenuItem,
   PickerItem,
-  RowHeight,
 } from "./types";
 import {
   copyText,
@@ -55,7 +68,7 @@ import {
   valuesEqual,
 } from "./values";
 
-export const ROW_HEIGHTS: Record<RowHeight, number> = { compact: 30, normal: 40, tall: 72 };
+export { ROW_HEIGHTS };
 export const HEADER_HEIGHT = 34;
 export const GROUP_HEIGHT = 40;
 export const ROWNUM_WIDTH = 76;
@@ -70,6 +83,11 @@ const MRU_SIZE = 5;
 /** How far (px) a header must be dragged before it moves (a shorter one is a click). */
 const COL_DRAG_SLOP = 5;
 const GROUP_COL = "__group";
+/** The auto-row caps, for the stylesheet (rowHeights.ts is the source). */
+const AUTO_VARS = {
+  "--auto-max-lines": AUTO_MAX_LINES,
+  "--edit-max-height": `${EDIT_MAX_LINES * LINE_HEIGHT}px`,
+} as CSSProperties;
 
 /** The active cell: a row cell, or a group header (`group: true`, `rowId` = group id). */
 interface CellRef {
@@ -144,7 +162,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     onOpenRow,
     sort,
     colorRules,
-    rowHeight = "normal",
+    rowHeight = "auto",
     className,
   } = props;
   const gridId = useId();
@@ -152,7 +170,9 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const sortOn = !!sort && sort.length > 0;
-  const rh = ROW_HEIGHTS[rowHeight];
+  /** Fit to content: rows are measured (rowHeights.ts); otherwise every row is `rh` tall. */
+  const auto = rowHeight === "auto";
+  const rh = rowHeight === "auto" ? AUTO_MIN_HEIGHT : ROW_HEIGHTS[rowHeight];
 
   // rowId / isSection are usually inline lambdas: read them through refs so a parent
   // re-render doesn't rebuild the layout (and re-render every row).
@@ -200,6 +220,16 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     expand?: boolean;
   } | null>(null);
   const pendingScroll = useRef<string | null>(null);
+  /**
+   * Auto rows: a row just scrolled into view, re-checked while measurements of the rows
+   * around it (estimated until rendered) move it, until `until` or the user scrolls.
+   */
+  const settle = useRef<{
+    target: CellRef;
+    center: boolean;
+    until: number;
+    offsets: number[];
+  } | null>(null);
   const scrollActive = useRef(false);
   const afterDelete = useRef<string | null>(null);
   const lastSeen = useRef<{ flat: number; groupId: string | undefined } | null>(null);
@@ -251,16 +281,6 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     () => items.flatMap((it, i) => (it.kind === "group" ? [i] : [])),
     [items],
   );
-  const offsets = useMemo(() => {
-    const o = new Array<number>(items.length + 1);
-    o[0] = 0;
-    for (let i = 0; i < items.length; i++) {
-      o[i + 1] =
-        (o[i] as number) + ((items[i] as FlatItem<Row>).kind === "group" ? GROUP_HEIGHT : rh);
-    }
-    return o;
-  }, [items, rh]);
-
   const cols = useMemo(() => {
     const ordered = [...columns.filter((c) => c.frozen), ...columns.filter((c) => !c.frozen)];
     let left = ROWNUM_WIDTH;
@@ -306,16 +326,63 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     },
     [activeIndex, dragIndex],
   );
+  // Auto rows: estimated from their text until rendered, then measured. Estimates are cached
+  // per row object (rows keep identity until they change) for the current column layout.
+  const estimates = useMemo(() => ({ cols, map: new WeakMap<object, number>() }), [cols]);
+  const estimateSize = (i: number): number => {
+    const it = items[i];
+    if (!it) return rh;
+    if (it.kind === "group") return GROUP_HEIGHT;
+    if (!auto || it.section) return rh;
+    const row = it.row;
+    const key = typeof row === "object" && row !== null ? (row as object) : null;
+    const hit = key ? estimates.map.get(key) : undefined;
+    if (hit !== undefined) return hit;
+    const h = estimateRowHeight(row, estimates.cols);
+    if (key) estimates.map.set(key, h);
+    return h;
+  };
+  // Sizes are cached by key: the mode is part of it, so a row measured in one mode never
+  // lends its height to another. A new function (items, mode or columns changed) makes the
+  // virtualizer recompute positions; otherwise they're reused across renders.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `estimates` (new with the columns) is a dep so estimates are re-read when widths change
+  const getItemKey = useCallback(
+    (i: number) => {
+      const k = items[i]?.key;
+      return k === undefined ? i : `${rowHeight}:${k}`;
+    },
+    [items, rowHeight, estimates],
+  );
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: (i) => (items[i]?.kind === "group" ? GROUP_HEIGHT : rh),
-    getItemKey: (i) => items[i]?.key ?? i,
+    estimateSize,
+    getItemKey,
     overscan: 8,
     scrollMargin: HEADER_HEIGHT,
     rangeExtractor,
+    // jsdom (unit tests) has no layout: keep the estimate instead of a 0 px row.
+    measureElement: (el, entry, inst) => {
+      const size = measureElement(el, entry, inst);
+      return size > 0 ? size : estimateSize(inst.indexFromElement(el));
+    },
   });
   const virtualItems = virtualizer.getVirtualItems();
+  // Body offsets of every item (and the end), from the virtualizer's measurements: the
+  // stuck header, drag gaps, scroll-into-view and the FLIP all read these.
+  // (getVirtualItems just brought measurementsCache up to date; it's a new array whenever
+  // a position changed.)
+  const measurements = virtualizer.measurementsCache;
+  const offsets = useMemo(() => {
+    const o = new Array<number>(measurements.length + 1);
+    o[0] = 0;
+    for (let i = 0; i < measurements.length; i++) {
+      const m = measurements[i];
+      o[i] = m ? m.start - HEADER_HEIGHT : (o[i - 1] ?? 0);
+      o[i + 1] = m ? m.end - HEADER_HEIGHT : (o[i] as number);
+    }
+    return o;
+  }, [measurements]);
 
   // The stuck group header names the group of the first row visible below it: the item
   // at body offset scrollTop + GROUP_HEIGHT (just under the column header and the stuck
@@ -378,6 +445,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     labelKey,
     drag,
     collapsed,
+    auto,
   };
   const ref = useRef(S);
   ref.current = S;
@@ -583,7 +651,16 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       const i = target.group
         ? ref.current.groupIndexById.get(target.rowId)
         : ref.current.indexById.get(target.rowId);
-      ensureVisible(i ?? -1, target.group ? undefined : target.key, opts.scroll === "center");
+      const center = opts.scroll === "center";
+      ensureVisible(i ?? -1, target.group ? undefined : target.key, center);
+      if (ref.current.auto) {
+        settle.current = {
+          target,
+          center,
+          until: performance.now() + 800,
+          offsets: ref.current.offsets,
+        };
+      }
     }
   };
 
@@ -890,6 +967,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     const fn = ref.current.props.onInsert;
     if (!fn) return;
     commitAny();
+    flushActive();
     const newId = await fn(pos);
     afterInsert(newId, pos);
   };
@@ -906,6 +984,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     const fn = ref.current.props.onInsert;
     if (!fn || !entry || !canDuplicate(id)) return;
     commitAny();
+    flushActive();
     const pos = positionFor({ rowId: id, key: "" }, "below");
     const newId = await fn(pos);
     for (const c of ref.current.cols) {
@@ -990,7 +1069,66 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
           );
       }
     }
+    // Auto rows: measuring the rows around a row we just scrolled to can move it; keep it in
+    // view until the layout settles.
+    const st = settle.current;
+    if (st) {
+      if (performance.now() > st.until) settle.current = null;
+      else if (st.offsets !== offsets) {
+        st.offsets = offsets;
+        const i = indexOfRef(st.target);
+        if (i !== undefined)
+          ensureVisible(i, st.target.group ? undefined : st.target.key, st.center);
+      }
+    }
   });
+
+  // The user scrolling ends any settling (see `settle`).
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const stop = () => {
+      settle.current = null;
+    };
+    el.addEventListener("wheel", stop, { passive: true });
+    el.addEventListener("touchstart", stop, { passive: true });
+    el.addEventListener("pointerdown", stop, { passive: true });
+    return () => {
+      el.removeEventListener("wheel", stop);
+      el.removeEventListener("touchstart", stop);
+      el.removeEventListener("pointerdown", stop);
+    };
+  }, []);
+
+  // While typing in a cell, keep the editor (and the caret) in view: an auto row grows with
+  // the text, a fixed row's editor overlays the rows below. Runs when the draft changes,
+  // never on a plain scroll, so you can still scroll away from the cell you're editing.
+  useLayoutEffect(() => {
+    if (editing?.kind !== "text") return;
+    const el = scrollRef.current;
+    const editor = rootRef.current?.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+      "[data-editor='true']",
+    );
+    if (!el || !editor) return;
+    if (ref.current.auto) {
+      // The row grew or shrank with the draft: tell the virtualizer now, so the rows below
+      // move in this frame instead of after the next resize observation.
+      const rowEl = editor.closest<HTMLElement>("[data-index]");
+      const index = Number(rowEl?.dataset.index);
+      if (rowEl && Number.isInteger(index) && rowEl.offsetHeight > 0)
+        virtualizer.resizeItem(index, rowEl.offsetHeight);
+    }
+    const box = el.getBoundingClientRect();
+    const r = editor.getBoundingClientRect();
+    const sticky = ref.current.props.groups ? GROUP_HEIGHT : 0;
+    const top = editorScrollTarget(
+      el.scrollTop,
+      { top: r.top, bottom: r.bottom },
+      { top: box.top + HEADER_HEIGHT + sticky, bottom: box.top + el.clientHeight },
+      editor.selectionEnd === editor.value.length,
+    );
+    if (top !== null) el.scrollTop = top;
+  }, [editing, virtualizer]);
 
   // If the active row disappears (deleted, collapsed away, removed remotely), move to a
   // neighbor instead of dropping focus on <body>.
@@ -1033,11 +1171,24 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     }
   });
 
-  // Report the active row.
+  // Report the active row (after paint, so ↑/↓ stay snappy). `flushActive` reports it at
+  // once when a callback that depends on it is about to run: an insert right after a click
+  // (a fast keypress beats the passive effect) must reach the consumer after the click's
+  // report, or the late report undoes what the insert set up (the view's filter hold).
   const activeRowId = active && !active.group ? active.rowId : null;
   const onActiveRowChange = props.onActiveRowChange;
+  const reported = useRef<{ id: string | null; to: unknown } | null>(null);
+  const flushActive = () => {
+    const a = ref.current.active;
+    const id = a && !a.group ? a.rowId : null;
+    const to = ref.current.props.onActiveRowChange;
+    if (reported.current?.id === id && reported.current.to === to) return;
+    reported.current = { id, to };
+    to?.(id);
+  };
+  // biome-ignore lint/correctness/useExhaustiveDependencies: flushActive reads the same values through `ref`
   useEffect(() => {
-    onActiveRowChange?.(activeRowId);
+    flushActive();
   }, [activeRowId, onActiveRowChange]);
 
   // Move DOM focus to the active cell after keyboard/mouse navigation and edits, and put it
@@ -2125,7 +2276,9 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
         cols={cols}
         index={index}
         top={start - HEADER_HEIGHT}
-        height={rh}
+        height={auto && !item.section ? undefined : rh}
+        fit={auto}
+        measureRef={auto ? virtualizer.measureElement : undefined}
         width={totalWidth}
         activeKey={isActive ? (active?.key ?? null) : null}
         tabbableKey={!active && index === firstIndex ? (cols[0]?.key ?? null) : null}
@@ -2163,6 +2316,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       aria-colcount={cols.length + 1}
       aria-multiselectable="true"
       data-row-height={rowHeight}
+      style={AUTO_VARS}
       data-dragging={drag || colDrag ? true : undefined}
       onKeyDown={onKeyDown}
       onCopy={onCopy}
@@ -2469,7 +2623,12 @@ interface GridRowProps<Row> {
   cols: ColLayout<Row>[];
   index: number;
   top: number;
-  height: number;
+  /** Fixed height (px); undefined for an auto row, which is measured. */
+  height: number | undefined;
+  /** Auto rows: cells wrap, and an editing cell grows with its text. */
+  fit: boolean;
+  /** Auto rows: the virtualizer's measureElement (stable). */
+  measureRef: ((el: HTMLElement | null) => void) | undefined;
   width: number;
   activeKey: string | null;
   tabbableKey: string | null;
@@ -2651,15 +2810,26 @@ function GridRowImpl<Row>(p: GridRowProps<Row>) {
           style={style}
         >
           {isEditingText ? (
-            <TextEditor
-              multiline={c.col.type === "longtext"}
-              numeric={c.col.type === "number"}
-              value={editing.draft}
-              label={c.col.title}
-              placeholder={ghost}
-              invalid={editing.invalid}
-              onChange={api.setDraft}
-            />
+            <>
+              {p.fit && (
+                // Gives the cell (so the row) the height of the wrapped draft; the editor
+                // covers the cell. The zero-width space keeps a trailing newline's line.
+                <span className={styles.editSizer} aria-hidden="true">
+                  {editing.draft}
+                  {"​"}
+                </span>
+              )}
+              <TextEditor
+                multiline={c.col.type === "longtext"}
+                numeric={c.col.type === "number"}
+                fit={p.fit}
+                value={editing.draft}
+                label={c.col.title}
+                placeholder={ghost}
+                invalid={editing.invalid}
+                onChange={api.setDraft}
+              />
+            </>
           ) : (
             <>
               {c.col.type === "attachment" && c.col.renderCell ? (
@@ -2689,11 +2859,13 @@ function GridRowImpl<Row>(p: GridRowProps<Row>) {
 
   return (
     <div
+      ref={p.measureRef}
       role="row"
       aria-rowindex={index + 2}
       aria-selected={p.selected}
       className={styles.row}
       style={rowStyle}
+      data-index={index}
       data-row-id={id}
       data-group={p.groupId}
       data-testid="grid-row"
@@ -2703,6 +2875,7 @@ function GridRowImpl<Row>(p: GridRowProps<Row>) {
       data-colored={rowColor ? true : undefined}
       data-moved={p.moved || undefined}
       data-dragging={p.dragging || undefined}
+      data-editing-row={editing ? true : undefined}
       onContextMenu={(e) => api.contextMenu(id, e)}
     >
       {rowNumber}

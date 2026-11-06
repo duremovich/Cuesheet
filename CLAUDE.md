@@ -314,6 +314,13 @@ the keyboard map and an integration example. The grid never fetches or persists;
 `buildLayout` always emits every group's header: if one seems gone (its rows look
 deleted), suspect the stuck group header drawn over it. See the README's "Scroll
 container" for the stuck-header rule and its tests.
+**Row heights:** `rowHeight="auto"` (default; views say "Fit to content") measures every
+rendered row and wraps text (12 lines max a cell, an inline editor grows to 20); compact /
+normal / tall are fixed. Never compute row positions from a constant height: read
+`offsets` (the virtualizer's measurements). README "Row heights".
+**onActiveRowChange** is reported after paint, except that `flushActive()` reports it at
+once before `onInsert` (a keypress right after a click otherwise reached the view's filter
+hold before the click's report, which then released the new row unseen).
 
 ## Table views (`src/web/features/`)
 
@@ -379,7 +386,10 @@ views" below).
   reusing the grid's value shapes, `parseText` and `RecordPicker`; `panelFields.ts`
   decides editability from `column.editable` and skips unchanged or unparsable values; a
   text draft is local while focused, so remote edits don't clobber it; Enter or blur
-  commits, Escape reverts), **Notes** (cues, content, scenes: `NotesPanel`), **Content**
+  commits, Escape reverts; long text grows with its content, never hiding text past its
+  bottom edge: `useAutoGrow` in `lib/useAutoGrow.ts`, also used by the note card editor, the
+  compose box (to 200 px, then it scrolls) and a version's Changes), **Notes** (cues,
+  content, scenes: `NotesPanel`), **Content**
   (cues: `CueContentCards`, link/unlink through the content picker; cards show the
   content's thumbnail and current version), **Versions** (content: see "Content
   versions"; attachment columns show full width in Fields with add / remove / reorder,
@@ -506,7 +516,11 @@ views" below).
 - **Config** (`src/shared/views.ts`): `{filters, filterMode, sorts, sortMode: live|none,
   group: {key, collapsedByDefault?}, fields: {key, width?, hidden?}[], rowHeight,
   frozenCount, colorRules: {when: Filter[], mode, target: "row" | {cell}, color}[],
-  forkedFrom?}`. Keys are the grid's column keys (plus extra filter fields such as the cue
+  forkedFrom?}`. `rowHeight`: `auto` (Fit to content, the default) | `compact` | `normal` |
+  `tall` (fixed). Views saved before `auto` existed said `normal` (the old default, so an
+  explicit choice can't be told apart): DO migration `0008_rowheight_auto` moved every
+  stored `normal` to `auto` (no change log, no version bump; clients see it in their next
+  snapshot). Keys are the grid's column keys (plus extra filter fields such as the cue
   list's `open_notes`, and `custom.<key>` for custom fields: `viewFieldsFor`, see "Custom
   fields and custom tables"), declared per table in `VIEW_FIELDS` with their kind
   (`viewFields.test.ts` checks it against each tab's `columns.ts`: update both when a

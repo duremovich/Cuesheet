@@ -110,6 +110,9 @@ test("dragging a row by its handle reorders it", async ({ page }) => {
 });
 
 test("dragging a row into another group re-links its scene", async ({ page }) => {
+  // Fixed rows, so the target row (5.00) is on screen next to the source; with rows fitted
+  // to their (long) text it's below the fold. Same-group drags are covered in auto above.
+  await page.getByLabel("Row height").selectOption("normal");
   await grid(page).getByRole("button", { name: "Collapse Unassigned" }).click();
   const source = rowByCue(page, "2.00");
   await expect(cellOf(source, "scene")).toHaveText("100 Overture");

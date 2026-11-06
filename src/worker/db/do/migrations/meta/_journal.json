@@ -57,6 +57,13 @@
       "when": 1790778038094,
       "tag": "0007_custom_fields_shots",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1793921581293,
+      "tag": "0008_rowheight_auto",
+      "breakpoints": true
     }
   ]
 }

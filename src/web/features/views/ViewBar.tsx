@@ -841,10 +841,13 @@ function LayoutToggle<V>({ config, actions }: ViewBarProps<V>) {
 
 // ---- Row height ----
 
+// "Fit to content" (auto) is the default: rows grow to show their text. The fixed heights
+// are the compact choices: every row the same height, long text cut to 1 / 2 / 3 lines.
 const HEIGHTS: { value: RowHeightName; label: string }[] = [
-  { value: "compact", label: "Compact" },
-  { value: "normal", label: "Normal" },
-  { value: "tall", label: "Tall" },
+  { value: "auto", label: "Fit to content" },
+  { value: "compact", label: "Compact · 1 line" },
+  { value: "normal", label: "Normal · 2 lines" },
+  { value: "tall", label: "Tall · 3 lines" },
 ];
 
 function RowHeightPanel<V>({ config, actions }: ViewBarProps<V>) {

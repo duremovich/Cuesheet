@@ -242,9 +242,27 @@
   z-index: 3;
 }
 
+/* A text editor draws its own focus border; the active-cell outline would cut across a
+   long-text editor that overlays the rows below. */
+.cell[data-editing]:has(> [data-editor])::after {
+  display: none;
+}
+
+/* A fixed row's long-text editor overlays the rows below: paint it over the group headers
+   too (they're z-index 2, and later in the DOM). */
+.row[data-editing-row] {
+  z-index: 3;
+}
+
 .rownumText {
   min-width: 24px;
   text-align: center;
+}
+
+/* Tall auto rows: the number, handle and open icon stay on the first line, with the text. */
+.root[data-row-height="auto"] .rownum {
+  align-items: flex-start;
+  padding-top: 9px;
 }
 
 .grip,
@@ -373,6 +391,61 @@
   flex-wrap: wrap;
 }
 
+/* --- Fit to content (rowHeight "auto", the default) ---
+   Rows are as tall as their tallest cell (measured by the virtualizer); text wraps, up to
+   --auto-max-lines lines (then an ellipsis). Paddings match rowHeights.ts: 10 + 18 + 11 +
+   the 1 px border = 40 px, a "normal" row, for one line. */
+
+.root[data-row-height="auto"] .scroll {
+  /* The virtualizer keeps the view steady when rows above it change height; the
+     browser's own scroll anchoring would correct it a second time. */
+  overflow-anchor: none;
+}
+
+.root[data-row-height="auto"] .row {
+  min-height: 40px;
+}
+
+.root[data-row-height="auto"] .cell {
+  align-items: flex-start;
+  padding-top: 10px;
+  padding-bottom: 11px;
+}
+
+.root[data-row-height="auto"] .longtext,
+.root[data-row-height="auto"] .text:not([data-masked]) {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--auto-max-lines);
+  line-clamp: var(--auto-max-lines);
+}
+
+.root[data-row-height="auto"] .text:not([data-masked]) {
+  white-space: normal;
+}
+
+.root[data-row-height="auto"] .chips {
+  flex-wrap: wrap;
+  /* 20 px chips in the 18 px line, so a one-line cell is still 40 px. */
+  margin: -1px 0;
+}
+
+/* The draft, invisible, sizing the editing cell; the editor covers the cell. Same font,
+   wrapping and width as the text inside the editor (the editor's padding + border equal
+   the cell's padding). */
+.editSizer {
+  visibility: hidden;
+  pointer-events: none;
+  width: 100%;
+  min-width: 0;
+  max-height: var(--edit-max-height);
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .checkbox {
   margin: 0 auto;
   accent-color: var(--color-accent);
@@ -410,6 +483,31 @@
   padding: var(--space-1) var(--space-2);
   resize: none;
   box-shadow: var(--shadow-raised);
+}
+
+/* Auto rows: the long-text editor fills its (growing) cell; past --edit-max-height of
+   text it scrolls inside, keeping the caret in view. */
+.editorFit {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 8px 6px 9px;
+  border: 2px solid var(--color-focus-ring);
+  border-radius: 0;
+  background: var(--color-bg-sunken);
+  color: var(--color-text);
+  font: inherit;
+  outline: none;
+  resize: none;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.editorFit::placeholder {
+  color: var(--color-text-muted);
+  font-style: italic;
 }
 
 /* --- Groups --- */

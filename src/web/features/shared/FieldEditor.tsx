@@ -2,12 +2,13 @@
 // and pickers as the grid: text/number inputs, long text, checkbox, and select / multiselect
 // / link / multilink through `RecordPicker`. Commits go to `onCommit(value)` (the table's
 // edit ops); a draft being typed survives remote changes to the same field.
-import { type ReactNode, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useMemo, useRef, useState } from "react";
 import { Chip, type CloseReason, type PickerItem, RecordPicker } from "../../components/grid";
 import { optionColor } from "../../components/grid/Chip";
 import { CellContent } from "../../components/grid/cells";
 import type { Column } from "../../components/grid/types";
 import { formatValue, NOT_PARSED, parseError } from "../../components/grid/values";
+import { useAutoGrow } from "../../lib/useAutoGrow";
 import { editorText, isFieldEditable, panelCommit, valueFromText } from "./panelFields";
 import styles from "./RowPanel.module.css";
 
@@ -179,12 +180,9 @@ function TextField<Row>({
   const shown =
     draft ?? (col.type === "measurement" ? formatValue(col, value) : editorText(col, value));
 
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!multiline || !el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight + 2, 320)}px`;
-  });
+  // Long text shows all of itself, however long (the panel scrolls): it used to stop at
+  // 320 px with the rest hidden and unscrollable.
+  useAutoGrow(ref, { enabled: multiline });
 
   // Escape reverts: the blur that follows mustn't commit the abandoned draft.
   const reverted = useRef(false);
