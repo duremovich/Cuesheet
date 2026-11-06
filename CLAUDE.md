@@ -405,7 +405,8 @@ views" below).
   (`features/shared/useTableChrome.ts`); the open view is `?view=<id>`. Coming back to a
   tab (no row in the URL) restores where you were instead: see "Scroll memory". Per-browser prefs
   (`features/shared/prefs.ts`, localStorage): collapsed groups per user+show+view and the
-  last view opened per user+show+table.
+  last view opened per user+show+table. Collapsed groups (and a viewer's layout overlay)
+  follow other tabs on the same view (`useOtherTabWrites`, the `storage` event).
 - **Row panel** (`features/shared/RowPanel.tsx`, R18): Space / expand icon; follows the
   active row. Props: `table`, `recordId`, the grid's `columns`, and `onEdit(key, value)`
   (the tab's own grid `onEdit` for that row, so the panel writes exactly the grid's ops;
@@ -606,6 +607,17 @@ views" below).
   fields, row height, color) goes to their personal copy of that view, made once ("<name>
   (mine)", `config.forkedFrom` = the shared view's id; later changes reuse it). An
   editor's overlay (from migrated M1c widths) gives way for columns they size in the view.
+- **Several tabs, one browser** (same user). Every tab has its own store, `clientId`
+  (`newId()` per `ShowStoreImpl`, never stored, so a tab only treats its own batches as
+  echoes), socket (presence counts each tab) and grid undo stack (undo replays that tab's
+  edits and skips a cell changed since). What tabs share is localStorage: drafts are keyed
+  by view, so tabs on different tables/views never touch each other's; tabs on the **same**
+  view share one draft live (`drafts.ts` re-reads a key another tab wrote or removed, via
+  the `storage` event; a personal view's not-yet-saved draft held only in memory survives
+  another tab's removal), so they build on each other's changes and Save in one clears
+  both. Before this, each tab kept its own copy and the last to write overwrote the
+  other's stored draft (lost on reload). Scroll memory is per tab (see "Scroll memory").
+  `e2e/two-tabs.spec.ts` covers Cues + Notes in two tabs and two tabs on one view.
 - **Layout** (R19): `config.layout` is `"gallery"` or absent (the grid). Tables that pass
   `gallery` to `TableGrid` (Content: the first image, titled by name) get a **Gallery**
   toggle in the view bar and a "+ Content gallery" preset under My views

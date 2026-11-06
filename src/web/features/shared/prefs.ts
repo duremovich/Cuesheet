@@ -1,8 +1,9 @@
 // Per-browser UI preferences in localStorage: collapsed groups per view and the last view
 // opened per table (keys in features/views/legacy.ts, which also migrates the M1c prefs
 // into saved views). Storage may be unavailable (private mode, blocked site data): reads
-// fall back to the default and writes are best-effort.
-import { useCallback, useEffect, useState } from "react";
+// fall back to the default and writes are best-effort. `useOtherTabWrites` lets state
+// read from a key follow other tabs of the browser.
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export function readPref<T>(key: string, fallback: T, valid: (v: unknown) => v is T): T {
   try {
@@ -22,6 +23,29 @@ export function writePref(key: string, value: unknown): void {
   } catch {
     // Storage blocked: the preference lasts for this page only.
   }
+}
+
+/**
+ * Calls `onChange` when another tab of this browser writes or removes localStorage `key`
+ * (or clears the storage), so state kept from it can be re-read: the `storage` event,
+ * which never fires in the tab that wrote.
+ */
+export function useOtherTabWrites(key: string, onChange: () => void): void {
+  const latest = useRef(onChange);
+  latest.current = onChange;
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== null && e.key !== key) return;
+      try {
+        if (e.storageArea !== localStorage) return;
+      } catch {
+        return;
+      }
+      latest.current();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [key]);
 }
 
 /** useState backed by localStorage under `key` (re-read when the key changes). */

@@ -47,7 +47,7 @@ import { setActiveExport } from "../export/activeExport";
 import { csvFileName, downloadText, toCsv } from "../export/csv";
 import { type ExportOptions, exportRows } from "../export/exportView";
 import { groupOrder, placementFor } from "../shared/ops";
-import { readPref, writePref } from "../shared/prefs";
+import { readPref, useOtherTabWrites, writePref } from "../shared/prefs";
 import { useMediaQuery } from "../shared/useMediaQuery";
 import { useWorkspace } from "../show/workspace";
 import { type Draft, draftKey, getDraft, rebaseDraft, setDraft, useDraft } from "./drafts";
@@ -371,6 +371,8 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
   useEffect(() => {
     if (overlayState.key !== lKey) setOverlayState({ key: lKey, ...readOverlay(lKey) });
   }, [lKey, overlayState.key]);
+  // Another tab of this browser on the same view changed it: follow (one overlay per view).
+  useOtherTabWrites(lKey, () => setOverlayState({ key: lKey, ...readOverlay(lKey) }));
   const writeOverlay = useCallback((key: string, value: LayoutOverlay | undefined) => {
     writePref(key, value);
     setOverlayState(value ? { key, value } : { key });
@@ -1010,6 +1012,8 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
   useEffect(() => {
     if (stored.key !== cKey) setStored({ key: cKey, ids: readStoredIds(cKey) });
   }, [cKey, stored.key]);
+  // Collapsed in another tab on the same view: collapse here too (one list per view).
+  useOtherTabWrites(cKey, () => setStored({ key: cKey, ids: readStoredIds(cKey) }));
   const allGroupIds = useMemo(() => (out.groups ?? []).map((g) => g.id), [out.groups]);
   const collapsedByDefault = !!config.group.collapsedByDefault;
   const defaultCollapsed = useNative ? (setup.defaultCollapsed ?? NO_IDS) : NO_IDS;

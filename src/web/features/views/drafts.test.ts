@@ -5,6 +5,7 @@ import {
   type Draft,
   draftStorageKey,
   getDraft,
+  onStorageChange,
   rebaseDraft,
   resetDraftCache,
   setDraft,
@@ -57,6 +58,45 @@ describe("view drafts", () => {
   it("ignores damaged stored drafts", () => {
     data.set(draftStorageKey("bad"), JSON.stringify({ config: { filters: "x" } }));
     expect(getDraft("bad")).toBeUndefined();
+  });
+
+  it("another tab's write or removal of a stored draft replaces this tab's", () => {
+    const mine = draft({ ...base, rowHeight: "compact" });
+    setDraft("k", mine, true);
+    // The other tab builds on it and stores the result.
+    const theirs = draft({ ...mine.config, frozenCount: 2 });
+    data.set(draftStorageKey("k"), JSON.stringify(theirs));
+    onStorageChange(draftStorageKey("k"));
+    expect(getDraft("k")).toEqual(theirs);
+    // It saves the view (and so clears the draft): gone here too.
+    data.delete(draftStorageKey("k"));
+    onStorageChange(draftStorageKey("k"));
+    expect(getDraft("k")).toBeUndefined();
+  });
+
+  it("a draft held only in this page survives another tab clearing the key", () => {
+    const mine = draft({ ...base, rowHeight: "tall" });
+    setDraft("personal", mine); // not persisted: a personal view's pending save
+    onStorageChange(draftStorageKey("personal"));
+    expect(getDraft("personal")).toBe(mine);
+    // But a draft the other tab stores for it wins (it's newer).
+    const theirs = draft({ ...base, rowHeight: "compact" });
+    data.set(draftStorageKey("personal"), JSON.stringify(theirs));
+    onStorageChange(draftStorageKey("personal"));
+    expect(getDraft("personal")).toEqual(theirs);
+  });
+
+  it("other keys are ignored; storage cleared elsewhere drops stored drafts", () => {
+    const stored = draft({ ...base, rowHeight: "compact" });
+    const local = draft({ ...base, rowHeight: "tall" });
+    setDraft("a", stored, true);
+    setDraft("b", local);
+    data.delete(draftStorageKey("a"));
+    onStorageChange("cuesheet.theme");
+    expect(getDraft("a")).toBe(stored);
+    onStorageChange(null);
+    expect(getDraft("a")).toBeUndefined();
+    expect(getDraft("b")).toBe(local);
   });
 
   it("rebase: your changed keys onto the newer saved config, the rest from it", () => {
