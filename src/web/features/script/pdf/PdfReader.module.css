@@ -1,0 +1,342 @@
+/* The PDF page view: sheets of paper (the page + its cue margin) on the app's surface. */
+
+.scroller {
+  background: var(--color-bg-sunken);
+}
+
+.zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.zoom button {
+  padding: 0 var(--space-2);
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.zoom button[aria-pressed="true"] {
+  background: var(--color-accent-subtle);
+  border-color: var(--color-accent);
+}
+
+.zoom span {
+  min-width: 3.5em;
+  text-align: center;
+  font-size: 12px;
+}
+
+.note {
+  margin: var(--space-2) var(--space-4) 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.pages {
+  position: relative;
+}
+
+.slot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  padding-top: 16px;
+  box-sizing: border-box;
+}
+
+.sheet {
+  position: relative;
+  flex-shrink: 0;
+  background: var(--paper-bg);
+  color: var(--paper-ink);
+  box-shadow: var(--paper-shadow);
+}
+
+.paper {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: hidden;
+}
+
+.canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+
+/* pdf.js's text layer (from pdfjs-dist/web/pdf_viewer.css, the parts the view uses): the
+   page's text as transparent, selectable spans stretched over the drawn glyphs. */
+.paper :global(.textLayer) {
+  position: absolute;
+  text-align: initial;
+  inset: 0;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 0;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
+.paper :global(.textLayer) :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+}
+
+.paper :global(.textLayer) > :not(:global(.markedContent)),
+.paper :global(.textLayer) :global(.markedContent) span:not(:global(.markedContent)) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.paper :global(.textLayer) :global(.markedContent) {
+  display: contents;
+}
+
+.paper :global(.textLayer) ::selection {
+  background: color-mix(in srgb, var(--paper-accent), transparent 70%);
+  color: transparent;
+}
+
+.paper :global(.textLayer) br::selection {
+  background: transparent;
+}
+
+.paper :global(.textLayer) :global(.endOfContent) {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  user-select: none;
+}
+
+.paper :global(.textLayer.selecting) :global(.endOfContent) {
+  top: 0;
+}
+
+.overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 1;
+  overflow: visible;
+}
+
+.find {
+  fill: var(--paper-find);
+  opacity: 0.45;
+}
+
+.guide {
+  stroke: var(--paper-accent);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+  opacity: 0.8;
+}
+
+.mark {
+  color: var(--mark-ink);
+}
+
+.highlight {
+  fill: var(--mark-ink);
+  opacity: 0.16;
+}
+
+.underline {
+  stroke: var(--mark-ink);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.mark[data-warn] .underline {
+  stroke-dasharray: 4 2;
+}
+
+.tick {
+  stroke: var(--mark-ink);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+.goLine,
+.leaderOnPage,
+.leader {
+  fill: none;
+  stroke: var(--mark-ink);
+  stroke-width: 1;
+}
+
+/* On the page the leader stays out of the way of the text it runs under. */
+.leaderOnPage {
+  stroke-dasharray: 1 2.5;
+  opacity: 0.75;
+}
+
+.goLine {
+  stroke-dasharray: 5 3;
+  opacity: 0.85;
+}
+
+.mark[data-hot] .leader,
+.mark[data-hot] .leaderOnPage,
+.mark[data-hot] .goLine {
+  stroke-width: 2;
+  opacity: 1;
+}
+
+.margin {
+  position: absolute;
+  top: 0;
+  z-index: 2;
+  border-left: 1px solid var(--paper-rule);
+  font-family: var(--font-sans);
+}
+
+.margin[data-can-place] {
+  cursor: copy;
+}
+
+.entry {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 2px;
+  padding-right: 4px;
+  cursor: default;
+}
+
+.entry[draggable="true"] {
+  cursor: grab;
+}
+
+.entryMenu {
+  position: absolute;
+  left: 2px;
+  top: 0;
+  opacity: 0;
+}
+
+.entry:hover .entryMenu,
+.entry:focus-within .entryMenu {
+  opacity: 1;
+}
+
+.entryMenu button[aria-haspopup] {
+  padding: 0 4px;
+  font-size: 12px;
+  line-height: 16px;
+  background: var(--paper-bg);
+  color: var(--paper-ink);
+  border-color: var(--paper-rule);
+}
+
+.entryLabel {
+  margin-right: auto;
+  margin-left: 18px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--mark-ink);
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+  cursor: pointer;
+}
+
+.entryLabel:hover {
+  text-decoration: underline;
+}
+
+.number {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 44px;
+  justify-content: center;
+  height: 20px;
+  padding: 0 6px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--mark-ink);
+  border-radius: var(--radius-sm);
+  background: var(--mark-bg);
+  color: var(--mark-ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.number:hover,
+.number:focus-visible {
+  background: var(--mark-ink);
+  color: var(--paper-bg);
+}
+
+.entry[data-active] .number {
+  outline: 2px solid var(--mark-ink);
+  outline-offset: 1px;
+}
+
+.entry[data-flash] .number {
+  animation: flash 0.6s ease-in-out 4;
+}
+
+@keyframes flash {
+  50% {
+    background: var(--mark-ink);
+    color: var(--paper-bg);
+  }
+}
+
+.notesDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.warn {
+  font-family: var(--font-sans);
+  font-size: 11px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .entry[data-flash] .number {
+    animation: none;
+    background: var(--mark-ink);
+    color: var(--paper-bg);
+  }
+}

@@ -119,4 +119,16 @@ describe("theme tokens", () => {
     expect(themes.light.get("--color-surface")?.toLowerCase()).toBe("#ffffff");
     expect(themes.light.get("--color-bg")?.toLowerCase()).not.toBe("#ffffff");
   });
+
+  it("paper ink (the PDF page view) is AA on the paper and on its chips", () => {
+    const paper = block("Paper: the PDF page view");
+    const v = (k: string) => paper.get(k) ?? "";
+    for (const fg of ["--paper-ink", "--paper-ink-muted", "--paper-accent"]) {
+      expect(contrast(v(fg), v("--paper-bg")), fg).toBeGreaterThanOrEqual(4.5);
+    }
+    for (const c of OPTION_COLORS) {
+      expect(contrast(v(`--paper-${c}-ink`), v("--paper-bg")), c).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(v(`--paper-${c}-ink`), v(`--paper-${c}-bg`)), c).toBeGreaterThanOrEqual(4.5);
+    }
+  });
 });

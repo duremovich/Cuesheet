@@ -448,6 +448,35 @@
   min-width: 0;
 }
 
+/* PDF pages | Text (a version whose original is a PDF). */
+.viewToggle {
+  display: inline-flex;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.viewToggle button {
+  font-size: 12px;
+  padding: 2px var(--space-2);
+  border-radius: 0;
+}
+
+.viewToggle button:first-child {
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+
+.viewToggle button:last-child {
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  margin-left: -1px;
+}
+
+.viewToggle button[aria-pressed="true"] {
+  background: var(--color-accent-subtle);
+  border-color: var(--color-accent);
+  position: relative;
+}
+
 .check {
   white-space: nowrap;
   display: inline-flex;

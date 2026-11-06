@@ -25,7 +25,6 @@ import {
   anchorsByBlock,
   cueLabel,
   FAINT_HEIGHT,
-  findBlocks,
   findPage,
   headingsOf,
   isPlaced,
@@ -42,14 +41,16 @@ import {
 } from "./markers";
 import { PlacePopover, type PlaceRequest } from "./PlacePopover";
 import type { NewCueInput } from "./placement";
-import { rangeToSpan, spanAnchor } from "./placement";
+import { placeRequestFor, rangeToSpan, spanAnchor } from "./placement";
+import { ScriptNavigator, useFindGoto, useReaderKeys } from "./ReaderChrome";
 import styles from "./Script.module.css";
 import { BlockText } from "./ScriptBlocks";
 
 export interface Placement {
   create(anchor: Anchor, input: NewCueInput): Promise<void>;
   attach(cueId: string, anchor: Anchor, positionTrigger: string | null): Promise<void>;
-  move(anchorId: string, block: number): Promise<void>;
+  /** A marker dropped on a block (`lineOffset`: on a line inside it, the PDF view). */
+  move(anchorId: string, block: number, lineOffset?: number): Promise<void>;
   /** Number suggestion for a new cue at this position. */
   suggest(at: { block: number; offset: number }): string;
   searchCues(q: string): PickerItem[];
@@ -216,80 +217,28 @@ export function Reader(props: ReaderProps) {
     });
   }, [props.focusRequest?.nonce, props.focusRequest?.cueId]);
 
-  // --- find / go to ---
-  const [find, setFind] = useState<{ query: string; at: number } | null>(null);
-  const hits = useMemo(() => (find ? findBlocks(text, find.query) : []), [find, text]);
-  const findBlock = find && hits.length ? (hits[find.at % hits.length] ?? null) : null;
-  const findInput = useRef<HTMLInputElement>(null);
-  const [goto, setGoto] = useState<{ value: string; error: string | null } | null>(null);
-  const gotoInput = useRef<HTMLInputElement>(null);
-  const findOpen = find !== null;
-  const gotoOpen = goto !== null;
-  useEffect(() => {
-    if (findOpen) findInput.current?.focus();
-  }, [findOpen]);
-  useEffect(() => {
-    if (gotoOpen) gotoInput.current?.focus();
-  }, [gotoOpen]);
-  const stepFind = (d: number) => {
-    if (!find || hits.length === 0) return;
-    const at = (find.at + d + hits.length) % hits.length;
-    setFind({ ...find, at });
-    const b = hits[at];
-    if (b !== undefined) scrollToBlock(b);
-  };
-
-  // --- keys ---
-  const keyState = useRef({ scrollToPage, pages: pages.length });
-  keyState.current = { scrollToPage, pages: pages.length };
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
-      const t = e.target as HTMLElement | null;
-      if (t?.closest?.("input, textarea, select, [contenteditable]")) return;
-      if (document.querySelector('[role="dialog"]')) return;
-      const { scrollToPage } = keyState.current;
-      if (e.key === "j" || e.key === "PageDown") {
-        e.preventDefault();
-        scrollToPage(pageIdxRef.current + 1);
-      } else if (e.key === "k" || e.key === "PageUp") {
-        e.preventDefault();
-        scrollToPage(pageIdxRef.current - 1);
-      } else if (e.key === "/") {
-        e.preventDefault();
-        setFind((f) => f ?? { query: "", at: 0 });
-        findInput.current?.focus();
-      } else if (e.key === "g") {
-        e.preventDefault();
-        setGoto({ value: "", error: null });
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, []);
+  // --- find / go to / keys ---
+  const findGoto = useFindGoto({
+    text,
+    findPage: (label) => findPage(pages, label),
+    toBlock: (b) => scrollToBlock(b),
+    toPage: scrollToPage,
+    focusBack: () => scroller.current?.focus({ preventScroll: true }),
+  });
+  const findBlock = findGoto.findBlock;
+  useReaderKeys({
+    next: () => scrollToPage(pageIdxRef.current + 1),
+    prev: () => scrollToPage(pageIdxRef.current - 1),
+    find: findGoto.openFind,
+    goto: findGoto.openGoto,
+  });
 
   // --- placing ---
   const [place, setPlace] = useState<{ req: PlaceRequest; anchor: Anchor } | null>(null);
   const openPlace = useCallback(
     (kind: PlaceRequest["kind"], anchor: Anchor, x: number, y: number, lines = 1) => {
-      const page = text.blocks[anchor.block]?.page;
-      const label = text.pages.find((p) => p.page === page)?.label ?? String(page ?? "");
-      const block = text.blocks[anchor.block];
-      const next = text.blocks[anchor.block + 1];
-      setPlace({
-        anchor,
-        req: {
-          kind,
-          x,
-          y,
-          quote: kind === "selection" ? anchor.quote : (block?.text ?? ""),
-          pageLabel: label,
-          suggestion: placement.suggest({ block: anchor.block, offset: anchor.offset }),
-          lines,
-          // Only a character name selected: offer the line they say instead.
-          nextLine: kind === "selection" && lines === 1 && block?.kind === "character" && !!next,
-        },
-      });
+      const suggestion = placement.suggest({ block: anchor.block, offset: anchor.offset });
+      setPlace({ anchor, req: placeRequestFor(text, kind, anchor, { x, y, lines, suggestion }) });
     },
     [text, placement],
   );
@@ -397,138 +346,26 @@ export function Reader(props: ReaderProps) {
 
   const [navOpen, setNavOpen] = useState(false);
   const current = pages[pageIdx];
+  const navPages = useMemo(() => pages.map((p) => ({ key: p.page, label: p.label })), [pages]);
 
   return (
     <div className={styles.reader} data-narrow={narrow || undefined}>
-      <nav
-        className={styles.navigator}
-        aria-label="Script pages"
-        data-open={navOpen || undefined}
-        data-testid="script-navigator"
-      >
-        {headings.length > 0 && (
-          <>
-            <h3>Scenes</h3>
-            <ul>
-              {headings.map((h) => (
-                <li key={h.block}>
-                  <button
-                    type="button"
-                    className={styles.navItem}
-                    onClick={() => {
-                      scrollToBlock(h.block);
-                      setNavOpen(false);
-                    }}
-                  >
-                    <span className={styles.navLabel}>{h.label}</span> {h.text}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-        <h3>Pages</h3>
-        <div className={styles.pageGrid}>
-          {pages.map((p, i) => (
-            <button
-              key={p.page}
-              type="button"
-              aria-current={i === pageIdx ? "page" : undefined}
-              aria-label={`Page ${p.label}`}
-              onClick={() => {
-                scrollToPage(i);
-                setNavOpen(false);
-              }}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
-      </nav>
+      <ScriptNavigator
+        headings={headings}
+        pages={navPages}
+        current={pageIdx}
+        open={navOpen}
+        onHeading={(b) => {
+          scrollToBlock(b);
+          setNavOpen(false);
+        }}
+        onPage={(i) => {
+          scrollToPage(i);
+          setNavOpen(false);
+        }}
+      />
       <div className={styles.readerMain}>
-        {(find || goto) && (
-          <div className={styles.findBar}>
-            {find && (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                }}
-              >
-                <input
-                  ref={findInput}
-                  type="text"
-                  aria-label="Find in script"
-                  placeholder="Find in script"
-                  value={find.query}
-                  onChange={(e) => {
-                    const query = e.target.value;
-                    setFind({ query, at: 0 });
-                    const first = findBlocks(text, query)[0];
-                    if (first !== undefined) scrollToBlock(first);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      stepFind(e.shiftKey ? -1 : 1);
-                    } else if (e.key === "Escape") {
-                      e.preventDefault();
-                      setFind(null);
-                      scroller.current?.focus({ preventScroll: true });
-                    }
-                  }}
-                />
-                <span className="muted" data-testid="find-count">
-                  {find.query.trim()
-                    ? hits.length
-                      ? `${(find.at % hits.length) + 1} of ${hits.length}`
-                      : "No matches"
-                    : ""}
-                </span>
-                <button type="button" onClick={() => stepFind(-1)} aria-label="Previous match">
-                  ↑
-                </button>
-                <button type="button" onClick={() => stepFind(1)} aria-label="Next match">
-                  ↓
-                </button>
-                <button type="button" onClick={() => setFind(null)} aria-label="Close find">
-                  ×
-                </button>
-              </form>
-            )}
-            {goto && (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const i = findPage(pages, goto.value);
-                  if (i < 0) {
-                    setGoto({ ...goto, error: `No page "${goto.value}"` });
-                    return;
-                  }
-                  scrollToPage(i);
-                  setGoto(null);
-                  scroller.current?.focus({ preventScroll: true });
-                }}
-              >
-                <input
-                  ref={gotoInput}
-                  type="text"
-                  aria-label="Go to page"
-                  placeholder="Page label (e.g. 14)"
-                  value={goto.value}
-                  onChange={(e) => setGoto({ value: e.target.value, error: null })}
-                  onKeyDown={(e) => {
-                    if (e.key === "Escape") {
-                      e.preventDefault();
-                      setGoto(null);
-                      scroller.current?.focus({ preventScroll: true });
-                    }
-                  }}
-                />
-                {goto.error && <span className="error">{goto.error}</span>}
-              </form>
-            )}
-          </div>
-        )}
+        {findGoto.bar}
         <div
           ref={scroller}
           className={styles.scroller}

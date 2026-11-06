@@ -998,7 +998,8 @@ views" below).
 - **Reader** (`Reader.tsx`, `ScriptBlocks.tsx`): pages virtualized (react-virtual), each
   a grid of gutter (page label) | text column (~70ch) | margin. Blocks render by kind;
   each is `[data-block=<i>]` with its text alone in `[data-text]` (selection offsets rely
-  on it). Keys outside inputs: j / PageDown, k / PageUp, `/` find, `g` go to a page label.
+  on it). Keys outside inputs: j / PageDown, k / PageUp, `/` find, `g` go to a page label
+  (`ReaderChrome.tsx`: the navigator, find / go-to bar and keys, shared with the PDF view).
   A sticky header shows the page **at the middle of the visible script**; the list ends
   with a viewport of padding (`paddingEnd`) so any page, the last included, scrolls to the
   top. The navigator lists headings and pages (a "Pages" toggle below 900 px). At ≤ 600 px: one column, markers become badges in the text that
@@ -1057,8 +1058,49 @@ views" below).
   flight from this screen don't count). **A newer version** imported meanwhile: the
   screen is keyed by its version and stays on it, with "A new version (v3) was imported
   by …; your list is for v2", actions hidden, and **Switch to v3**.
+- **PDF page view** (`pdf/`, decision 0008): the default for a version whose original
+  (`attachment_id`) is `application/pdf`; a toolbar toggle **PDF pages | Text** (pref
+  `cuesheet.scriptView.<user>.<show>`, zoom in `cuesheet.scriptZoom.…`: `"fit"` or a
+  scale). `PdfReader.tsx` (lazy chunk) → `PdfPage.tsx` per page: pdf.js canvas + its
+  **TextLayer** (spans tagged `data-item` = the text item's index among items with a
+  `str`, i.e. `textDivs` order), an SVG overlay (`MarkShapes`) and the cue margin (230 px;
+  64 px numbers-only ≤ 600 px). Pages are virtualized with sizes known up front (no
+  measuring: `tops` from page heights × scale), canvases drawn only for mounted pages,
+  re-drawn on zoom (reading position kept). `pdfDocument.ts`: fetches the attachment,
+  parses it, reads every page's text (`readPdfPages`), caches the last 3 documents and a
+  glyph map per stored text. **Mapping** (`pdfMap.ts`): `layoutPdfTraced` re-runs the
+  import's layout recording each block character's (item, char) (`normalizeTextTraced`
+  in `shared/script.ts` keeps it through `normalizeText`), `alignBlocks` matches the
+  stored blocks (by index when identical, else searched per page), `anchorGeom` → one
+  underline segment per line + the start glyph (`stale` when the text ≠ quote),
+  `selectionSpan` (text layer → `Span` for `spanAnchor`, snapping off page labels and
+  headers), `pageLines`/`lineAt` (margin click / drop → the line at that height;
+  `makeLineAnchor` = a positional anchor at a line *inside* a block). Character x inside an
+  item: `canvasMeasure` (the text layer's own canvas measurement). **Marks**
+  (`pdfMarks.ts`): Line cues (and cues with no trigger type) underline their quote; the
+  others (`isPositionalCue`) get a tick and a dashed GO line just above their line plus a
+  **label on the leader**: `leaderLabel` = `triggerBadge` + `shortText` of trigger value
+  (not for LX/SQ/Timecode, whose badge has it) → description → SM call → (no badge) the
+  quote; `shortText` takes the lead-in before ": " ("PRESHOW: Title card…" → "PRESHOW") or
+  the first clause, ≤ 28 chars. Margin entries stack without overlaps
+  (`layoutMargin`: pushed down, then pulled back up from the page bottom). Number = link
+  to the cue list (`actions.onShowInList`), label → the cue panel, ⋯ → Open cue / Show in
+  list / Remove from script; entries drag onto a line (`placement.move(id, block,
+  lineOffset)`). `missing` anchors and anchors whose block isn't in the PDF are listed in
+  the navigator ("Not on a page"). Colors: paper tokens `--paper-<color>-ink/-bg` (the
+  sheet is white in both themes). Test hooks: `pdf-view`, `pdf-reader` (`data-scale`),
+  `pdf-page` (`data-page`, `data-rendered` once canvas + text layer are drawn at the
+  current zoom), `pdf-text`, `pdf-marker` (`data-cue`/`-anchor`/`-positional`/`-warn`/
+  `-flash`), `pdf-cue-number`, `pdf-marker-label`, `pdf-underline` (`data-anchor`),
+  `pdf-tick`, `pdf-leader`, `g[data-anchor][data-hot]`. Keyboard line placement
+  (Enter / Shift+Enter) is the text view's only.
 - **Roles**: viewers and commenters read (no popover, no drag, no import / resolve).
-- **Tests**: `markers`, `placement`, `resolve` (unit), `Reader`, `rangeToSpan`,
+- **Tests**: `pdf/pdfMap.test.ts` (a pdf-lib PDF through pdf.js's Node build: every block
+  character maps to its glyph, alignment fallback, multi-line / positional / missing /
+  stale anchors, selections, lines, `buildMarks`), `pdf/pdfMargin.test.ts` (stacking,
+  labels), `e2e/script-pdf.spec.ts` (import a PDF, place by selecting PDF text, underline
+  position, number → list → "Show in script", positional label, remove, print);
+  `markers`, `placement`, `resolve` (unit), `Reader`, `rangeToSpan`,
   `ResolveScreen` (dom), `e2e/script.spec.ts` against the real engine (TXT fixtures
   `e2e/fixtures/script-v1.txt` / `-v2.txt` with `--- page 12 ---` markers: v2 rewrites
   one line, deletes one and inserts a paragraph).
@@ -1076,7 +1118,12 @@ views" below).
   screen-only), each block beside its markers (status colors); a page break after each
   page but the last (no trailing blank sheet); body 11 pt in print. **GO emphasis** (on
   by default, `?go=0` off): a small "GO" tag and a bold cue number. Portrait. From the
-  script header's **Print calling script** (keeps the filter) or ⌘K.
+  script header's **Print calling script** (keeps the filter) or ⌘K. **`?layout=pdf`**
+  (a PDF original; the PDF view's link adds it; a Layout select switches):
+  `PdfCallingScript.tsx` (lazy), one sheet per PDF page: the page rendered at 2.5× to a
+  PNG (one at a time, `data-ready` on `print-pdf` when all are done) inside an SVG in
+  points with the same `MarkShapes` and the margin numbers/labels as vector; running
+  header/footer and "Page N of M" from `PrintShell`.
 - **Print view** (`PrintTable.tsx`), `/shows/:id/print/<tab>?view=<id>`: `TablePrintRoute`
   renders the tab's own component inside `PrintModeContext`; `TableGrid` and `CueGrid`
   build their saved view as usual (`useViewConfig`, which now also returns `viewId`) and
@@ -1481,6 +1528,7 @@ same logic plus `useTheme()`; the toggle is `components/ThemeToggle.tsx` in the 
 | `--color-danger`/`-warning`/`-success` + `-subtle` | Status text; its tinted background |
 | `--option-{gray,red,orange,yellow,green,teal,blue,purple,pink}-{bg,fg}` | Select-option chips and color rules |
 | `--shadow-raised` | Popover shadow |
+| `--paper-bg`, `--paper-ink(-muted)`, `--paper-rule`, `--paper-accent`, `--paper-find`, `--paper-shadow`, `--paper-{color}-ink/-bg` | The PDF page view's sheets: white paper in **both** themes (light-palette ink; `theme.test.ts` checks AA) |
 
 Also spacing (`--space-1..8`), radii (`--radius-sm/md/lg`) and fonts (`--font-sans`,
 `--font-mono`). Both themes must define the same variables; dark surfaces are never pure

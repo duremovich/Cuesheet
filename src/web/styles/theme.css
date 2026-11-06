@@ -114,6 +114,39 @@
   --shadow-raised: 0 4px 16px rgb(20 30 50 / 0.12);
 }
 
+/*
+ * Paper: the PDF page view's sheets (the original script page and its cue margin) are
+ * white paper in both themes, so their ink is the light palette's. --paper-<color>-ink /
+ * -bg follow the select-option colors (a cue colored by status or trigger).
+ */
+:root {
+  --paper-bg: #ffffff;
+  --paper-ink: #1c2026;
+  --paper-ink-muted: #565f6b;
+  --paper-rule: #d6dae0;
+  --paper-accent: #1f63d6;
+  --paper-find: #ffd43b;
+  --paper-shadow: 0 1px 4px rgb(20 30 50 / 0.35);
+  --paper-gray-ink: #3a404a;
+  --paper-gray-bg: #e8eaed;
+  --paper-red-ink: #8c1d18;
+  --paper-red-bg: #fde2e0;
+  --paper-orange-ink: #8a4200;
+  --paper-orange-bg: #feead7;
+  --paper-yellow-ink: #6b5000;
+  --paper-yellow-bg: #fcf1c7;
+  --paper-green-ink: #16622c;
+  --paper-green-bg: #dcf3e2;
+  --paper-teal-ink: #0f5e5a;
+  --paper-teal-bg: #d6f2f0;
+  --paper-blue-ink: #1848a0;
+  --paper-blue-bg: #dde9fd;
+  --paper-purple-ink: #5b30a6;
+  --paper-purple-bg: #ebe3fc;
+  --paper-pink-ink: #8e1f63;
+  --paper-pink-bg: #fce1f1;
+}
+
 :root {
   --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;

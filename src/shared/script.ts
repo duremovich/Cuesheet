@@ -140,6 +140,48 @@ export function normalizeText(s: string): string {
     .trim();
 }
 
+/**
+ * `normalizeText` that also says where each output character came from: `map[k]` is the
+ * index in `s` of the character that produced `text[k]` (a collapsed whitespace run maps
+ * to its first character; NFKC expansions like "ﬁ" → "fi" map every output character to
+ * the source one). `text` always equals `normalizeText(s)`; when NFKC can't be traced
+ * piecewise (a composition across pieces) the map falls back to proportional positions.
+ * The PDF page view uses it to find glyphs from block offsets.
+ */
+export function normalizeTextTraced(s: string): { text: string; map: number[] } {
+  const want = normalizeText(s);
+  const out: string[] = [];
+  const map: number[] = [];
+  let space = -1;
+  // NFKC per base character + its combining marks (composition stays within a piece).
+  for (const m of s.matchAll(/\P{M}\p{M}*|\p{M}+/gu)) {
+    const at = m.index ?? 0;
+    for (const raw of m[0].normalize("NFKC")) {
+      if (raw.replace(INVISIBLE, "") === "") continue;
+      if (/\s/.test(raw)) {
+        if (space < 0) space = at;
+        continue;
+      }
+      if (space >= 0 && out.length > 0) {
+        out.push(" ");
+        map.push(space);
+      }
+      space = -1;
+      const c = raw.replace(SINGLE_QUOTES, "'").replace(DOUBLE_QUOTES, '"').replace(DASHES, "-");
+      out.push(c);
+      for (let u = 0; u < c.length; u++) map.push(at);
+    }
+  }
+  const text = out.join("");
+  if (text === want) return { text, map };
+  const n = Math.max(1, s.length);
+  const prop: number[] = [];
+  for (let k = 0; k < want.length; k++) {
+    prop.push(Math.min(n - 1, Math.floor((k * n) / Math.max(1, want.length))));
+  }
+  return { text: want, map: prop };
+}
+
 // ---- page map ----
 
 /** The compact `page_map` for a version's text (one entry per page that has blocks). */

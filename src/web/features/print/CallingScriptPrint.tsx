@@ -1,10 +1,14 @@
-// The calling script (R21), /shows/:id/script/print?version=&filter=: the script's pages
-// with cue markers in the margin beside the line they're on (quoted lines underlined),
+// The calling script (R21), /shows/:id/script/print?version=&filter=&layout=: the script's
+// pages with cue markers in the margin beside the line they're on (quoted lines underlined),
 // page labels, and a header with the show, version label and date. `?filter=` is the
 // script view's filter bar (only matching cues); `?version=` a version other than the
-// current one. Printed from the browser (print dialog / Save as PDF), always light.
-import { useMemo, useState } from "react";
+// current one. `?layout=pdf` (a version whose original is a PDF; the PDF page view's
+// "Print calling script"): the original pages with the cue margin (PdfCallingScript)
+// instead of the extracted text. Printed from the browser (print dialog / Save as PDF),
+// always light.
+import { lazy, Suspense, useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
+import { attachmentUrl } from "../../../shared/attachments";
 import { type ShowState, useShowStore } from "../../lib/show-store";
 import { useScriptText, useVersionAnchors } from "../script/data";
 import { filterFromParam, isFiltered, markerColor, matchesMarker } from "../script/filters";
@@ -27,6 +31,7 @@ import styles from "./Print.module.css";
 import { PrintShell, printDate } from "./PrintShell";
 
 const selectState = (s: ShowState) => s;
+const PdfCallingScript = lazy(() => import("./PdfCallingScript"));
 const NONE: string[] = [];
 
 export function CallingScriptPrint() {
@@ -81,6 +86,14 @@ export function CallingScriptPrint() {
   // router applies the change.
   const [go, setGo] = useState(params.get("go") !== "0");
   const date = printDate();
+  const original = version?.attachment_id
+    ? state.tables.attachments.get(version.attachment_id)
+    : undefined;
+  const pdfUrl =
+    original?.content_type === "application/pdf" ? attachmentUrl(ws.showId, original.id) : null;
+  const [layout, setLayout] = useState(params.get("layout") === "pdf" ? "pdf" : "text");
+  const onPdf = layout === "pdf" && !!pdfUrl;
+  const labelOf = (page: number) => text?.pages.find((p) => p.page === page)?.label ?? String(page);
 
   return (
     <PrintShell
@@ -88,27 +101,56 @@ export function CallingScriptPrint() {
       back={scriptUrl(ws.showId)}
       testId="print-script"
       screenOnlyHeader
-      running={false}
+      running={onPdf ? { footer: `${ws.showName} · ${version?.label ?? ""} · ${date}` } : false}
       controls={
-        <label className={styles.control}>
-          <input
-            type="checkbox"
-            checked={go}
-            onChange={(e) => {
-              setGo(e.target.checked);
-              setParams(
-                (prev) => {
-                  const next = new URLSearchParams(prev);
-                  if (e.target.checked) next.delete("go");
-                  else next.set("go", "0");
-                  return next;
-                },
-                { replace: true },
-              );
-            }}
-          />
-          GO emphasis
-        </label>
+        <>
+          {pdfUrl && (
+            <label className={styles.control}>
+              Layout{" "}
+              <select
+                aria-label="Layout"
+                value={onPdf ? "pdf" : "text"}
+                onChange={(e) => {
+                  const v = e.target.value === "pdf" ? "pdf" : "text";
+                  setLayout(v);
+                  setParams(
+                    (prev) => {
+                      const next = new URLSearchParams(prev);
+                      if (v === "pdf") next.set("layout", "pdf");
+                      else next.delete("layout");
+                      return next;
+                    },
+                    { replace: true },
+                  );
+                }}
+              >
+                <option value="pdf">PDF pages</option>
+                <option value="text">Text</option>
+              </select>
+            </label>
+          )}
+          {!onPdf && (
+            <label className={styles.control}>
+              <input
+                type="checkbox"
+                checked={go}
+                onChange={(e) => {
+                  setGo(e.target.checked);
+                  setParams(
+                    (prev) => {
+                      const next = new URLSearchParams(prev);
+                      if (e.target.checked) next.delete("go");
+                      else next.set("go", "0");
+                      return next;
+                    },
+                    { replace: true },
+                  );
+                }}
+              />
+              GO emphasis
+            </label>
+          )}
+        </>
       }
       subtitle={
         <>
@@ -126,82 +168,95 @@ export function CallingScriptPrint() {
       {!versionId && <p>No script has been imported yet.</p>}
       {error && <p className="error">{error}</p>}
       {versionId && !text && !error && <p>Loading…</p>}
-      {pages.map((p, idx) => (
-        // One table per script page: its <thead>/<tfoot> repeat on every sheet the page
-        // runs onto (the running header and footer); the last page doesn't force a break.
-        <table
-          key={p.page}
-          className={styles.sheet}
-          data-testid="print-page"
-          data-last={idx === pages.length - 1 || undefined}
-        >
-          <thead>
-            <tr>
-              <td className={styles.running} data-testid="print-running-header">
-                <span>{ws.showName}</span>
-                <span>{version?.label ?? ""}</span>
-                <span>Page {p.label}</span>
-                <span>{date}</span>
-              </td>
-            </tr>
-          </thead>
-          <tfoot>
-            <tr>
-              <td className={styles.runningFoot}>
-                {ws.showName} · {version?.label ?? ""} · page {p.label}
-              </td>
-            </tr>
-          </tfoot>
-          <tbody>
-            <tr>
-              <td className={styles.scriptPage}>
-                <div className={styles.pageLabel}>Page {p.label}</div>
-                {p.blocks.map((b) => {
-                  const list = byBlock.get(b.i) ?? [];
-                  return (
-                    <div key={b.i} className={styles.scriptRow}>
-                      <BlockText
-                        block={b}
-                        quotes={quotes.get(b.i)}
-                        data-positional={
-                          list.some((a) => isPositionalCue(state.tables.cues.get(a.cue_id))) ||
-                          undefined
-                        }
-                      />
-                      <div className={styles.printMargin}>
-                        {list.map((a) => {
-                          const cue = state.tables.cues.get(a.cue_id);
-                          if (!cue) return null;
-                          const badge = triggerBadge(cue);
-                          return (
-                            <div
-                              key={a.id}
-                              className={styles.printMarker}
-                              data-testid="print-marker"
-                              style={markerStyle(markerColor(cue, "status", state.fieldOptions))}
-                            >
-                              {go && (
-                                <span className={styles.go} data-testid="print-go">
-                                  GO
-                                </span>
-                              )}
-                              <strong className={go ? styles.goNumber : undefined}>
-                                {cueLabel(cue)}
-                              </strong>
-                              {badge && <span className={styles.printTrigger}> · {badge}</span>}
-                              <div className={styles.printMarkerText}>{markerText(cue)}</div>
-                            </div>
-                          );
-                        })}
+      {onPdf && text && pdfUrl && (
+        <Suspense fallback={<p>Opening the PDF…</p>}>
+          <PdfCallingScript
+            pdfUrl={pdfUrl}
+            text={text}
+            anchors={shown}
+            cues={state.tables.cues}
+            fieldOptions={state.fieldOptions}
+            labelOf={labelOf}
+          />
+        </Suspense>
+      )}
+      {!onPdf &&
+        pages.map((p, idx) => (
+          // One table per script page: its <thead>/<tfoot> repeat on every sheet the page
+          // runs onto (the running header and footer); the last page doesn't force a break.
+          <table
+            key={p.page}
+            className={styles.sheet}
+            data-testid="print-page"
+            data-last={idx === pages.length - 1 || undefined}
+          >
+            <thead>
+              <tr>
+                <td className={styles.running} data-testid="print-running-header">
+                  <span>{ws.showName}</span>
+                  <span>{version?.label ?? ""}</span>
+                  <span>Page {p.label}</span>
+                  <span>{date}</span>
+                </td>
+              </tr>
+            </thead>
+            <tfoot>
+              <tr>
+                <td className={styles.runningFoot}>
+                  {ws.showName} · {version?.label ?? ""} · page {p.label}
+                </td>
+              </tr>
+            </tfoot>
+            <tbody>
+              <tr>
+                <td className={styles.scriptPage}>
+                  <div className={styles.pageLabel}>Page {p.label}</div>
+                  {p.blocks.map((b) => {
+                    const list = byBlock.get(b.i) ?? [];
+                    return (
+                      <div key={b.i} className={styles.scriptRow}>
+                        <BlockText
+                          block={b}
+                          quotes={quotes.get(b.i)}
+                          data-positional={
+                            list.some((a) => isPositionalCue(state.tables.cues.get(a.cue_id))) ||
+                            undefined
+                          }
+                        />
+                        <div className={styles.printMargin}>
+                          {list.map((a) => {
+                            const cue = state.tables.cues.get(a.cue_id);
+                            if (!cue) return null;
+                            const badge = triggerBadge(cue);
+                            return (
+                              <div
+                                key={a.id}
+                                className={styles.printMarker}
+                                data-testid="print-marker"
+                                style={markerStyle(markerColor(cue, "status", state.fieldOptions))}
+                              >
+                                {go && (
+                                  <span className={styles.go} data-testid="print-go">
+                                    GO
+                                  </span>
+                                )}
+                                <strong className={go ? styles.goNumber : undefined}>
+                                  {cueLabel(cue)}
+                                </strong>
+                                {badge && <span className={styles.printTrigger}> · {badge}</span>}
+                                <div className={styles.printMarkerText}>{markerText(cue)}</div>
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      ))}
+                    );
+                  })}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        ))}
     </PrintShell>
   );
 }

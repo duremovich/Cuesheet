@@ -9,7 +9,11 @@
 //   4. kinds by classifyBlocks (italic share from the font names).
 // No text layer (a scan) → ScriptExtractError "no-text-layer". Confidence = the share of
 // pages with text.
-import type { ScriptText } from "../../../../shared/script";
+//
+// `layoutPdfTraced` runs the same layout and also records, for every character of every
+// block, the text item and character it came from (the PDF page view maps anchors to glyphs
+// with it). Kinds don't change a block's text, so the trace needs no font names.
+import { normalizeTextTraced, type ScriptText } from "../../../../shared/script";
 import {
   classifyBlocks,
   isCharacterCue,
@@ -30,6 +34,11 @@ export interface PdfItem {
   /** Font size. */
   size: number;
   italic: boolean;
+  /**
+   * The item's index among the page's text items (pdf.js `getTextContent().items` that
+   * have a `str`: the TextLayer's `textDivs` index). Traces report glyphs by it.
+   */
+  ref?: number;
 }
 
 export interface PdfPageItems {
@@ -40,6 +49,8 @@ export interface PdfPageItems {
 
 interface Line {
   text: string;
+  /** Per character of `text`: its source glyph (`glyph(ref, ch)`), or -1 (an inserted space). */
+  src: number[];
   x: number;
   y: number;
   size: number;
@@ -49,6 +60,34 @@ interface Line {
 const MARGIN = 0.08;
 /** A horizontal gap wider than this many font sizes splits a baseline into two lines. */
 const COLUMN_GAP = 4;
+
+/** Glyph code: text item `ref`, character `ch` of its `str`. */
+const CH_SPAN = 2 ** 20;
+const glyph = (ref: number, ch: number) => ref * CH_SPAN + Math.min(ch, CH_SPAN - 1);
+
+/** `text.replace(/\s+/g, " ").trim()` with `src` kept aligned (a run keeps its first source). */
+function collapse(text: string, src: readonly number[]): { text: string; src: number[] } {
+  let out = "";
+  const os: number[] = [];
+  let space = -1;
+  let pending = false;
+  for (let k = 0; k < text.length; k++) {
+    const c = text[k] as string;
+    if (/\s/.test(c)) {
+      if (!pending) space = src[k] ?? -1;
+      pending = true;
+      continue;
+    }
+    if (pending && out) {
+      out += " ";
+      os.push(space);
+    }
+    pending = false;
+    out += c;
+    os.push(src[k] ?? -1);
+  }
+  return { text: out, src: os };
+}
 
 function toLines(page: PdfPageItems): Line[] {
   const items = page.items
@@ -79,20 +118,29 @@ function toLines(page: PdfPageItems): Line[] {
   return split.map((g) => {
     g.sort((a, b) => a.x - b.x);
     let text = "";
+    const src: number[] = [];
     let italicChars = 0;
     let chars = 0;
     let end = Number.NEGATIVE_INFINITY;
     for (const it of g) {
       const gap = it.x - end;
-      if (text && gap > 0.12 * it.size && !/\s$/.test(text) && !/^\s/.test(it.str)) text += " ";
+      if (text && gap > 0.12 * it.size && !/\s$/.test(text) && !/^\s/.test(it.str)) {
+        text += " ";
+        src.push(-1);
+      }
       text += it.str;
+      for (let k = 0; k < it.str.length; k++) {
+        src.push(it.ref === undefined ? -1 : glyph(it.ref, k));
+      }
       end = it.x + it.w;
       const n = it.str.replace(/\s/g, "").length;
       chars += n;
       if (it.italic) italicChars += n;
     }
+    const line = collapse(text, src);
     return {
-      text: text.replace(/\s+/g, " ").trim(),
+      text: line.text,
+      src: line.src,
       x: (g[0] as PdfItem).x,
       y: (g[0] as PdfItem).y,
       size: Math.max(...g.map((it) => it.size)),
@@ -109,6 +157,29 @@ const median = (xs: number[]) => {
 
 /** Pages of positioned text → ScriptText (pure; `extractPdf` feeds it from pdfjs). */
 export function layoutPdf(pages: PdfPageItems[]): ScriptText {
+  return layout(pages, false).text;
+}
+
+/**
+ * Where each character of a block came from: `item[k]` / `ch[k]` are the text item
+ * (`PdfItem.ref`) and the character of its `str` that produced `block.text[k]`; -1 for
+ * characters the layout inserted (the space between two lines, or between two items).
+ */
+export interface BlockTrace {
+  page: number;
+  item: Int32Array;
+  ch: Int32Array;
+}
+
+/**
+ * `layoutPdf`, plus one trace per block (in `text.blocks` order) for the PDF page view:
+ * an anchor's block/offset → glyphs on its page. Items need their `ref`s.
+ */
+export function layoutPdfTraced(pages: PdfPageItems[]): { text: ScriptText; trace: BlockTrace[] } {
+  return layout(pages, true);
+}
+
+function layout(pages: PdfPageItems[], trace: boolean): { text: ScriptText; trace: BlockTrace[] } {
   const lines = pages.map(toLines);
   const withText = lines.filter((ls) => ls.some((l) => l.text.length > 0)).length;
   const chars = lines.flat().reduce((n, l) => n + l.text.length, 0);
@@ -167,17 +238,30 @@ export function layoutPdf(pages: PdfPageItems[]): ScriptText {
   const spacing = median(gaps) || 14;
 
   const raw: RawBlock[] = [];
+  const rawSrc: number[][] = [];
   body.forEach((ls, i) => {
     let cur: { lines: Line[]; continues: boolean } | null = null;
     const flush = () => {
       if (!cur) return;
-      const text = cur.lines.reduce((acc, l) => {
-        if (!acc) return l.text;
-        return /\p{L}-$/u.test(acc) && /^\p{Ll}/u.test(l.text) ? acc + l.text : `${acc} ${l.text}`;
-      }, "");
+      let text = "";
+      const src: number[] = [];
+      for (const l of cur.lines) {
+        if (text) {
+          // A word hyphenated at the line end joins the next line's lowercase start.
+          if (/\p{L}-$/u.test(text) && /^\p{Ll}/u.test(l.text)) {
+            // joined as is
+          } else {
+            text += " ";
+            if (trace) src.push(-1);
+          }
+        }
+        text += l.text;
+        if (trace) for (const g of l.src) src.push(g);
+      }
       const n = cur.lines.reduce((s, l) => s + l.text.length, 0);
       const italic = n ? cur.lines.reduce((s, l) => s + l.italic * l.text.length, 0) / n : 0;
       raw.push({ text, page: i + 1, italic, continues: cur.continues });
+      rawSrc.push(src);
       cur = null;
     };
     let prev: Line | null = null;
@@ -215,16 +299,69 @@ export function layoutPdf(pages: PdfPageItems[]): ScriptText {
 
   const blocks = classifyBlocks(raw);
   const used = [...new Set(blocks.map((b) => b.page))];
+  const traces: BlockTrace[] = [];
+  if (trace) {
+    // classifyBlocks keeps the non-empty blocks, in order, with normalizeText'd text.
+    raw.forEach((r, k) => {
+      const { text, map } = normalizeTextTraced(r.text);
+      if (!text) return;
+      const src = rawSrc[k] ?? [];
+      const item = new Int32Array(text.length);
+      const ch = new Int32Array(text.length);
+      for (let c = 0; c < text.length; c++) {
+        const g = src[map[c] as number] ?? -1;
+        item[c] = g < 0 ? -1 : Math.floor(g / CH_SPAN);
+        ch[c] = g < 0 ? -1 : g % CH_SPAN;
+      }
+      traces.push({ page: r.page, item, ch });
+    });
+  }
   return {
-    blocks,
-    pages: pageInfos(used, labels),
-    source: "pdf",
-    confidence: Math.round((withText / pages.length) * 100) / 100,
+    text: {
+      blocks,
+      pages: pageInfos(used, labels),
+      source: "pdf",
+      confidence: Math.round((withText / pages.length) * 100) / 100,
+    },
+    trace: traces,
   };
 }
 
 /** The part of pdfjs-dist's API used here (its browser and Node builds both fit). */
 export type Pdfjs = typeof import("pdfjs-dist");
+
+/** A page's text items for the layout (`ref` = index among the items that have a `str`). */
+export function pdfItemsOf(
+  items: readonly unknown[],
+  origin: { x0: number; y0: number },
+  italicOf: (fontName: string) => boolean = () => false,
+): PdfItem[] {
+  const out: PdfItem[] = [];
+  let ref = -1;
+  for (const raw of items) {
+    if (!raw || typeof raw !== "object" || !("str" in raw)) continue;
+    ref++;
+    const it = raw as {
+      str: string;
+      transform: number[];
+      width: number;
+      height: number;
+      fontName: string;
+    };
+    if (!it.str) continue;
+    const [a, b, , , e, f] = it.transform;
+    out.push({
+      str: it.str,
+      x: (e ?? 0) - origin.x0,
+      y: (f ?? 0) - origin.y0,
+      w: it.width,
+      size: Math.hypot(a ?? 0, b ?? 0) || it.height || 10,
+      italic: italicOf(it.fontName),
+      ref,
+    });
+  }
+  return out;
+}
 
 /** Text items of every page through pdfjs, then `layoutPdf`. */
 export async function extractPdf(
@@ -272,19 +409,7 @@ export async function extractPdf(
         }
         italic.set(f, /italic|oblique/i.test(name));
       }
-      const items: PdfItem[] = [];
-      for (const it of content.items) {
-        if (!("str" in it) || !it.str) continue;
-        const [a, b, , , e, f] = it.transform as number[];
-        items.push({
-          str: it.str,
-          x: (e ?? 0) - x0,
-          y: (f ?? 0) - y0,
-          w: it.width,
-          size: Math.hypot(a ?? 0, b ?? 0) || it.height || 10,
-          italic: italic.get(it.fontName) ?? false,
-        });
-      }
+      const items = pdfItemsOf(content.items, { x0, y0 }, (f) => italic.get(f) ?? false);
       pages.push({ width: x1 - x0, height: y1 - y0, items });
       page.cleanup();
     }

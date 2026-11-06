@@ -5,7 +5,7 @@
 // `?version=<id>` reads an older version (read-only); `?filter=` is the marker filter;
 // `?resolve=<versionId>` is the Resolve screen for that version (pinned: if someone
 // imports a newer one meanwhile, the screen says so and offers to switch; "1" = current). Editors place and resolve; everyone else reads.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { attachmentUrl } from "../../../shared/attachments";
 import { newId } from "../../../shared/ids";
@@ -40,6 +40,7 @@ import { scriptPrintUrl } from "./links";
 import type { MarkerActions } from "./Marker";
 import { MoveDialog } from "./MoveDialog";
 import { cueLabel, isPlaced, isPositionalCue } from "./markers";
+import { isZoom, type Zoom } from "./pdf/zoom";
 import {
   attachBatch,
   moveAnchorOp,
@@ -61,7 +62,10 @@ import { type AnchorOp, useScriptSource, useScriptVersions } from "./source";
 const selectState = (s: ShowState) => s;
 const NO_OPTIONS: FieldOption[] = [];
 const isBool = (v: unknown): v is boolean => typeof v === "boolean";
+type ScriptViewMode = "pdf" | "text";
+const isViewMode = (v: unknown): v is ScriptViewMode => v === "pdf" || v === "text";
 export const CUT = "Cut";
+const PdfReader = lazy(() => import("./pdf/PdfReader"));
 
 export function ScriptPage() {
   const ws = useWorkspace();
@@ -133,6 +137,13 @@ export function ScriptPage() {
     isColorBy,
   );
   const [showOthers, setShowOthers] = usePref(`cuesheet.scriptOthers.${prefKey}`, false, isBool);
+  // PDF page view (default when the version's original is a PDF) or the extracted text.
+  const [viewMode, setViewMode] = usePref<ScriptViewMode>(
+    `cuesheet.scriptView.${prefKey}`,
+    "pdf",
+    isViewMode,
+  );
+  const [zoom, setZoom] = usePref<Zoom>(`cuesheet.scriptZoom.${prefKey}`, "fit", isZoom);
 
   // --- import / report ---
   const [importOpen, setImportOpen] = useState(false);
@@ -288,24 +299,32 @@ export function ScriptPage() {
         await apply(b.cueOps, b.anchorOps, "attach the cue");
         focusCue(cueId);
       },
-      move: async (anchorId, block) => {
+      move: async (anchorId, block, lineOffset = 0) => {
         const row = anchorsRef.current.find((a) => a.id === anchorId);
-        if (!row || !text || row.block === block) return;
+        if (!row || !text) return;
         const positional = isPositionalCue(store.getState().tables.cues.get(row.cue_id));
+        // Same place: nothing to do (a positional cue may move between a block's lines).
+        if (row.block === block && (!positional || row.offset === lineOffset)) return;
         if (moveNeedsChoice(row, text, block, positional)) {
-          setMoveAsk({ anchorId, block });
+          setMoveAsk({ anchorId, block, lineOffset });
           return;
         }
-        await apply([], [moveAnchorOp(row, text, block, positional)], "move the marker").catch(
-          () => undefined,
-        );
+        await apply(
+          [],
+          [moveAnchorOp(row, text, block, positional, lineOffset)],
+          "move the marker",
+        ).catch(() => undefined);
       },
     }),
     [store, viewId, apply, ws, focusCue, text],
   );
 
   // A Line marker dropped on a line without its quote: ask (MoveDialog).
-  const [moveAsk, setMoveAsk] = useState<{ anchorId: string; block: number } | null>(null);
+  const [moveAsk, setMoveAsk] = useState<{
+    anchorId: string;
+    block: number;
+    lineOffset: number;
+  } | null>(null);
   const moveRow = moveAsk ? anchors.find((a) => a.id === moveAsk.anchorId) : undefined;
   const finishMove = (batch: { cueOps: Op[]; anchorOps: AnchorOp[] }) => {
     setMoveAsk(null);
@@ -400,6 +419,10 @@ export function ScriptPage() {
     [tables.persons],
   );
   const pending = flagged.length;
+  const original = version?.attachment_id ? tables.attachments.get(version.attachment_id) : null;
+  const pdfUrl =
+    original?.content_type === "application/pdf" ? attachmentUrl(ws.showId, original.id) : null;
+  const showPdf = !!pdfUrl && viewMode === "pdf";
 
   if (versions.length === 0) {
     return (
@@ -447,6 +470,26 @@ export function ScriptPage() {
             Back to current
           </ToolbarButton>
         </>
+      )}
+      {pdfUrl && (
+        <fieldset className={styles.viewToggle} aria-label="Script view">
+          <button
+            type="button"
+            aria-pressed={showPdf}
+            onClick={() => setViewMode("pdf")}
+            title="The original PDF's pages, with cue numbers in the margin"
+          >
+            PDF pages
+          </button>
+          <button
+            type="button"
+            aria-pressed={!showPdf}
+            onClick={() => setViewMode("text")}
+            title="The extracted text, reflowed"
+          >
+            Text
+          </button>
+        </fieldset>
       )}
       <fieldset className={styles.filterBar} aria-label="Marker filter">
         <select
@@ -531,6 +574,7 @@ export function ScriptPage() {
         to={scriptPrintUrl(ws.showId, {
           versionId: isCurrent ? null : viewId,
           filter: filterToParam(filter),
+          layout: showPdf ? "pdf" : null,
         })}
       >
         Print calling script
@@ -546,7 +590,9 @@ export function ScriptPage() {
           line={text.blocks[moveAsk.block]?.text ?? ""}
           onCancel={() => setMoveAsk(null)}
           onPositional={(trigger) =>
-            finishMove(moveAsPositionalBatch(moveRow, text, moveAsk.block, trigger))
+            finishMove(
+              moveAsPositionalBatch(moveRow, text, moveAsk.block, trigger, moveAsk.lineOffset),
+            )
           }
           onRequote={() => finishMove(moveRequoteBatch(moveRow, text, moveAsk.block))}
         />
@@ -739,6 +785,32 @@ export function ScriptPage() {
           }
           onSwitchVersion={() => openResolve()}
         />
+      ) : showPdf && pdfUrl ? (
+        <Suspense fallback={<p className="muted">Opening the PDF…</p>}>
+          <PdfReader
+            showId={ws.showId}
+            pdfUrl={pdfUrl}
+            zoom={zoom}
+            onZoom={setZoom}
+            onUseText={() => setViewMode("text")}
+            text={text}
+            anchors={anchors}
+            cues={tables.cues}
+            assignees={joins.cueAssignees}
+            openNotes={openNotes}
+            fieldOptions={fieldOptions}
+            filter={filter}
+            colorBy={colorBy}
+            showOthers={showOthers}
+            canPlace={canPlace}
+            activeCue={panelCue}
+            focusRequest={focusReq}
+            onFocusMissing={onFocusMissing}
+            onFocusHandled={onFocusHandled}
+            actions={actions}
+            placement={placement}
+          />
+        </Suspense>
       ) : (
         <Reader
           text={text}

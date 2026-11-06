@@ -6,8 +6,9 @@ import type { CueRow } from "../../../shared/tables";
 import { suggestCueNumber } from "../cues/cueNumbers";
 import { textField } from "../shared/ops";
 import type { Anchor, CueAnchorRow, ScriptText } from "./contract";
-import { makeAnchor, makePositionAnchor, SEPARATOR } from "./contract";
+import { makeAnchor, makePositionAnchor, POSITION_QUOTE_MAX, SEPARATOR } from "./contract";
 import { compareAnchors, isPlaced } from "./markers";
+import type { PlaceKind, PlaceRequest } from "./PlacePopover";
 import type { AnchorOp } from "./source";
 
 export interface Neighbours {
@@ -168,11 +169,15 @@ export function moveAnchorOp(
   text: ScriptText,
   block: number,
   positional: boolean,
+  /** The line inside the block (the PDF view drops on lines): a position there. */
+  lineOffset = 0,
 ): AnchorOp {
   const target = text.blocks[block]?.text ?? "";
   const at = !positional && row.quote ? target.indexOf(row.quote) : -1;
   const a =
-    at >= 0 ? makeAnchor(text, block, at, row.quote.length) : makePositionAnchor(text, block);
+    at >= 0
+      ? makeAnchor(text, block, at, row.quote.length)
+      : makeLineAnchor(text, block, lineOffset);
   return {
     op: "update",
     id: row.id,
@@ -228,10 +233,11 @@ export function moveAsPositionalBatch(
   text: ScriptText,
   block: number,
   trigger: string,
+  lineOffset = 0,
 ): Batch {
   return {
     cueOps: [{ op: "update", table: "cues", id: row.cue_id, fields: { trigger_type: trigger } }],
-    anchorOps: [anchorUpdate(row.id, makePositionAnchor(text, block))],
+    anchorOps: [anchorUpdate(row.id, makeLineAnchor(text, block, lineOffset))],
   };
 }
 
@@ -249,6 +255,51 @@ export function moveRequoteBatch(row: CueAnchorRow, text: ScriptText, block: num
       },
     ],
     anchorOps: [anchorUpdate(row.id, a)],
+  };
+}
+
+/**
+ * A positional anchor at a line that starts `offset` characters into `block` (a
+ * paragraph wrapped over several lines on the PDF page): its quote is that line's first
+ * words, cut like `makePositionAnchor`'s. Offset 0 is `makePositionAnchor`.
+ */
+export function makeLineAnchor(text: ScriptText, block: number, offset = 0): Anchor {
+  const b = text.blocks[block];
+  if (!b || offset <= 0 || offset >= b.text.length) return makePositionAnchor(text, block);
+  const rest = b.text.slice(offset);
+  let n = Math.min(rest.length, POSITION_QUOTE_MAX);
+  if (n < rest.length) {
+    const cut = rest.lastIndexOf(" ", n);
+    if (cut > 0) n = cut;
+  }
+  return makeAnchor(text, block, offset, n);
+}
+
+/**
+ * What the place-a-cue popover shows for `anchor` (a selection, or a position at a line):
+ * the quote, or the line's text from the anchor on, the page label, the number
+ * suggestion, and "Use the next line" when only a character's name is selected.
+ */
+export function placeRequestFor(
+  text: ScriptText,
+  kind: PlaceKind,
+  anchor: Anchor,
+  at: { x: number; y: number; lines?: number; suggestion: string },
+): PlaceRequest {
+  const block = text.blocks[anchor.block];
+  const next = text.blocks[anchor.block + 1];
+  const page = block?.page;
+  const lines = at.lines ?? 1;
+  return {
+    kind,
+    x: at.x,
+    y: at.y,
+    quote: kind === "selection" ? anchor.quote : (block?.text.slice(anchor.offset) ?? ""),
+    pageLabel: text.pages.find((p) => p.page === page)?.label ?? String(page ?? ""),
+    suggestion: at.suggestion,
+    lines,
+    // Only a character name selected: offer the line they say instead.
+    nextLine: kind === "selection" && lines === 1 && block?.kind === "character" && !!next,
   };
 }
 

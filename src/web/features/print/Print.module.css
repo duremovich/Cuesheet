@@ -549,3 +549,47 @@
     overflow-x: auto;
   }
 }
+
+/* Calling script on the PDF's pages (?layout=pdf): one sheet per page, page + cue margin. */
+.pdfProgress {
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.pdfSheet {
+  max-width: 900px;
+  margin: 0 auto var(--space-6);
+  box-shadow: var(--paper-shadow);
+}
+
+.pdfSvg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+@media print {
+  .pdfProgress {
+    display: none;
+  }
+
+  .pdfSheet {
+    max-width: none;
+    margin: 0;
+    box-shadow: none;
+    break-after: page;
+    break-inside: avoid;
+  }
+
+  .pdfSheet[data-last] {
+    break-after: auto;
+  }
+
+  /* The page + margin fills the sheet's width; a tall page keeps to the sheet's height. */
+  .pdfSvg {
+    max-height: 248mm;
+    width: auto;
+    max-width: 100%;
+    margin: 0 auto;
+  }
+}

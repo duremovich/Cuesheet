@@ -25,6 +25,7 @@ export {
   anchorPosition,
   makeAnchor,
   makePositionAnchor,
+  POSITION_QUOTE_MAX,
   SEPARATOR,
 } from "../../../shared/script-anchor";
 export type { ScriptRow, ScriptVersionRow, StoredAnchorRow };

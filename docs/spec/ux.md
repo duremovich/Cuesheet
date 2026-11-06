@@ -186,9 +186,21 @@ A layout for taking notes fast during tech and previews, from a laptop at the te
 
 ### Reading
 
-- The script renders as pages of extracted text (not the PDF image), in a readable
-  column, with a wide right margin for cue markers. Page labels follow the printed page
-  numbers. A page/scene navigator sits on the left.
+- A script imported from a **PDF opens on its original pages** (decision 0008): each page
+  exactly as the file draws it, text selectable, with a **cue margin** beside it:
+  - every placed cue's **number** sits in the margin (stacked, never overlapping, lines
+    fanning to their targets); clicking it goes to that cue in the cue list;
+  - a thin **leader line** runs from the number to the trigger. A text trigger (a Line
+    cue) is **underlined** in the cue's color where its words are, over as many lines as
+    the quote runs; a positional trigger (LX, timecode, visual: blocking, a song's start,
+    a rehearsal mark) gets a tick at its line and a dashed line just above it, with a
+    short **label** written along the leader ("VISUAL · PRESHOW", "LX 117 · Steam wash");
+  - zoom (fit width, −/+), the same page navigation and keys as the text view.
+  A "PDF pages | Text" toggle switches to the extracted text, reflowed (the only view for
+  DOCX/TXT/MD scripts).
+- The text view renders pages of extracted text in a readable column, with a wide right
+  margin for cue markers. Page labels follow the printed page numbers. A page/scene
+  navigator sits on the left.
 - A **cue marker** in the margin shows the cue number, a trigger badge and the trigger text:
   - `Q 14.2 · LINE` "Sweet Sue needs a sax and a bass…" — the quoted text is also
     underlined in the body.
@@ -207,7 +219,8 @@ A layout for taking notes fast during tech and previews, from a laptop at the te
   order), description field, trigger type pre-set to Line, trigger text = selection. The
   cue lands in show order between the nearest anchored cues.
 - Click in the margin at a position (no selection) → same popover, trigger type defaults
-  to LX/Timecode/Visual; the anchor is the nearest text.
+  to LX/Timecode/Visual; the anchor is the nearest text (in the PDF view: the line at that
+  height, even inside a paragraph).
 - Drag a marker to move its anchor. Cue.page updates automatically from the anchor.
 
 ### New script version
@@ -245,7 +258,8 @@ Cues with `changed`/`missing` anchors get a warning icon in the grid until resol
   - **Content list** with thumbnail, version, status, cues.
   - **Surface sheet** with image, dimensions in both units, pixel size, PPI.
   - **Calling script**: the script with markers in the margin, optionally only the cues
-    matching a filter.
+    matching a filter; for a PDF script, the original pages with the cue margin (as in
+    the PDF view) or the extracted text.
 - Output is a PDF download or the browser print dialog.
 
 ## Collaboration

@@ -5,6 +5,7 @@
 // pdfjs-dist is loaded lazily, only for PDFs.
 import { DOCX_TYPE } from "../../../../shared/attachments";
 import type { ScriptText } from "../../../../shared/script";
+import { loadPdfjs } from "../pdf/pdfjs";
 import { extractDocx } from "./docx";
 import { ScriptExtractError } from "./errors";
 import { extractPdf, type Pdfjs } from "./pdf";
@@ -30,26 +31,6 @@ export function scriptFileKind(file: { name: string; type: string }): ScriptFile
 
 /** File types the import dialog's `<input accept>` should offer. */
 export const SCRIPT_ACCEPT = `.pdf,.docx,.txt,.md,application/pdf,${DOCX_TYPE},text/plain,text/markdown`;
-
-let pdfjsPromise: Promise<Pdfjs> | null = null;
-
-/**
- * pdfjs-dist with its worker (a separate chunk each; loaded on the first PDF). The
- * *legacy* build: the modern one failed in the M4a review's in-browser run, and the legacy
- * one supports a wider range of browsers. e2e/script-extract.spec.ts runs this path in
- * Chromium.
- */
-function loadPdfjs(): Promise<Pdfjs> {
-  pdfjsPromise ??= (async () => {
-    const [pdfjs, worker] = await Promise.all([
-      import("pdfjs-dist/legacy/build/pdf.mjs"),
-      import("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url"),
-    ]);
-    pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
-    return pdfjs as unknown as Pdfjs;
-  })();
-  return pdfjsPromise;
-}
 
 /**
  * Extract a script file's text. Throws ScriptExtractError with a message for the user
