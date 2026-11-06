@@ -84,6 +84,7 @@ export function emptyData(): ShowData {
       cueAssignees: new Map(),
       noteCues: new Map(),
       noteAssignees: new Map(),
+      noteContent: new Map(),
       sceneSurfaces: new Map(),
       contentSurfaces: new Map(),
       shotTalent: new Map(),

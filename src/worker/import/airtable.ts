@@ -636,11 +636,13 @@ export function buildAirtableImport(
     for (const s of sceneTexts) if (!scene(s)) warnings.add(`Notes: scene "${s}" not found`);
     const realScenes = sceneIds.filter((s): s is string => s !== null);
     if (realScenes.length > 1) warnings.add("Notes: note links several scenes; kept the first");
-    const contents = splitMulti(r.Content)
-      .map((n) => contentId(n, "Notes"))
-      .filter((x): x is string => x !== null);
-    if (contents.length > 1)
-      warnings.add("Notes: note links several content items; kept the first");
+    const contents = [
+      ...new Set(
+        splitMulti(r.Content)
+          .map((n) => contentId(n, "Notes"))
+          .filter((x): x is string => x !== null),
+      ),
+    ];
     const types = splitMulti(r.TYPE)
       .map((t) => option("notes", "type", t))
       .filter((t): t is string => t !== null);
@@ -654,7 +656,6 @@ export function buildAirtableImport(
       fields: withCustom("notes", r, {
         body: clean(r.Note),
         scene_id: realScenes[0] ?? null,
-        content_id: contents[0] ?? null,
         type: [...new Set(types)],
         status: option("notes", "status", status),
         priority: option("notes", "priority", clean(r.Priority)),
@@ -673,6 +674,9 @@ export function buildAirtableImport(
         warnings.add(`Notes: cue number ${number} matches ${ids.length} cues; linked the first`);
       }
       ops.push({ op: "link", table: "notes", id, field: "cues", targetId: ids[0] });
+    }
+    for (const targetId of contents) {
+      ops.push({ op: "link", table: "notes", id, field: "content", targetId });
     }
     for (const name of splitMulti(r["Assigned To"])) {
       const p = person(name);

@@ -18,6 +18,7 @@ export function useNotesFor(
   const store = useShowStoreInstance();
   const notes = useShowStore((s) => s.tables.notes);
   const noteCues = useShowStore((s) => s.joins.noteCues);
+  const noteContent = useShowStore((s) => s.joins.noteContent);
   const cues = useShowStore((s) => s.tables.cues);
   const table = subject?.table;
   const id = subject?.id;
@@ -26,7 +27,7 @@ export function useNotesFor(
   return useMemo(
     () =>
       table && id ? notesFor(store.getState(), { table, id } as NotesSubject, { openOnly }) : [],
-    [store, notes, noteCues, cues, table, id, openOnly],
+    [store, notes, noteCues, noteContent, cues, table, id, openOnly],
   );
 }
 

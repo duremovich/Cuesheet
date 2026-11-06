@@ -22,7 +22,7 @@ export interface NoteView {
   note: NoteRow;
   assignees: PickerItem[];
   cues: PickerItem[];
-  content: PickerItem | null;
+  content: PickerItem[];
   scene: PickerItem | null;
   author: string;
   /** Can the current user edit this note? */
@@ -128,7 +128,7 @@ export function noteColumns(opts: {
     {
       key: "content",
       title: "Content",
-      type: "link",
+      type: "multilink",
       width: 200,
       editable,
       getValue: (v) => v.content,
@@ -188,12 +188,11 @@ export function noteEditOps(view: NoteView, key: string, value: unknown): Op[] {
       return [
         { op: "update", table: "notes", id, fields: { [key]: (value as string | null) ?? null } },
       ];
-    case "content":
-      return [{ op: "update", table: "notes", id, fields: { content_id: ref } }];
     case "scene":
       return [{ op: "update", table: "notes", id, fields: { scene_id: ref } }];
     case "assignees":
-    case "cues": {
+    case "cues":
+    case "content": {
       const current = view[key].map((p) => p.id);
       const next = ((value as { id: string }[] | null) ?? []).map((p) => p.id);
       return linkDiffOps("notes", id, key, current, next);

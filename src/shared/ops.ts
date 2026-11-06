@@ -172,6 +172,7 @@ export type Joins = {
   cueAssignees: Record<string, string[]>;
   noteCues: Record<string, string[]>;
   noteAssignees: Record<string, string[]>;
+  noteContent: Record<string, string[]>;
   sceneSurfaces: Record<string, string[]>;
   contentSurfaces: Record<string, string[]>;
   shotTalent: Record<string, string[]>;

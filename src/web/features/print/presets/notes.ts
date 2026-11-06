@@ -1,6 +1,6 @@
 // Notes print layouts (R21, S3): "Notes by person" and "Notes by cue" for a session.
 // Pure: rows and groups from the show's data, so they're unit-tested (notes.test.ts).
-import type { CueRow, NoteRow, PersonRow, SceneRow } from "../../../../shared/tables";
+import type { ContentRow, CueRow, NoteRow, PersonRow, SceneRow } from "../../../../shared/tables";
 import type { ShowData } from "../../../lib/show-state";
 import { isOpen } from "../../notes/compose";
 
@@ -8,6 +8,8 @@ export interface NotePrintRow {
   note: NoteRow;
   cues: CueRow[];
   assignees: PersonRow[];
+  /** Linked content, in chip order. */
+  content: ContentRow[];
   scene: SceneRow | null;
   /** The note's place in show order: its first cue's index (∞ without a cue). */
   cueIndex: number;
@@ -40,11 +42,15 @@ export function noteRows(data: ShowData, session: string | null): NotePrintRow[]
     const assignees = (data.joins.noteAssignees.get(note.id) ?? []).flatMap(
       (id) => data.tables.persons.get(id) ?? [],
     );
+    const content = (data.joins.noteContent.get(note.id) ?? []).flatMap(
+      (id) => data.tables.content.get(id) ?? [],
+    );
     const sceneId = note.scene_id ?? cues[0]?.scene_id ?? null;
     out.push({
       note,
       cues,
       assignees,
+      content,
       scene: sceneId ? (data.tables.scenes.get(sceneId) ?? null) : null,
       cueIndex: cues[0] ? (cueIndex.get(cues[0].id) ?? Number.POSITIVE_INFINITY) : Infinity,
     });
@@ -130,6 +136,11 @@ export function typeText(note: NoteRow): string {
 
 export function cueNumbers(r: NotePrintRow): string {
   return r.cues.map((c) => c.number ?? "?").join(", ");
+}
+
+/** "101-001-OVERTURE, 101-002-VAMP" */
+export function contentNames(r: NotePrintRow): string {
+  return r.content.map((c) => c.name || "(unnamed content)").join(", ");
 }
 
 /**

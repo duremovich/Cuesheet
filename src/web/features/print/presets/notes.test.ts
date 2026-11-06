@@ -3,6 +3,7 @@ import type { CueRow, NoteRow, PersonRow } from "../../../../shared/tables";
 import { emptyData, type ShowData } from "../../../lib/show-state";
 import { cssString, pageRule } from "../PrintShell";
 import {
+  contentNames,
   groupByCue,
   groupByPerson,
   mailtoHref,
@@ -62,7 +63,6 @@ function note(id: string, body: string, created_at: number, extra: Partial<NoteR
     type: ["Content"],
     priority: null,
     status: "Open",
-    content_id: null,
     scene_id: null,
     session: "Tech 1",
     completed_by: null,
@@ -105,6 +105,18 @@ describe("notes print presets", () => {
     expect(noteRows(d, null)).toHaveLength(5);
     // A note's cues come in show order.
     expect(noteRows(d, "Tech 2")[0]?.cues.map((c) => c.id)).toEqual(["c1", "c2"]);
+  });
+
+  it("lists a note's content in link order, skipping deleted content", () => {
+    const d = show();
+    d.tables.content.set("k1", { id: "k1", name: "101-001-OVERTURE" } as never);
+    d.tables.content.set("k2", { id: "k2", name: "" } as never);
+    d.joins.noteContent.set("n2", ["k2", "gone", "k1"]);
+    const rows = noteRows(d, null);
+    const n2 = rows.find((r) => r.note.id === "n2");
+    expect(n2?.content.map((c) => c.id)).toEqual(["k2", "k1"]);
+    expect(n2 && contentNames(n2)).toBe("(unnamed content), 101-001-OVERTURE");
+    expect(rows.find((r) => r.note.id === "n1")?.content).toEqual([]);
   });
 
   it("by person: people by name, open first then cue order, unassigned last", () => {

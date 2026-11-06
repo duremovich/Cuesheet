@@ -298,6 +298,7 @@ describe("ops: links and deletes", () => {
       cueAssignees: {},
       noteCues: {},
       noteAssignees: {},
+      noteContent: {},
       sceneSurfaces: {},
       contentSurfaces: {},
       shotTalent: {},

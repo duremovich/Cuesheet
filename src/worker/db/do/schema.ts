@@ -119,6 +119,12 @@ export const notes = sqliteTable(
     type: text("type").notNull().default("[]"),
     priority: text("priority"),
     status: text("status"),
+    /**
+     * Retired (migration 0009): a note's content is the `note_content` link now. Always
+     * null; kept because SQLite can't drop a foreign-key column without rebuilding `notes`
+     * (which would cascade through every table referencing it). Not in FIELDS, not on the
+     * wire (`RETIRED_COLUMNS` in tables.ts).
+     */
     content_id: text("content_id").references(() => content.id, { onDelete: "set null" }),
     scene_id: text("scene_id").references(() => scenes.id, { onDelete: "set null" }),
     session: text("session"),
@@ -220,6 +226,23 @@ export const note_assignees = sqliteTable(
   (t) => [
     primaryKey({ columns: [t.note_id, t.person_id] }),
     index("note_assignees_person_idx").on(t.person_id),
+  ],
+);
+
+export const note_content = sqliteTable(
+  "note_content",
+  {
+    note_id: text("note_id")
+      .notNull()
+      .references(() => notes.id, { onDelete: "cascade" }),
+    content_id: text("content_id")
+      .notNull()
+      .references(() => content.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.note_id, t.content_id] }),
+    index("note_content_content_idx").on(t.content_id),
   ],
 );
 

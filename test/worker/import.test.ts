@@ -80,6 +80,8 @@ describe("Airtable import", () => {
         expect.stringMatching(/cues have no scene/),
       ]),
     );
+    // Notes link every content item they name now (notes.content is many-to-many).
+    expect(body.warnings.some((w) => /several content items/.test(w))).toBe(false);
 
     // The import is too big to broadcast as ops: sockets get a version bump instead.
     const bump = await sock.next(isType("version"));
@@ -153,11 +155,24 @@ describe("Airtable import", () => {
     const moon = noteRows.find((n) => n.body?.startsWith("scale moon up"));
     const cue400 = cues.find((c) => c.number === "4.00");
     expect(snap.joins.noteCues[moon?.id ?? ""]).toEqual([cue400?.id]);
+    expect(snap.joins.noteContent[moon?.id ?? ""]).toEqual([
+      items.find((c) => c.name === "101-001-OVERTURETHIRSTYFOR")?.id,
+    ]);
+    expect(moon).not.toHaveProperty("content_id");
+    // A note naming two content items links both, in the CSV's order.
+    const both = Object.values(snap.joins.noteContent).filter((ids) => ids.length > 1);
+    expect(both).toHaveLength(6);
+    const streetNote = Object.entries(snap.joins.noteContent).find(([, ids]) =>
+      ids.includes(items.find((c) => c.name === "102-002-STREETEXTLATER")?.id ?? "-"),
+    );
+    expect(streetNote?.[1].map((id) => items.find((c) => c.id === id)?.name)).toEqual([
+      "102-001-STREETEXT",
+      "102-002-STREETEXTLATER",
+    ]);
     expect(moon).toMatchObject({
       status: "Done",
       type: ["Content"],
       scene_id: scenes[2]?.id,
-      content_id: items.find((c) => c.name === "101-001-OVERTURETHIRSTYFOR")?.id,
       created_at: Date.UTC(2026, 8, 10, 17, 20),
       custom: { created_by_name: "Casey Brennan" },
     });

@@ -25,7 +25,7 @@ describe("notes", () => {
       note: { id: "n1" } as NoteRow,
       assignees: [{ id: "p1", label: "Casey" }],
       cues: [],
-      content: null,
+      content: [],
       scene: null,
       author: "",
       editable: true,
@@ -50,6 +50,28 @@ describe("notes", () => {
     expect(noteEditOps(view, "cues", [{ id: "c1", label: "1" }])).toEqual([
       { op: "link", table: "notes", id: "n1", field: "cues", targetId: "c1", position: 0 },
     ]);
+    // Content is a multi-link like cues: minimal link/unlink with positions.
+    expect(
+      noteEditOps({ ...view, content: [{ id: "k1", label: "A" }] }, "content", [
+        { id: "k2", label: "B" },
+        { id: "k1", label: "A" },
+      ]),
+    ).toEqual([
+      { op: "link", table: "notes", id: "n1", field: "content", targetId: "k2", position: 0 },
+    ]);
+    expect(
+      noteEditOps(
+        {
+          ...view,
+          content: [
+            { id: "k1", label: "A" },
+            { id: "k2", label: "B" },
+          ],
+        },
+        "content",
+        [{ id: "k2", label: "B" }],
+      ),
+    ).toEqual([{ op: "unlink", table: "notes", id: "n1", field: "content", targetId: "k1" }]);
     expect(noteEditOps(view, "assignees", [])).toEqual([
       { op: "unlink", table: "notes", id: "n1", field: "assignees", targetId: "p1" },
     ]);

@@ -40,13 +40,7 @@ export function ContentGrid() {
   const cache = useRef(new ViewCache<ContentView>()).current;
 
   const cuesByContent = useMemo(() => reverseJoin(joins.cueContent), [joins.cueContent]);
-  const notesByContent = useMemo(() => {
-    const m = new Map<string, string[]>();
-    for (const n of tables.notes.values()) {
-      if (n.content_id) m.set(n.content_id, [...(m.get(n.content_id) ?? []), n.id]);
-    }
-    return m;
-  }, [tables.notes]);
+  const notesByContent = useMemo(() => reverseJoin(joins.noteContent), [joins.noteContent]);
 
   const views = useMemo(() => {
     const versions = currentVersions(tables.content_versions);

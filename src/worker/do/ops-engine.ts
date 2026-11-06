@@ -50,6 +50,8 @@ import {
   LINKS,
   type LinkSpec,
   linkSpec,
+  RETIRED_COLUMNS,
+  retiredColumn,
   TABLE_NAMES,
   type TableName,
   type ViewTable,
@@ -145,6 +147,7 @@ export function loadFieldOptions(sql: SqlStorage): FieldOptions {
 /** DB row → wire row (JSON columns parsed, booleans as booleans). */
 export function decodeRow(table: TableName, row: DbRow): WireRow {
   const out: WireRow = { ...row };
+  for (const col of Object.keys(RETIRED_COLUMNS[table] ?? {})) delete out[col];
   out.custom = parseJson(row.custom, {});
   for (const [name, spec] of Object.entries(FIELDS[table]) as [string, FieldSpec][]) {
     if (spec.type === "bool") out[name] = row[name] === 1;
@@ -238,6 +241,30 @@ export class Batch {
     throw new OpError(message, this.opIndex, status);
   }
 
+  private unknownField(table: TableName, name: string): never {
+    const replacement = retiredColumn(table, name);
+    if (replacement) {
+      this.fail(`${table}.${name} was replaced by ${replacement}; reload the page`);
+    }
+    this.fail(`unknown field ${table}.${name}`);
+  }
+
+  /**
+   * A note create from a client older than migration 0009 (a tab left open across the
+   * update) still sends `content_id`: create the note without it, then link that content
+   * (`notes.content`), so note-taking in a stale tab keeps working. Updates of `content_id`
+   * are refused instead (`unknownField`): an old tab can't see the note's other content,
+   * so there's no safe translation. Remove once no client predates 0009.
+   */
+  private createLegacyNote(op: Extract<AnyOp, { op: "create" }>) {
+    const { content_id: contentId, ...fields } = op.fields as Record<string, unknown>;
+    if (contentId !== null && typeof contentId !== "string") {
+      this.fail("notes.content_id must be a content id or null");
+    }
+    this.create(op.table, op.id, fields as typeof op.fields, op);
+    if (contentId !== null) this.link("notes", op.id, "content", contentId);
+  }
+
   // ---- shape ----
 
   private parse(raw: unknown): AnyOp {
@@ -303,6 +330,10 @@ export class Batch {
         this.setMeta(op.fields as Record<string, unknown>);
         break;
       case "create":
+        if (op.table === "notes" && Object.hasOwn(op.fields, "content_id")) {
+          this.createLegacyNote(op);
+          break;
+        }
         this.create(op.table, op.id, op.fields, op);
         break;
       case "update":
@@ -686,7 +717,7 @@ export class Batch {
         row.created_at = value;
       } else {
         const spec = fieldSpec(table, name);
-        if (!spec) this.fail(`unknown field ${table}.${name}`);
+        if (!spec) this.unknownField(table, name);
         row[name] = this.validate(table, name, spec, value, this.allowAuto(table));
       }
     }
@@ -1084,7 +1115,7 @@ export class Batch {
         changes.custom = merged;
       } else {
         const spec = fieldSpec(table, name);
-        if (!spec) this.fail(`unknown field ${table}.${name}`);
+        if (!spec) this.unknownField(table, name);
         if (spec.immutable && !sameValue(decodeRow(table, before)[name], value)) {
           this.fail(`${table}.${name} can't be changed`);
         }

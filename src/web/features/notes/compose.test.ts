@@ -168,9 +168,12 @@ function data(): ShowData {
   d.joins.cueContent.set("c1", ["k1"]);
   d.joins.cueContent.set("c2", ["k1", "k2"]);
   const note = (id: string, extra: Partial<NoteRow>) =>
-    ({ id, status: "Open", created_at: 1, scene_id: null, content_id: null, ...extra }) as NoteRow;
+    ({ id, status: "Open", created_at: 1, scene_id: null, ...extra }) as NoteRow;
+  d.tables.content.set("k2", { id: "k2", scene_id: "sc1" } as never);
   d.tables.notes.set("n1", note("n1", { created_at: 1 }));
-  d.tables.notes.set("n2", note("n2", { created_at: 2, content_id: "k1" }));
+  d.tables.notes.set("n2", note("n2", { created_at: 2 }));
+  d.joins.noteContent.set("n2", ["k1", "k2"]);
+  d.joins.noteContent.set("n4", ["k2"]);
   d.tables.notes.set("n3", note("n3", { created_at: 3, status: "Done" }));
   d.tables.notes.set("n4", note("n4", { created_at: 4, scene_id: "sc1" }));
   d.joins.noteCues.set("n1", ["c1"]);
@@ -184,6 +187,8 @@ describe("notes for a record and links for a new one", () => {
     const ids = (ns: { id: string }[]) => ns.map((n) => n.id);
     expect(ids(notesFor(d, { table: "cues", id: "c1" }))).toEqual(["n1", "n3"]);
     expect(ids(notesFor(d, { table: "content", id: "k1" }))).toEqual(["n2"]);
+    // A note linked to several content items is in each one's notes.
+    expect(ids(notesFor(d, { table: "content", id: "k2" }))).toEqual(["n4", "n2"]);
     expect(ids(notesFor(d, { table: "scenes", id: "sc1" }))).toEqual(["n4", "n1", "n3"]);
     expect(ids(notesFor(d, { table: "scenes", id: "sc1" }, { openOnly: true }))).toEqual([
       "n4",
@@ -193,31 +198,31 @@ describe("notes for a record and links for a new one", () => {
 
   it("links a cue's content only when it has exactly one", () => {
     const d = data();
-    expect(cueLinks(d, "c1")).toEqual({ cueIds: ["c1"], contentId: "k1", sceneId: "sc1" });
-    expect(cueLinks(d, "c2")).toEqual({ cueIds: ["c2"], contentId: null, sceneId: "sc1" });
+    expect(cueLinks(d, "c1")).toEqual({ cueIds: ["c1"], contentIds: ["k1"], sceneId: "sc1" });
+    expect(cueLinks(d, "c2")).toEqual({ cueIds: ["c2"], contentIds: [], sceneId: "sc1" });
     expect(subjectLinks(d, { table: "content", id: "k1" })).toEqual({
       cueIds: [],
-      contentId: "k1",
+      contentIds: ["k1"],
       sceneId: "sc1",
     });
     const base = subjectLinks(d, { table: "cues", id: "c2" });
     expect(resolveLinks(d, { kind: "general" }, base)).toEqual({
       cueIds: [],
-      contentId: null,
+      contentIds: [],
       sceneId: null,
     });
     expect(resolveLinks(d, { kind: "cue", cueId: "c1", number: "1" }, base).cueIds).toEqual(["c1"]);
     expect(resolveLinks(d, { kind: "current" }, base)).toBe(base);
   });
 
-  it("builds one batch: create, then cue and assignee links", () => {
+  it("builds one batch: create, then cue, content and assignee links", () => {
     const ops = noteCreateOps(
       {
         body: "b",
         types: ["Content"],
         priority: "3",
         session: "Tech 2",
-        links: { cueIds: ["c1"], contentId: "k1", sceneId: "sc1" },
+        links: { cueIds: ["c1"], contentIds: ["k1", "k2", "k1"], sceneId: "sc1" },
         assigneeIds: ["p1", "p1", "p2"],
       },
       "n9",
@@ -233,11 +238,12 @@ describe("notes for a record and links for a new one", () => {
           priority: "3",
           status: "Open",
           session: "Tech 2",
-          content_id: "k1",
           scene_id: "sc1",
         },
       },
       { op: "link", table: "notes", id: "n9", field: "cues", targetId: "c1", position: 0 },
+      { op: "link", table: "notes", id: "n9", field: "content", targetId: "k1", position: 0 },
+      { op: "link", table: "notes", id: "n9", field: "content", targetId: "k2", position: 1 },
       { op: "link", table: "notes", id: "n9", field: "assignees", targetId: "p1", position: 0 },
       { op: "link", table: "notes", id: "n9", field: "assignees", targetId: "p2", position: 1 },
     ]);
@@ -251,15 +257,13 @@ describe("notes for a record and links for a new one", () => {
       priority: "2",
       status: "Done",
       session: "Tech 1",
-      content_id: "k1",
       scene_id: "gone",
       custom: {},
     } as unknown as NoteRow;
     const ops = noteRestoreOps(
       note,
-      ["c1", "c2"],
-      ["p1"],
-      (_t, id) => id !== "gone" && id !== "c1",
+      { cueIds: ["c1", "c2"], assigneeIds: ["p1"], contentIds: ["k1", "k-gone", "k2"] },
+      (_t, id) => id !== "gone" && id !== "c1" && id !== "k-gone",
     );
     expect(ops).toEqual([
       {
@@ -272,11 +276,12 @@ describe("notes for a record and links for a new one", () => {
           priority: "2",
           status: "Done",
           session: "Tech 1",
-          content_id: "k1",
           scene_id: null,
         },
       },
       { op: "link", table: "notes", id: "n7", field: "cues", targetId: "c2", position: 0 },
+      { op: "link", table: "notes", id: "n7", field: "content", targetId: "k1", position: 0 },
+      { op: "link", table: "notes", id: "n7", field: "content", targetId: "k2", position: 1 },
       { op: "link", table: "notes", id: "n7", field: "assignees", targetId: "p1", position: 0 },
     ]);
   });

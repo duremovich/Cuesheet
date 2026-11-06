@@ -103,13 +103,14 @@ export function RowPanel<Row>({
   );
   const notes = useShowStore((s) => s.tables.notes);
   const noteCues = useShowStore((s) => s.joins.noteCues);
+  const noteContent = useShowStore((s) => s.joins.noteContent);
   const cues = useShowStore((s) => s.tables.cues);
   const store = useShowStoreInstance();
   // Open notes, by the same definition as the Notes tab (a scene: its notes and its cues').
   // biome-ignore lint/correctness/useExhaustiveDependencies: notes, links and cues are the inputs
   const noteCount = useMemo(
     () => (notesSubject ? notesFor(store.getState(), notesSubject, { openOnly: true }).length : 0),
-    [store, notesSubject?.table, notesSubject?.id, notes, noteCues, cues],
+    [store, notesSubject?.table, notesSubject?.id, notes, noteCues, noteContent, cues],
   );
 
   const labels = useMemo<FieldLabels>(

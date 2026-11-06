@@ -16,6 +16,7 @@ import { useWorkspace } from "../../show/workspace";
 import styles from "../Print.module.css";
 import { PrintShell, printDate, useOrientation } from "../PrintShell";
 import {
+  contentNames,
   cueNumbers,
   groupByCue,
   groupByPerson,
@@ -94,6 +95,10 @@ export function NotesPrint({ preset }: { preset: NotesPreset }) {
   const columns: { key: string; title: string; cell: (r: NotePrintRow) => string }[] = [
     ...(preset === "by-person" ? [{ key: "cue", title: "Cue", cell: cueNumbers }] : []),
     { key: "body", title: "Note", cell: (r) => r.note.body ?? "(photo)" },
+    // Only when some note in the print has content, so content-free shows print as before.
+    ...(rows.some((r) => r.content.length > 0)
+      ? [{ key: "content", title: "Content", cell: contentNames }]
+      : []),
     ...(preset === "by-cue"
       ? [{ key: "who", title: "Assigned", cell: (r: NotePrintRow) => names(r) }]
       : []),

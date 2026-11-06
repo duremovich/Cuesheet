@@ -21,6 +21,9 @@ export interface HistoryLine {
 /** Storage field → the panel's label for it (column titles), with a readable fallback. */
 export type FieldLabels = Partial<Record<string, string>>;
 
+/** Retired ref fields still in old history entries (`notes.content_id` before migration 0009). */
+const LEGACY_REFS: Partial<Record<string, TableName>> = { "notes.content_id": "content" };
+
 /** Column keys that differ from the storage field they edit. */
 const COLUMN_KEY: Record<string, string> = {
   scene_id: "scene",
@@ -116,9 +119,8 @@ export function formatStored(
   const link = linkSpec(table, field);
   if (link && typeof value === "string") return recordLabel(data, link.to, value);
   const spec = field.startsWith("custom.") ? undefined : fieldSpec(table, field);
-  if (spec?.type === "ref" && spec.ref && typeof value === "string") {
-    return recordLabel(data, spec.ref, value);
-  }
+  const ref = spec?.type === "ref" ? spec.ref : LEGACY_REFS[`${table}.${field}`];
+  if (ref && typeof value === "string") return recordLabel(data, ref, value);
   if (spec?.type === "measurement" && typeof value === "number") return formatLength(value, unit);
   if (spec?.type === "pixel_size" && isPixelSize(value)) return formatPixelSize(value);
   if (field === "completed_at" && typeof value === "number") {

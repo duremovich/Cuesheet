@@ -145,9 +145,13 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   targetId, position?}`, and `meta {fields: {default_unit}}` for show-level settings kept in
   the DO's `meta` row (editors; resolves to itself, logged in `changes` as table `meta`,
   record `show`; in the snapshot as `meta`; typed `AnyOp`/`AnyResolvedOp`, while `Op`/
-  `ResolvedOp` stay row ops). Send them with `store.mutate(ops)` on the client (or
-  `POST /api/shows/:id/mutate {clientId, ops}`, max 1000 ops); never write show tables any
-  other way. The DO (`ops-engine.ts`) applies a batch in one transaction, validates field
+  `ResolvedOp` stay row ops). Link `field`s are the `LINKS` entries in `shared/tables.ts`:
+  `cues.content`, `cues.assignees`, `notes.cues`, `notes.content`, `notes.assignees`,
+  `scenes.surfaces`, `content.surfaces`, `shots.talent`, `shots.content` (e.g. a note's
+  content: `{op:"link", table:"notes", id, field:"content", targetId, position?}`; linking
+  twice or unlinking what isn't linked is a no-op). Send them with `store.mutate(ops)` on
+  the client (or `POST /api/shows/:id/mutate {clientId, ops}`, max 1000 ops; scripts use
+  this too); never write show tables any other way. The DO (`ops-engine.ts`) applies a batch in one transaction, validates field
   types / select options (`field_options`) / referenced ids / role, computes `order_key`
   from neighbours (`after: null` = start, neither = end), fills timestamps and `created_by`,
   expands deletes into explicit cascade ops (links removed; references to a deleted scene,
@@ -175,7 +179,7 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   State: `version`, `status`, `tables` (Map by id per table, including `views`; read a
   table's saved views with `useViewsFor(table, userId)`), `order` (ids in show order for
   scenes/cues/content), `joins` (`cueContent`, `cueAssignees`, `noteCues`,
-  `noteAssignees`: from-id → target ids), `fieldOptions` (`"cues.status"` → options).
+  `noteAssignees`, `noteContent`, ...: from-id → target ids, one per `LINKS` entry), `fieldOptions` (`"cues.status"` → options).
   `mutate` is optimistic (applies at once, including order keys and delete cascades, via
   `show-state.ts`), sends one batch at a time, and on error rolls back and rethrows (an
   `ApiError` with `opIndex`). Untouched rows keep object identity across updates,
@@ -193,7 +197,29 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   in a custom DO migration (`drizzle-kit generate --config drizzle.do.config.ts --custom`),
   like `0002_seed_field_options.sql`. (4) If Airtable has the column, map it in
   `src/worker/import/airtable.ts`. (5) Extend `test/worker/ops.test.ts` (and the import
-  test). New *link* fields also need a join table and an entry in `LINKS`.
+  test). New *link* fields also need a join table and an entry in `LINKS` (the engine,
+  snapshot `joins`, client store, cascades, history, share filter and the all-tables CSV
+  export pick it up from there; add it to `Joins` in `shared/ops.ts` and `emptyData`).
+- **Turning a field into a link (retiring a column).** Done once: `notes.content_id` →
+  the many-to-many `notes.content` (`note_content`, DO migration `0009_note_content`).
+  The migration creates the join, copies each old value in (position 0) and nulls the
+  column; like `0008` it isn't logged in `changes` and doesn't bump the version (clients
+  get it with the snapshot they fetch on reconnect). The column itself stays in
+  `schema.ts` with a "Retired" comment: SQLite can't `DROP COLUMN` a foreign-key column,
+  and rebuilding `notes` would cascade-delete through every table referencing it. The
+  field leaves `FIELDS` and the row type and goes into `RETIRED_COLUMNS`
+  (`shared/tables.ts`): `decodeRow` strips it from the wire, and ops naming it get
+  `400 "<table>.<col> was replaced by …; reload the page"`. **Old browser tabs** (code
+  from before the change, still open across an update) are handled so they can't corrupt
+  data: their note *creates* still send `content_id` and are translated in the engine
+  (`createLegacyNote`: create without it, then `link` that content), so note-taking keeps
+  working; their *updates* of it are refused (they can't see the note's other content, so
+  there's no safe translation; the grid rolls the edit back and toasts the reload hint);
+  link ops for a field they don't know are ignored by their store (`linkSpec` miss).
+  History entries from before keep reading as content names (`LEGACY_REFS` in
+  `features/shared/history.ts`). Worker tests that re-run a migration rewind to it with
+  `rewindMigrations(sql, "<tag>")` (`test/worker/helpers.ts`; add an `UNDO_MIGRATION`
+  entry for any migration that creates or alters tables).
 - **Roles** (`memberships.role`): `owner` (the creator; manages members), `editor`
   (everything), `commenter` (read all; create notes, and update/delete/link only notes
   they created), `viewer` (read only). **Exception:** every member, viewers and
@@ -240,7 +266,7 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   imported rows; multi-value cells are CSV-parsed (Airtable quotes values with commas).
   Assignee/creator names missing from Personnel get a new person (name only), reused on
   later matches. Created people, unresolved links, duplicate cue numbers (first match
-  wins), dropped extra scene/content links on notes, and scene inference are reported as
+  wins), dropped extra scene links on notes (a note links every content item it names), and scene inference are reported as
   `warnings`. The Cue List export has no Scene column: a cue's scene comes from its linked
   content's scene when all agree (content's scene: its Scene column, else its `SSS-` name
   prefix); a cue still without one takes the scene when the nearest scene-bearing cues
@@ -411,7 +437,9 @@ views" below).
   now aren't undoable yet.
 - **Notes panel** (`features/notes/`, R6): `NotesPanel({subject})` = `NoteList` (open
   first, newest first; `notesFor` in `compose.ts`: a cue's linked notes, content's
-  `content_id` notes, a scene's `scene_id` notes plus notes on its cues) + `NoteCompose`.
+  linked notes (`notes.content`, many-to-many like `notes.cues`: the Notes grid's Content
+  column, the note's Fields tab and the Content grid's Notes count all read
+  `joins.noteContent`), a scene's `scene_id` notes plus notes on its cues) + `NoteCompose`.
   Cards: a status chip button (click cycles Open → In progress → Done via `nextStatus`;
   the server sets `completed_by/at`), type chips, `P<n>`, assignee initials, session,
   author · time; ✎ or double-click edits the body in place (Enter saves, Escape cancels;
@@ -443,8 +471,9 @@ views" below).
   the quick-add camera); note cards show their photos as a thumbnail strip. Bodies are capped at 100,000 characters (a counter appears near the
   limit). `requireTarget` (quick-add) only saves an unattached note when it says where it
   goes (`*` or a cue prefix). A new note is one batch (`noteCreateOps`: create with status Open and the show's current session, then
-  `link` ops for cues and assignees); links come from `subjectLinks` / `resolveLinks` (a
-  cue brings its content when it has exactly one, and its scene).
+  `link` ops for cues, content and assignees); links come from `subjectLinks` / `resolveLinks` (a
+  cue brings its content when it has exactly one, and its scene). Undo of a delete
+  (`noteRestoreOps(note, noteLinkIds(state, id))`) relinks all three in their old order.
 - **Session model**: `shows.current_session` in D1 (show-level and shared, like the
   name). `PATCH /api/shows/:id {name?, current_session?}` (name: owner; session: editors
   and owner; `""`/null clears; ≤ 100 chars) writes D1, then `ShowDO.notifyShow({name,

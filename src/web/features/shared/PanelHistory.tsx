@@ -47,6 +47,7 @@ export function PanelHistory({
         ? s.joins.noteAssignees.get(id)
         : undefined,
   );
+  const links3 = useShowStore((s) => (table === "notes" ? s.joins.noteContent.get(id) : undefined));
   const [refreshes, setRefreshes] = useState(0);
   const [limit, setLimit] = useState(PAGE);
   const [result, setResult] = useState<{ key: string; changes: HistoryEntry[] } | null>(null);
@@ -79,7 +80,7 @@ export function PanelHistory({
       live = false;
       clearTimeout(t);
     };
-  }, [showId, table, id, limit, row, links1, links2, refreshes, key]);
+  }, [showId, table, id, limit, row, links1, links2, links3, refreshes, key]);
 
   const changes = result?.key === key ? result.changes : null;
   const lines = useMemo(() => {

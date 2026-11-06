@@ -150,7 +150,7 @@ export type NotesSubject =
   | { table: "scenes"; id: string };
 
 /**
- * Notes about a record: a cue's linked notes; content's notes (`content_id`); a scene's
+ * Notes about a record: a cue's linked notes; content's linked notes; a scene's
  * notes (its `scene_id`, or linked to one of its cues). `openOnly` drops Done notes.
  */
 export function notesFor(
@@ -164,8 +164,9 @@ export function notesFor(
     const cues = data.joins.noteCues.get(n.id) ?? [];
     let hit = false;
     if (subject.table === "cues") hit = cues.includes(subject.id);
-    else if (subject.table === "content") hit = n.content_id === subject.id;
-    else {
+    else if (subject.table === "content") {
+      hit = (data.joins.noteContent.get(n.id) ?? []).includes(subject.id);
+    } else {
       hit =
         n.scene_id === subject.id ||
         cues.some((c) => data.tables.cues.get(c)?.scene_id === subject.id);
@@ -190,11 +191,11 @@ export function openNoteCounts(data: ShowData): Map<string, number> {
 
 export interface NoteLinks {
   cueIds: string[];
-  contentId: string | null;
+  contentIds: string[];
   sceneId: string | null;
 }
 
-export const NO_LINKS: NoteLinks = { cueIds: [], contentId: null, sceneId: null };
+export const NO_LINKS: NoteLinks = { cueIds: [], contentIds: [], sceneId: null };
 
 /** A cue's links for a note: the cue, its content when it has exactly one, its scene. */
 export function cueLinks(data: ShowData, cueId: string): NoteLinks {
@@ -202,7 +203,7 @@ export function cueLinks(data: ShowData, cueId: string): NoteLinks {
   const content = data.joins.cueContent.get(cueId) ?? [];
   return {
     cueIds: cue ? [cueId] : [],
-    contentId: content.length === 1 ? (content[0] as string) : null,
+    contentIds: content.length === 1 ? [content[0] as string] : [],
     sceneId: cue?.scene_id ?? null,
   };
 }
@@ -213,11 +214,11 @@ export function subjectLinks(data: ShowData, subject: NotesSubject | null): Note
   if (subject.table === "cues") return cueLinks(data, subject.id);
   if (subject.table === "content") {
     const c = data.tables.content.get(subject.id);
-    return { cueIds: [], contentId: c ? c.id : null, sceneId: c?.scene_id ?? null };
+    return { cueIds: [], contentIds: c ? [c.id] : [], sceneId: c?.scene_id ?? null };
   }
   return {
     cueIds: [],
-    contentId: null,
+    contentIds: [],
     sceneId: data.tables.scenes.has(subject.id) ? subject.id : null,
   };
 }
@@ -239,7 +240,7 @@ export interface NewNote {
   assigneeIds: readonly string[];
 }
 
-/** One batch: the note (status Open), then its cue and assignee links. */
+/** One batch: the note (status Open), then its cue, content and assignee links. */
 export function noteCreateOps(note: NewNote, id: string = newId()): Op[] {
   const ops: Op[] = [
     {
@@ -252,7 +253,6 @@ export function noteCreateOps(note: NewNote, id: string = newId()): Op[] {
         priority: note.priority,
         status: "Open",
         session: note.session,
-        content_id: note.links.contentId,
         scene_id: note.links.sceneId,
       },
     },
@@ -260,21 +260,40 @@ export function noteCreateOps(note: NewNote, id: string = newId()): Op[] {
   note.links.cueIds.forEach((targetId, position) => {
     ops.push({ op: "link", table: "notes", id, field: "cues", targetId, position });
   });
+  [...new Set(note.links.contentIds)].forEach((targetId, position) => {
+    ops.push({ op: "link", table: "notes", id, field: "content", targetId, position });
+  });
   [...new Set(note.assigneeIds)].forEach((targetId, position) => {
     ops.push({ op: "link", table: "notes", id, field: "assignees", targetId, position });
   });
   return ops;
 }
 
+/** A note's links, as `noteRestoreOps` puts them back. */
+export interface NoteLinkIds {
+  cueIds: readonly string[];
+  assigneeIds: readonly string[];
+  contentIds: readonly string[];
+}
+
+/** The note's link lists from the store's joins. */
+export function noteLinkIds(data: Pick<ShowData, "joins">, noteId: string): NoteLinkIds {
+  return {
+    cueIds: data.joins.noteCues.get(noteId) ?? [],
+    assigneeIds: data.joins.noteAssignees.get(noteId) ?? [],
+    contentIds: data.joins.noteContent.get(noteId) ?? [],
+  };
+}
+
 /**
- * Undo of a note delete: recreate it with the same id, its writable fields and its cue and
- * assignee links (in their old order), in one batch. Links to records deleted meanwhile
- * are dropped. `created_at`/`created_by` become the restorer's (the server sets them).
+ * Undo of a note delete: recreate it with the same id, its writable fields and its cue,
+ * content and assignee links (in their old order), in one batch. Links to records deleted
+ * meanwhile are dropped. `created_at`/`created_by` become the restorer's (the server sets
+ * them).
  */
 export function noteRestoreOps(
   note: NoteRow,
-  cueIds: readonly string[],
-  assigneeIds: readonly string[],
+  links: NoteLinkIds,
   exists: (table: "cues" | "persons" | "content" | "scenes", id: string) => boolean = () => true,
 ): Op[] {
   const ops: Op[] = [
@@ -288,18 +307,22 @@ export function noteRestoreOps(
         priority: note.priority,
         status: note.status,
         session: note.session,
-        content_id: note.content_id && exists("content", note.content_id) ? note.content_id : null,
         scene_id: note.scene_id && exists("scenes", note.scene_id) ? note.scene_id : null,
         ...(Object.keys(note.custom ?? {}).length ? { custom: note.custom } : {}),
       },
     },
   ];
-  cueIds
+  links.cueIds
     .filter((c) => exists("cues", c))
     .forEach((targetId, position) => {
       ops.push({ op: "link", table: "notes", id: note.id, field: "cues", targetId, position });
     });
-  assigneeIds
+  links.contentIds
+    .filter((c) => exists("content", c))
+    .forEach((targetId, position) => {
+      ops.push({ op: "link", table: "notes", id: note.id, field: "content", targetId, position });
+    });
+  links.assigneeIds
     .filter((p) => exists("persons", p))
     .forEach((targetId, position) => {
       ops.push({ op: "link", table: "notes", id: note.id, field: "assignees", targetId, position });

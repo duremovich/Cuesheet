@@ -49,10 +49,13 @@ interface Snap {
       priority: string | null;
       status: string | null;
       session: string | null;
-      content_id: string | null;
     }[];
   };
-  joins: { noteCues: Record<string, string[]>; cueContent: Record<string, string[]> };
+  joins: {
+    noteCues: Record<string, string[]>;
+    noteContent: Record<string, string[]>;
+    cueContent: Record<string, string[]>;
+  };
 }
 
 async function snap(page: Page, showId: string): Promise<Snap> {
@@ -81,7 +84,7 @@ async function noteByBody(page: Page, showId: string, body: string) {
   const note = found as Snap["tables"]["notes"][number];
   const cues = (s as Snap).joins.noteCues[note.id] ?? [];
   const numbers = cues.map((id) => (s as Snap).tables.cues.find((c) => c.id === id)?.number);
-  return { ...note, cueNumbers: numbers };
+  return { ...note, cueNumbers: numbers, contentIds: (s as Snap).joins.noteContent[note.id] ?? [] };
 }
 
 const cueGrid = (page: Page) => page.getByRole("grid", { name: "Cue list" });
@@ -134,8 +137,10 @@ test("notes panel on a cue: add a typed, prioritised note; cycle it to Done", as
   expect(saved).toMatchObject({ type: ["Content"], priority: "3", status: "Open" });
   expect(saved.cueNumbers).toEqual(["14.20"]);
   // Linked to the cue's only content item too.
-  const content = (await snap(page, showId)).tables.content.find((c) => c.id === saved.content_id);
-  expect(content?.name).toBe("105-001-VAMP");
+  const { content } = (await snap(page, showId)).tables;
+  expect(saved.contentIds.map((id) => content.find((c) => c.id === id)?.name)).toEqual([
+    "105-001-VAMP",
+  ]);
 
   // The Notes tab shows it with its links, in the Open group.
   await page.goto(`/shows/${showId}/notes?note=${saved.id}`);
@@ -253,7 +258,7 @@ test("tech mode: step with ↓, prefixes, general notes, the session label", asy
   await page.keyboard.press("Enter");
   const n3 = await noteByBody(page, showId, general);
   expect(n3.cueNumbers).toEqual([]);
-  expect(n3.content_id).toBeNull();
+  expect(n3.contentIds).toEqual([]);
   expect(n3.session).toBe("Tech 2");
 
   // ⌘G jumps to a typed cue number; Space moves on when the box is empty.

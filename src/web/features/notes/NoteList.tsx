@@ -21,7 +21,7 @@ import { attachmentRestoreOps, attachmentsOf } from "../attachments/selectors";
 import { useRecordUploads } from "../attachments/uploads";
 import { useWorkspace } from "../show/workspace";
 import { canEditNote, formatTimestamp } from "./columns";
-import { initials, isOpen, nextStatus, noteRestoreOps } from "./compose";
+import { initials, isOpen, nextStatus, noteLinkIds, noteRestoreOps } from "./compose";
 import styles from "./Notes.module.css";
 
 const NONE: string[] = [];
@@ -106,9 +106,8 @@ export const NoteCard = memo(function NoteCard({
   const cueIds = useShowStore((s) => s.joins.noteCues.get(note.id) ?? NONE);
   const persons = useShowStore((s) => s.tables.persons);
   const cues = useShowStore((s) => s.tables.cues);
-  const content = useShowStore((s) =>
-    note.content_id ? s.tables.content.get(note.content_id) : undefined,
-  );
+  const contentIds = useShowStore((s) => s.joins.noteContent.get(note.id) ?? NONE);
+  const contentTable = useShowStore((s) => s.tables.content);
   const typeOptions = useShowStore((s) => s.fieldOptions["notes.type"] ?? NO_OPTIONS);
   const priorityOptions = useShowStore((s) => s.fieldOptions["notes.priority"] ?? NO_OPTIONS);
   const statusOptions = useShowStore((s) => s.fieldOptions["notes.status"] ?? NO_OPTIONS);
@@ -164,6 +163,12 @@ export const NoteCard = memo(function NoteCard({
         return c ? [c.number ? `Q ${c.number}` : "Q (no number)"] : [];
       })
     : [];
+  const contentLabels = showLinks
+    ? contentIds.flatMap((id) => {
+        const name = contentTable.get(id)?.name;
+        return name ? [name] : [];
+      })
+    : [];
 
   return (
     <li className={styles.note} data-testid="note" data-status={status} data-note-id={note.id}>
@@ -214,14 +219,13 @@ export const NoteCard = memo(function NoteCard({
               onClick={() => {
                 // No confirm: an Undo toast recreates it (same id and links) for a while.
                 const state = store.getState();
-                const linkedCues = state.joins.noteCues.get(note.id) ?? [];
-                const linkedPeople = state.joins.noteAssignees.get(note.id) ?? [];
+                const links = noteLinkIds(state, note.id);
                 // Its photos go with it; the server keeps their files for a day, so Undo
                 // brings them back too.
                 const photos = attachmentsOf(state.tables.attachments, "notes", note.id);
                 // Built when Undo runs, so links to records deleted meanwhile are dropped.
                 const restore = () => [
-                  ...noteRestoreOps(note, linkedCues, linkedPeople, (table, id) =>
+                  ...noteRestoreOps(note, links, (table, id) =>
                     store.getState().tables[table].has(id),
                   ),
                   ...attachmentRestoreOps(photos),
@@ -286,10 +290,8 @@ export const NoteCard = memo(function NoteCard({
             })}
           </span>
         )}
-        {(cueLabels.length > 0 || (showLinks && content)) && (
-          <span className={styles.links}>
-            {[...cueLabels, ...(showLinks && content?.name ? [content.name] : [])].join(" · ")}
-          </span>
+        {(cueLabels.length > 0 || contentLabels.length > 0) && (
+          <span className={styles.links}>{[...cueLabels, ...contentLabels].join(" · ")}</span>
         )}
         {note.session && <span className={styles.session}>{note.session}</span>}
         <span>

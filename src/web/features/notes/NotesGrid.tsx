@@ -47,9 +47,14 @@ export function NotesGrid() {
         const id = note.id;
         const personIds = joins.noteAssignees.get(id) ?? NONE;
         const cueIds = joins.noteCues.get(id) ?? NONE;
+        const contentIds = joins.noteContent.get(id) ?? NONE;
         const persons = personIds.map((p) => tables.persons.get(p));
         const cues = cueIds.map((c) => tables.cues.get(c));
-        const content = note.content_id ? tables.content.get(note.content_id) : undefined;
+        const content = contentIds.map((c) => tables.content.get(c));
+        // Content labels include their scene ("101 · NAME"), so those scenes are deps too.
+        const contentScenes = content.map((c) =>
+          c?.scene_id ? tables.scenes.get(c.scene_id) : undefined,
+        );
         const scene = note.scene_id ? tables.scenes.get(note.scene_id) : undefined;
         const custom = note.custom as { created_by_name?: unknown };
         const author =
@@ -59,13 +64,25 @@ export function NotesGrid() {
         const files = attachmentsOf(tables.attachments, "notes", id);
         return get(
           id,
-          [note, content, scene, author, editable, files, ...persons, ...cues],
+          [
+            note,
+            scene,
+            author,
+            editable,
+            files,
+            ...persons,
+            "|",
+            ...cues,
+            "|",
+            ...content,
+            ...contentScenes,
+          ],
           () => ({
             id,
             note,
             assignees: persons.flatMap((p) => (p ? [personItem(p)] : [])),
             cues: cues.flatMap((c) => (c ? [cueItem(c)] : [])),
-            content: content ? contentItem(content, tables.scenes) : null,
+            content: content.flatMap((c) => (c ? [contentItem(c, tables.scenes)] : [])),
             scene: scene ? sceneItem(scene) : null,
             author,
             editable,

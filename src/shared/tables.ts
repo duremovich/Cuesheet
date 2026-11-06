@@ -167,7 +167,6 @@ export const FIELDS = {
     type: multiselect,
     priority: select,
     status: select,
-    content_id: ref("content"),
     scene_id: ref("scenes"),
     session: text,
     completed_by: { type: "text", auto: true },
@@ -368,6 +367,21 @@ export function isTableName(t: unknown): t is TableName {
   return typeof t === "string" && (TABLE_NAMES as readonly string[]).includes(t);
 }
 
+/**
+ * Columns still in the ShowDO tables but no longer fields: never on the wire, refused in
+ * ops (the engine names the replacement). `notes.content_id` became the `notes.content`
+ * link (migration 0009); old clients' creates that still carry it are translated, see
+ * `ops-engine.ts`.
+ */
+export const RETIRED_COLUMNS: Partial<Record<TableName, Record<string, string>>> = {
+  notes: { content_id: "the notes.content link" },
+};
+
+export function retiredColumn(table: TableName, field: string): string | undefined {
+  const cols = RETIRED_COLUMNS[table];
+  return cols && Object.hasOwn(cols, field) ? cols[field] : undefined;
+}
+
 export function fieldSpec(table: TableName, field: string): FieldSpec | undefined {
   return Object.hasOwn(FIELDS[table], field)
     ? (FIELDS[table] as Record<string, FieldSpec>)[field]
@@ -441,7 +455,6 @@ export interface NoteRow extends CommonRow {
   type: string[];
   priority: string | null;
   status: string | null;
-  content_id: string | null;
   scene_id: string | null;
   session: string | null;
   completed_by: string | null;
@@ -672,6 +685,14 @@ export const LINKS = {
     to: "persons",
     toCol: "person_id",
     key: "noteAssignees",
+  },
+  "notes.content": {
+    join: "note_content",
+    from: "notes",
+    fromCol: "note_id",
+    to: "content",
+    toCol: "content_id",
+    key: "noteContent",
   },
   "scenes.surfaces": {
     join: "scene_surfaces",

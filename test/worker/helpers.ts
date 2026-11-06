@@ -3,6 +3,7 @@ import { exports } from "cloudflare:workers";
 import { expect } from "vitest";
 import type { CreateInviteResponse, ShowSummaryDTO } from "../../src/shared/api";
 import type { ServerMessage } from "../../src/shared/ws";
+import doJournal from "../../src/worker/db/do/migrations/meta/_journal.json";
 import {
   INTERNAL_HEADER,
   INTERNAL_MARKER,
@@ -122,3 +123,26 @@ export const isType =
   <T extends ServerMessage["type"]>(type: T) =>
   (m: ServerMessage): m is Extract<ServerMessage, { type: T }> =>
     m.type === type;
+
+/**
+ * SQL undoing a ShowDO migration's schema, for `rewindMigrations` (data-only migrations need
+ * none). Add one when a new migration creates or alters tables.
+ */
+const UNDO_MIGRATION: Partial<Record<string, string[]>> = {
+  "0009_note_content": ["DROP TABLE note_content"],
+};
+
+/**
+ * Inside `runInDurableObject`: make the ShowDO forget the migrations from `tag` on (their
+ * schema undone), so they run again on its next start (`evictDurableObject`). For testing
+ * a migration against data shaped like before it.
+ */
+export function rewindMigrations(sql: SqlStorage, tag: string): void {
+  const from = doJournal.entries.findIndex((e) => e.tag === tag);
+  const first = doJournal.entries[from];
+  if (!first) throw new Error(`No ShowDO migration ${tag}`);
+  for (const e of doJournal.entries.slice(from).reverse()) {
+    for (const stmt of UNDO_MIGRATION[e.tag] ?? []) sql.exec(stmt);
+  }
+  sql.exec("DELETE FROM __drizzle_migrations WHERE created_at >= ?", first.when);
+}

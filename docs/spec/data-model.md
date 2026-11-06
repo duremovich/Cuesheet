@@ -48,7 +48,7 @@ erDiagram
     Cue ||--o{ CueAnchor : "placed in script at"
 
     Content ||--o{ ContentVersion : has
-    Content ||--o{ Note : has
+    Content }o--o{ Note : has
     Content }o--o{ Surface : "plays on"
     Content }o--|| Person : "created by"
 
@@ -186,7 +186,7 @@ a scene, or the show in general, and any combination of those.
 | `status` | select | Open / In progress / Done. Replaces the two checkboxes in the base |
 | `assignees` | link → Person (many) | |
 | `cues` | link → Cue (many) | most notes link one cue; some span two ("8.20, 8.50") |
-| `content` | link → Content | |
+| `content` | link → Content (many) | a note can be about several content items. A single link until DO migration 0009 |
 | `scene` | link → Scene | filled from the cue if not set |
 | `session` | text / select | the rehearsal it came from: "Tech 3", "Preview 1". Defaults to the show's current session |
 | `attachments` | attachment (many) | photos of the stage |
@@ -430,7 +430,7 @@ Every column in the export, and where it goes.
 | | TYPE | Note.type |
 | | Done, In Progress | Note.status |
 | | Priority | Note.priority |
-| | Content | Note.content |
+| | Content | Note.content (every item named) |
 | | Assigned To | Note.assignees |
 | | Created Time, created by | automatic |
 | | Photo | Note.attachments |

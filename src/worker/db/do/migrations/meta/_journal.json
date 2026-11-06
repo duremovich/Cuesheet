@@ -64,6 +64,13 @@
       "when": 1793921581293,
       "tag": "0008_rowheight_auto",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1793931801119,
+      "tag": "0009_note_content",
+      "breakpoints": true
     }
   ]
 }

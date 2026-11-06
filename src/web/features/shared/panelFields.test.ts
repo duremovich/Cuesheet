@@ -72,7 +72,7 @@ describe("row panel fields → ops", () => {
       note: { id: "n1", body: "b", status: "Open" } as NoteRow,
       assignees: [],
       cues: [],
-      content: null,
+      content: [],
       scene: null,
       author: "Someone",
       editable: false,

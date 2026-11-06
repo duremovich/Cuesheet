@@ -57,6 +57,14 @@ describe("history lines", () => {
     expect(line({ table: "notes", field: "assignees", new: '"p1"' })).toBe(
       "Ada linked Assignees: Casey Brennan",
     );
+    // A note's content is a link now; entries from before migration 0009 changed the
+    // retired notes.content_id ref and still read as content names.
+    expect(line({ table: "notes", field: "content", new: '"k1"' })).toBe(
+      "Ada linked Content: 105-001-VAMP",
+    );
+    expect(line({ table: "notes", field: "content_id", old: null, new: '"k1"' })).toBe(
+      "Ada changed Content: — → 105-001-VAMP",
+    );
     expect(
       line({ table: "notes", field: "type", old: '["Content"]', new: '["Content","Admin"]' }),
     ).toBe("Ada changed Type: Content → Content, Admin");

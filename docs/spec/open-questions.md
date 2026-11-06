@@ -86,6 +86,9 @@ Things the first build had to decide; each is easy to change.
 - **Notes** are grouped by status with Done collapsed by default, oldest first; "+ Add
   note" adds an Open note. Notes have no manual order, so an inserted note settles at the
   end of its group once you leave it.
+- **A note's content** is many-to-many now (DO migration 0009). A note taken on a cue
+  still links the cue's content only when the cue has exactly one item (as before); should
+  a note on a cue with several content items link all of them instead?
 - **Deletes** from the grid are immediate for one row (multi-row asks first); deleting a
   scene with cues moves its cues to Unassigned (server cascade). Should scene deletes
   always confirm?

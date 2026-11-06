@@ -10,7 +10,16 @@ import type { ViewRow } from "../../src/shared/tables";
 import { defaultViewConfig, type ViewConfig } from "../../src/shared/views";
 import type { MutationContext } from "../../src/worker/do/ops-engine";
 import type { MutateResult } from "../../src/worker/do/ShowDO";
-import { api, connectDO, createShow, isType, loginAdmin, newUser, post } from "./helpers";
+import {
+  api,
+  connectDO,
+  createShow,
+  isType,
+  loginAdmin,
+  newUser,
+  post,
+  rewindMigrations,
+} from "./helpers";
 
 let seq = 0;
 async function freshShow() {
@@ -113,22 +122,24 @@ describe("views: row height migration (DO 0008)", () => {
         createView(normal, { name: "Old", config: config({ rowHeight: "normal" }) }),
       ]),
     );
+    const before = await snapshot(stub);
     // Back to a show from before 0008: every other view (the seeded defaults too) said
-    // "normal", and 0008 wasn't applied yet.
-    await runInDurableObject(stub, (_i, state) => {
+    // "normal", and 0008 wasn't applied yet. (Read with SQL from here on: the snapshot
+    // needs the later migrations' tables, which the rewind took away until the restart.)
+    const normalBefore = await runInDurableObject(stub, (_i, state) => {
       state.storage.sql.exec(
         `UPDATE views SET config = json_set(config, '$.rowHeight', 'normal') WHERE id NOT IN (?, ?)`,
         tall,
         compact,
       );
-      state.storage.sql.exec(
-        "DELETE FROM __drizzle_migrations WHERE created_at = (SELECT MAX(created_at) FROM __drizzle_migrations)",
-      );
+      rewindMigrations(state.storage.sql, "0008_rowheight_auto");
+      return state.storage.sql
+        .exec<{ n: number }>(
+          "SELECT count(*) AS n FROM views WHERE json_extract(config, '$.rowHeight') = 'normal'",
+        )
+        .one().n;
     });
-    const before = await snapshot(stub);
-    expect(before.tables.views.map((v) => (v.config as unknown as ViewConfig).rowHeight)).toContain(
-      "normal",
-    );
+    expect(normalBefore).toBeGreaterThan(0);
     await evictDurableObject(stub);
     const after = await snapshot(stub);
     expect(after.version).toBe(before.version);
