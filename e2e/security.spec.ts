@@ -87,6 +87,15 @@ test("CSP on: headers; sign in, cue grid, PDF import, upload — no violations",
   await expect(page.getByTestId("import-preview")).toContainText("3 pages", { timeout: 20_000 });
   await page.getByLabel("Version label").fill("CSP draft");
   await page.getByRole("button", { name: "Import", exact: true }).click();
+  // It opens on the PDF's pages: pdf.js draws them (fonts, canvas) and its text layer.
+  await expect(page.getByTestId("pdf-view")).toBeVisible();
+  await expect(page.locator('[data-testid="pdf-page"][data-page="1"]')).toHaveAttribute(
+    "data-rendered",
+    "true",
+    { timeout: 20_000 },
+  );
+  // …and the extracted text, one toggle away.
+  await page.getByRole("button", { name: "Text", exact: true }).click();
   await expect(page.getByTestId("script-reader")).toBeVisible();
 
   // A photo on a note (quick add), then shown from the attachment route.
