@@ -402,7 +402,8 @@ views" below).
 - **URL state**: the active row is `?<param>=<id>` (`cue`, `scene`, `content`,
   `surface`, `note`, `person`; `tabs.ts`), written with `replace`. On load, or on a navigation carrying router
   state `{ focus: id }` (⌘K), the tab calls `grid.focusRow(id)` once the row exists
-  (`features/shared/useTableChrome.ts`); the open view is `?view=<id>`. Per-browser prefs
+  (`features/shared/useTableChrome.ts`); the open view is `?view=<id>`. Coming back to a
+  tab (no row in the URL) restores where you were instead: see "Scroll memory". Per-browser prefs
   (`features/shared/prefs.ts`, localStorage): collapsed groups per user+show+view and the
   last view opened per user+show+table.
 - **Row panel** (`features/shared/RowPanel.tsx`, R18): Space / expand icon; follows the
@@ -646,6 +647,50 @@ views" below).
 - **Migration of M1c prefs** (`legacy.ts`): on first open per table, old localStorage
   column widths become your layout overlay on the shared view you're on, collapsed groups
   move to the per-view key, the old live sort is dropped, and the old keys are removed.
+
+## Scroll memory (`src/web/lib/scrollMemory.ts`)
+
+Leaving a tab and coming back (or reloading) lands where you were: the same rows of a grid
+or gallery, the same page of the script. Tabs are routes, so a tab you leave unmounts; its
+position is kept outside React.
+
+- **Where.** `scrollMemory`: an in-memory map mirrored to **sessionStorage**
+  (`cuesheet.scroll`, written 300 ms after a change and on `pagehide` / hidden), so it lasts
+  for the browser tab's session and survives a reload, but a new browser tab starts fresh
+  and nothing syncs. 200 entries max (oldest dropped). Keys: `<showId>|<tab>|<viewId>` for
+  table tabs (an empty view id on the built-in default view), `<showId>|script|<versionId>`
+  for the script.
+- **What.** A `ScrollPosition`: `anchors` (the item at the view's top edge and the next
+  few: `r:<rowId>`, `g:<groupId>`, `p:<page>`, each with its offset from the top, plus how far
+  into the first one as a fraction), pixel `top`/`left` fallbacks, the active cell, and
+  `sig` (the view's filters/sort/grouping/row height/layout, `useViewConfig().scrollSig`).
+  Anchors, not pixels: auto rows are re-estimated on every mount, and a PDF page scales with
+  the zoom (the PDF view and text reader restore by page + fraction, so the zoom or the other
+  view still lands on the same page; PDF ↔ Text keeps the page).
+- **When it restores (`shouldRestore`).** Opening a tab restores unless the navigation points
+  somewhere: ⌘K's router `{focus}`, or a `?<param>=` / `?cue=` row other than the one you
+  were on when you left. A reload or back/forward to the URL you left (`POP` with the same
+  row, to a history entry the app made) restores, and the row comes back as the active cell
+  (its collapsed group reopened if need be: `active.reveal`). Opening a link or typing a URL
+  is a `POP` too, but its location key is React Router's `"default"` (no history state:
+  `FRESH_LOAD_KEY`), so its row wins even when it's the one you were on. So "Show in script",
+  "Show in list", search results, `?note=` links and the tech-mode "Cue list" link go where
+  they point, exactly as before. `useTableChrome` makes the call at mount (`restoreScroll`, and
+  skips its URL focus then); `useGridScrollMemory` (table tabs) and `useScriptScroll` (script)
+  turn it into the grid's / reader's `scrollRestore` / `restore` prop.
+- **Within a tab.** Switching views goes to that view's remembered spot; a view with none,
+  and a change of filters, sort, grouping, row height or grid ↔ gallery, keep the row that
+  was at the top if it's still shown, else go to the top (`restoreFor`: the pixel fallback
+  only applies to the same `sig`). Column widths/order and collapsing a group don't count.
+  Another script version goes to its own remembered spot (else stays put).
+- **Before paint.** Grid, gallery and both readers apply the position in a layout effect and
+  write the virtualizer's `scrollOffset` in the same commit, so the first painted frame is
+  already the restored one (`e2e/scroll-memory.spec.ts` checks that frame). Grid README
+  "Scroll memory" for the grid side.
+- **Tests:** `lib/scrollMemory.test.ts` (anchors, fallbacks, frac across a zoom, the store,
+  `shouldRestore`), `e2e/scroll-memory.spec.ts` (cue grid → Notes → back, reload, a link to
+  another row; content gallery; script PDF → Notes → back, Text and back, reload, "Show in
+  script" wins).
 
 ## Content versions (R10)
 
@@ -1062,7 +1107,8 @@ views" below).
   contains it, otherwise `MoveDialog` asks (never silently): **Make this a positional
   cue** (LX / Timecode / Visual) or **Re-anchor on this line and update trigger text**.
   All placements are state `manual`, one batch with their cue ops.
-- **URL state**: `?cue=` scrolls to the marker and flashes it (the cue list's parameter,
+- **URL state** (opening the tab without one, or reloading the one you left, restores your
+  page instead: "Scroll memory"): `?cue=` scrolls to the marker and flashes it (the cue list's parameter,
   so "Show in script" / "Show in list" round-trip; clicking a marker writes it);
   `?version=` reads an older version read-only (its own anchors); `?resolve=<versionId>`
   is the Resolve screen for that version (pinned: `1` means current). "Show in script": the cue grid's row menu, the cue panel's **Script**

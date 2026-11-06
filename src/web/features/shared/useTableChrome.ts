@@ -1,10 +1,12 @@
 // Everything a table tab wires around its DataGrid besides data and the saved view: the
 // `?<param>=<rowId>` URL state, focus requests from ⌘K (router state `{ focus: rowId }`),
-// and the row panel's open state. Column layout and collapsed groups come from the view
+// the row panel's open state, and whether the tab opens where you left it (scroll memory,
+// useGridScrollMemory). Column layout and collapsed groups come from the view
 // (features/views/useViewConfig.ts).
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useLocation, useSearchParams } from "react-router";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useLocation, useNavigationType, useSearchParams } from "react-router";
 import type { Column, DataGridHandle, GridAction } from "../../components/grid/types";
+import { scrollKey, scrollMemory, shouldRestore } from "../../lib/scrollMemory";
 import { useShowStoreInstance } from "../../lib/show-store";
 import { type AnyTabKey, tabInfo } from "../show/tabs";
 import { useWorkspace } from "../show/workspace";
@@ -37,7 +39,7 @@ export function useTableChrome<Row>(opts: {
   reveal?: (id: string) => "shown" | "pending" | "missing";
 }) {
   const { tab, ready } = opts;
-  const { toast } = useWorkspace();
+  const { toast, showId } = useWorkspace();
   const { table, param, noun } = tabInfo(tab);
   const columns = opts.columns;
 
@@ -46,9 +48,23 @@ export function useTableChrome<Row>(opts: {
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
   const urlRow = searchParams.get(param);
-  const pendingFocus = useRef<string | null>(urlRow);
-  const lastWritten = useRef<string | null>(urlRow);
   const focusState = (location.state as FocusState | null)?.focus;
+  // Opened by a tab click (or a reload / back to the URL you left): back where you were, so
+  // the URL's row isn't jumped to (the grid restores it as the active row). A jump (⌘K,
+  // "Show in list", a link to another row) goes where it points instead.
+  const navigationType = useNavigationType();
+  const [restoreScroll] = useState(() =>
+    shouldRestore({
+      focusState,
+      urlRow,
+      navigationType,
+      locationKey: location.key,
+      rememberedRow: scrollMemory.latest(scrollKey(showId, tab, ""))?.active?.rowId,
+    }),
+  );
+  const mountRow = useRef(urlRow);
+  const pendingFocus = useRef<string | null>(restoreScroll ? null : urlRow);
+  const lastWritten = useRef<string | null>(urlRow);
   // A ⌘K jump (router state), or a URL row we didn't write ourselves (back/forward).
   // biome-ignore lint/correctness/useExhaustiveDependencies: location.key marks a new navigation
   useEffect(() => {
@@ -137,8 +153,19 @@ export function useTableChrome<Row>(opts: {
   /** The grid's `onEscape`: closes the panel when the grid had nothing else to cancel. */
   const onEscape = panelOpen ? closePanel : undefined;
 
+  /** The scroll memory had nothing for this view: focus the URL's row the usual way. */
+  const [, rerun] = useReducer((n: number) => n + 1, 0);
+  const focusUrlRow = useCallback(() => {
+    if (!mountRow.current) return;
+    pendingFocus.current = mountRow.current;
+    rerun(); // the focus effect above runs after every render
+  }, []);
+
   return {
     grid,
+    restoreScroll,
+    urlRowAtMount: mountRow.current,
+    focusUrlRow,
     columns,
     onActiveRowChange,
     activeRow,

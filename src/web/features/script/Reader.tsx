@@ -9,6 +9,12 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CueRow, FieldOptions } from "../../../shared/tables";
 import type { PickerItem } from "../../components/grid/types";
+import {
+  anchorTarget,
+  captureAnchors,
+  type ScrollPosition,
+  type ScrollRestore,
+} from "../../lib/scrollMemory";
 import { useMediaQuery } from "../shared/useMediaQuery";
 import type { Anchor, CueAnchorRow, ScriptBlock, ScriptText } from "./contract";
 import { makeAnchor, makePositionAnchor } from "./contract";
@@ -81,6 +87,13 @@ export interface ReaderProps {
   onFocusHandled?: () => void;
   actions: MarkerActions;
   placement: Placement;
+  /**
+   * Where to go once per `key` (scroll memory: anchors `p:<page>`, the same in the PDF view,
+   * so switching views keeps the page). Applied before the first paint that has a layout.
+   */
+  restore?: ScrollRestore;
+  /** The reading position changed (each scroll). */
+  onScrollPositionChange?: (position: ScrollPosition) => void;
 }
 
 const FLASH_MS = 2400;
@@ -164,6 +177,66 @@ export function Reader(props: ReaderProps) {
     },
     [virtualizer, pages.length],
   );
+
+  // --- scroll memory (props.restore / onScrollPositionChange) ---
+  const pageItem = (key: string) => {
+    const n = Number(key.slice(2));
+    const i = key.startsWith("p:") ? pages.findIndex((p) => p.page === n) : -1;
+    const m = i < 0 ? undefined : virtualizer.measurementsCache[i];
+    return m ? { start: m.start, size: m.size } : undefined;
+  };
+  const onPosition = props.onScrollPositionChange;
+  const reportPosition = () => {
+    const el = scroller.current;
+    if (!el || !onPosition || pages.length === 0) return;
+    const items = virtualizer.measurementsCache.map((m, i) => ({
+      key: `p:${pages[i]?.page ?? i}`,
+      start: m.start,
+      size: m.size,
+    }));
+    onPosition({
+      anchors: captureAnchors(items, el.scrollTop, 2),
+      top: el.scrollTop,
+      left: el.scrollLeft,
+    });
+  };
+  const restoredKey = useRef<string | null>(null);
+  /** Pages are estimated until rendered: re-aim while they're measured, until you scroll. */
+  const settle = useRef<{ position: ScrollPosition; until: number } | null>(null);
+  const [, bump] = useState(0);
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    const r = props.restore;
+    if (el && r?.position && r.key !== restoredKey.current && pages.length) {
+      restoredKey.current = r.key;
+      el.scrollTop = anchorTarget(r.position.anchors, pageItem, "frac") ?? r.position.top;
+      el.scrollLeft = r.position.left;
+      virtualizer.scrollOffset = el.scrollTop; // lay out the restored pages in this commit
+      settle.current = { position: r.position, until: performance.now() + 1500 };
+      onScroll();
+      bump((n) => n + 1);
+      return;
+    }
+    const st = settle.current;
+    if (!st || !el) return;
+    if (performance.now() > st.until) settle.current = null;
+    else {
+      const top = anchorTarget(st.position.anchors, pageItem, "frac");
+      if (top !== null && Math.abs(el.scrollTop - top) > 1) el.scrollTop = top;
+    }
+  });
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const stop = () => {
+      settle.current = null;
+    };
+    const types = ["wheel", "touchstart", "pointerdown", "keydown"];
+    for (const t of types) el.addEventListener(t, stop, { passive: true });
+    return () => {
+      for (const t of types) el.removeEventListener(t, stop);
+    };
+  }, []);
   /** Scrolls a block to the middle once its page is rendered, then runs `then`. */
   const scrollToBlock = useCallback(
     (block: number, then?: (el: HTMLElement) => void) => {
@@ -370,7 +443,10 @@ export function Reader(props: ReaderProps) {
           ref={scroller}
           className={styles.scroller}
           tabIndex={-1}
-          onScroll={onScroll}
+          onScroll={() => {
+            onScroll();
+            reportPosition();
+          }}
           onMouseUp={onSelectEnd}
           onKeyDown={onBlockKey}
           onKeyUp={(e) => {

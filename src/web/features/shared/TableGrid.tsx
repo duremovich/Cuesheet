@@ -30,6 +30,7 @@ import { useViewConfig } from "../views/useViewConfig";
 import { BulkEditDialog, type BulkEditRequest, bulkOps, rowIdsOf } from "./BulkEdit";
 import { type PanelSection, type PanelTab, RowPanel } from "./RowPanel";
 import { TableFrame, ToolbarButton } from "./TableFrame";
+import { useGridScrollMemory } from "./useGridScrollMemory";
 import { GRID_ACTIONS, useTableChrome } from "./useTableChrome";
 
 export interface TableConfig<V> {
@@ -181,6 +182,14 @@ export function TableGrid<V>(config: TableConfig<V>) {
   const viewRef = useRef(view);
   viewRef.current = view;
   revealRef.current = view.reveal;
+  const scroll = useGridScrollMemory({
+    showId: ws.showId,
+    tab: config.tab,
+    viewId: view.viewId,
+    sig: view.scrollSig,
+    ready: status === "ready",
+    chrome,
+  });
 
   const report = ws.reportError;
   const send = useCallback(
@@ -376,6 +385,8 @@ export function TableGrid<V>(config: TableConfig<V>) {
               })
             }
             {...(chrome.onEscape ? { onEscape: chrome.onEscape } : {})}
+            scrollRestore={scroll.scrollRestore}
+            onScrollPositionChange={scroll.onScrollPositionChange}
           />
         ) : (
           <DataGrid<V>
@@ -399,6 +410,8 @@ export function TableGrid<V>(config: TableConfig<V>) {
             onOpenRow={chrome.onOpenRow}
             {...(chrome.onEscape ? { onEscape: chrome.onEscape } : {})}
             addRowLabel={`Add ${config.noun}`}
+            scrollRestore={scroll.scrollRestore}
+            onScrollPositionChange={scroll.onScrollPositionChange}
             onEdit={onEdit}
             {...(canInsert ? { onInsert: insert } : {})}
             {...(config.moveOps ? { onMove } : {})}

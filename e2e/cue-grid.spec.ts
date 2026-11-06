@@ -127,8 +127,9 @@ test("insert between 14.20 and 14.25: in place, ghost 14.22, Tab accepts, surviv
   const i = await rowIndex(again);
   await expect(rowAt(page, i - 1)).toContainText("14.20");
   await expect(rowAt(page, i + 1)).toContainText("14.25");
-  // The URL still names the row, so it's the active one after the reload.
-  await expect(cellOf(again, "number")).toHaveAttribute("data-active", "true");
+  // The URL still names the row, so it's the active one after the reload: the very cell
+  // you were in (scroll memory; Tab had moved to the description).
+  await expect(cellOf(again, "description")).toHaveAttribute("data-active", "true");
 });
 
 test("an unnumbered cue stays where it was inserted (show order)", async ({ browser }) => {

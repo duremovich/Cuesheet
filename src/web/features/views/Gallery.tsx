@@ -20,8 +20,20 @@ import {
 } from "react";
 import type { AttachmentRow } from "../../../shared/tables";
 import { optionColor } from "../../components/grid/Chip";
-import type { ColorRule, Column, DataGridHandle, Group } from "../../components/grid/types";
+import type {
+  ColorRule,
+  Column,
+  DataGridHandle,
+  Group,
+  ScrollRestore,
+} from "../../components/grid/types";
 import { formatValue } from "../../components/grid/values";
+import {
+  type AnchorItem,
+  anchorTarget,
+  captureAnchors,
+  type ScrollPosition,
+} from "../../lib/scrollMemory";
 import { Thumb } from "../attachments/Attachments";
 import styles from "./Gallery.module.css";
 import {
@@ -55,6 +67,9 @@ export interface GalleryProps<V> {
   onOpenRow?: (id: string) => void;
   onOpenImage?: (v: V, file: AttachmentRow) => void;
   onEscape?: () => void;
+  /** As the grid's (README "Scroll memory"): anchors are `r:<rowId>` / `g:<groupId>`. */
+  scrollRestore?: ScrollRestore;
+  onScrollPositionChange?: (position: ScrollPosition) => void;
 }
 
 export function Gallery<V>(p: GalleryProps<V>) {
@@ -230,6 +245,82 @@ export function Gallery<V>(p: GalleryProps<V>) {
     }
     return undefined;
   };
+
+  // --- Scroll memory (same anchors as the grid's, so grid ↔ gallery keeps the top row) ---
+  const headerIndex = useMemo(() => {
+    const m = new Map<string, number>();
+    items.forEach((it, i) => {
+      if (it.kind === "header") m.set(it.group.id, i);
+    });
+    return m;
+  }, [items]);
+  const anchorItems = (): AnchorItem[] => {
+    const out: AnchorItem[] = [];
+    const ms = virtualizer.measurementsCache;
+    items.forEach((it, i) => {
+      const m = ms[i];
+      if (!m) return;
+      if (it.kind === "header") out.push({ key: `g:${it.group.id}`, start: m.start, size: m.size });
+      else
+        for (const v of it.cards) out.push({ key: `r:${rowId(v)}`, start: m.start, size: m.size });
+    });
+    return out;
+  };
+  const findAnchor = (key: string) => {
+    const i = key.startsWith("g:")
+      ? headerIndex.get(key.slice(2))
+      : key.startsWith("r:")
+        ? byId.get(key.slice(2))?.item
+        : undefined;
+    const m = i === undefined ? undefined : virtualizer.measurementsCache[i];
+    return m ? { start: m.start, size: m.size } : undefined;
+  };
+  const reportRef = useRef<() => void>(() => {});
+  reportRef.current = () => {
+    const el = scrollRef.current;
+    if (!el || !p.onScrollPositionChange || items.length === 0 || width === 0) return;
+    const a = activeRef.current;
+    p.onScrollPositionChange({
+      anchors: captureAnchors(anchorItems(), el.scrollTop, cols * 2 + 2),
+      top: el.scrollTop,
+      left: el.scrollLeft,
+      active: a ? { rowId: a } : null,
+    });
+  };
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const on = () => reportRef.current();
+    el.addEventListener("scroll", on, { passive: true });
+    return () => el.removeEventListener("scroll", on);
+  }, []);
+  const activeSeen = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reports when the active card changes
+  useEffect(() => {
+    if (!activeSeen.current) {
+      activeSeen.current = true;
+      return;
+    }
+    reportRef.current();
+  }, [active]);
+  const restoredKey = useRef<string | null>(null);
+  // Once the width (so the columns) is known: before that frame paints.
+  useLayoutEffect(() => {
+    const r = p.scrollRestore;
+    const el = scrollRef.current;
+    if (!el || !r?.position || r.key === restoredKey.current || width === 0 || !items.length)
+      return;
+    restoredKey.current = r.key;
+    el.scrollTop = anchorTarget(r.position.anchors, findAnchor) ?? r.position.top;
+    el.scrollLeft = r.position.left;
+    virtualizer.scrollOffset = el.scrollTop;
+    const id = r.position.active?.rowId;
+    if (id && byId.has(id)) {
+      activate(id);
+      pendingFocus.current = id;
+    }
+    rerender((n) => n + 1);
+  });
 
   const vItems = virtualizer.getVirtualItems();
   return (

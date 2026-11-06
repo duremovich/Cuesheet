@@ -11,6 +11,7 @@
 // positional cue at that line, and drag numbers onto another line.
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { anchorTarget, captureAnchors } from "../../../lib/scrollMemory";
 import { useMediaQuery } from "../../shared/useMediaQuery";
 import { rowUrl } from "../../show/tabs";
 import type { Anchor, CueAnchorRow } from "../contract";
@@ -209,6 +210,43 @@ function LoadedReader(props: PdfReaderProps & { pdf: LoadedPdf }) {
     while (i + 1 < tops.length && (tops[i + 1] as number) <= mid) i++;
     if (i !== pageIdxRef.current) setPageIdx(i);
   };
+  // --- scroll memory (props.restore / onScrollPositionChange): `p:<page>` + how far into
+  // it, so a remembered spot survives a zoom change and matches the text view's anchors ---
+  const pageBox = (key: string) => {
+    const i = key.startsWith("p:") ? Number(key.slice(2)) - 1 : -1;
+    const p = pdf.pages[i];
+    return p ? { start: tops[i] ?? 0, size: p.height * scale + PAGE_GAP } : undefined;
+  };
+  const onPosition = props.onScrollPositionChange;
+  const reportPosition = () => {
+    const el = scroller.current;
+    if (!el || !onPosition || !ready) return;
+    const items = pdf.pages.map((p, i) => ({
+      key: `p:${p.page}`,
+      start: tops[i] ?? 0,
+      size: p.height * scale + PAGE_GAP,
+    }));
+    onPosition({
+      anchors: captureAnchors(items, el.scrollTop, 2),
+      top: el.scrollTop,
+      left: el.scrollLeft,
+    });
+  };
+  const restoredKey = useRef<string | null>(null);
+  const [, bump] = useState(0);
+  // Page sizes are known up front: one jump, once the width (so the fit zoom) is known,
+  // before that frame paints.
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    const r = props.restore;
+    if (!el || !ready || !r?.position || r.key === restoredKey.current) return;
+    restoredKey.current = r.key;
+    el.scrollTop = anchorTarget(r.position.anchors, pageBox, "frac") ?? r.position.top;
+    el.scrollLeft = r.position.left;
+    virtualizer.scrollOffset = el.scrollTop; // lay out the restored pages in this commit
+    onScroll();
+    bump((n) => n + 1);
+  });
   const scrollToPage = useCallback(
     (idx: number) => {
       const i = Math.max(0, Math.min(idx, pdf.pages.length - 1));
@@ -448,7 +486,10 @@ function LoadedReader(props: PdfReaderProps & { pdf: LoadedPdf }) {
           ref={scroller}
           className={`${scriptStyles.scroller} ${styles.scroller}`}
           tabIndex={-1}
-          onScroll={onScroll}
+          onScroll={() => {
+            onScroll();
+            reportPosition();
+          }}
           data-testid="pdf-reader"
           data-scale={scale.toFixed(3)}
           aria-label="Script (PDF pages)"

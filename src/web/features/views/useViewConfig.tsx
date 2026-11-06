@@ -179,6 +179,11 @@ export interface ViewState<V> {
   toolbar: ReactNode;
   /** Grid or gallery cards (R19). */
   layout: ViewLayout;
+  /**
+   * What the shown rows are laid out from (filters, sort, grouping, row height, layout), as a
+   * string: scroll memory keeps the top row across a change of it (useGridScrollMemory).
+   */
+  scrollSig: string;
   /** The active measurement unit (view override → your unit → show default → m). */
   unit: Unit;
   /** The view's own unit override, if it has one. */
@@ -1087,6 +1092,30 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
     </>
   );
 
+  const layout: ViewLayout = setup.gallery && config.layout === "gallery" ? "gallery" : "grid";
+  // What the rows on screen were laid out from (scroll memory: a change keeps the top row if
+  // it's still shown, else goes to the top; useGridScrollMemory). Widths and order aren't in it.
+  const scrollSig = useMemo(
+    () =>
+      JSON.stringify([
+        config.filters,
+        config.filterMode,
+        config.sorts,
+        config.sortMode,
+        config.group.key,
+        config.rowHeight,
+        layout,
+      ]),
+    [
+      config.filters,
+      config.filterMode,
+      config.sorts,
+      config.sortMode,
+      config.group.key,
+      config.rowHeight,
+      layout,
+    ],
+  );
   return {
     columns,
     ...(out.rows ? { rows: out.rows } : { groups: out.groups ?? [] }),
@@ -1107,7 +1136,8 @@ export function useViewConfig<V>(setup: ViewSetup<V>): ViewState<V> {
     trackActive,
     wrapProps,
     toolbar,
-    layout: setup.gallery && config.layout === "gallery" ? "gallery" : "grid",
+    layout,
+    scrollSig,
     unit,
     viewUnit: config.unit,
     viewId: current?.id ?? null,

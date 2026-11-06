@@ -57,6 +57,8 @@ underlined; an unnumbered cue suggests the midpoint number). Source: `src/web/pa
 | `onError` | `(error, action) => void` | A callback threw or rejected (`action`: edit / insert / duplicate / move / delete). The grid also shows a short inline message. Default: `console.error` |
 | `onEscape` | `() => void` | Escape with nothing left to cancel in the grid (not editing; no range, row selection, or held row that would move). E.g. close a detail panel |
 | `addRowLabel` | `string` | The group header's add button ("Add cue"; default "Add row"); its accessible name is "<label> to <group>" |
+| `scrollRestore` | `{key, position: ScrollPosition | null}` | Go to a remembered position (and active cell) once per `key`, as soon as there are rows, before that frame paints. `null` leaves the scroll alone. See "Scroll memory" |
+| `onScrollPositionChange` | `(position: ScrollPosition) => void` | Every scroll event and active-cell change: the position to hand back later |
 | `ref` | `Ref<DataGridHandle>` | `focusRow(id, columnKey?)` activates and focuses a row (expanding its group; a row outside the view is scrolled to the vertical middle); `stepRow(±1)` makes the next/previous row active without moving DOM focus (↑/↓ in a panel); `scrollToRow(id)` scrolls to it without moving focus |
 | `aria-label` | `string` | Name of the grid (e.g. "Cue list") |
 | `className` | `string` | On the root. The root is `height: 100%`: **give its parent a height** |
@@ -309,6 +311,33 @@ Notes for the integration:
   other row is absolutely positioned), so it sits at the body's top and `position: sticky`
   holds it under the column header. jsdom has no layout: test scrolled states in e2e
   (wait on `data-scroll-offset`).
+
+## Scroll memory
+
+The grid neither stores nor decides when to restore; the tab does (`useGridScrollMemory`,
+CLAUDE.md "Scroll memory"). The grid only captures and applies a `ScrollPosition`
+(`src/web/lib/scrollMemory.ts`).
+
+- **Anchored on rows, not pixels.** `onScrollPositionChange` reports `anchors`: the item
+  (`r:<rowId>` or `g:<groupId>`) the view's top edge is in and the three after it, each with
+  `at` = its top minus the view's top. A fresh mount re-estimates every auto row's height, so
+  the same `scrollTop` would land elsewhere; `scrollRestore` puts the first anchor that's
+  still in the layout back at its `at` (`anchorTarget`), else `position.top`. It also sets
+  `left`, and makes `position.active` the active cell (focused, no scroll) when that row is
+  shown.
+- **Before paint.** The restore runs in a layout effect and also writes the virtualizer's
+  `scrollOffset`, then re-renders in the same commit, so the first painted frame already has
+  the rows at the restored offset (without it, a frame of blank rows until the scroll event).
+  For 1 s after, while the rows around get measured, it re-aims at the anchor whenever
+  `offsets` change (like `settle`), until you scroll, press a key, click, or the grid
+  scrolls to a cell itself.
+- **Captured live.** The capture reads the virtualizer's current measurements, not the last
+  render's `offsets`: a scroll event can be the virtualizer compensating for a row it just
+  measured, before React re-rendered, and the old offsets would put the anchor a few px off
+  (it drifted on every round trip).
+- One restore per `key`; the consumer changes the key (another view, a filter) to ask for
+  another. `position: null` doesn't use the key up (the tab may still be loading).
+- Test: `e2e/scroll-memory.spec.ts` (the first painted frame is checked too).
 
 ## Row heights
 

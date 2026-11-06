@@ -1,5 +1,8 @@
 // Public types for the generic DataGrid. See ./README.md for how to wire a real table.
 import type { Unit } from "../../../shared/units";
+import type { ScrollPosition, ScrollRestore } from "../../lib/scrollMemory";
+
+export type { ScrollPosition, ScrollRestore };
 
 export type ColumnType =
   | "text"
@@ -260,4 +263,13 @@ export interface DataGridProps<Row> {
   onEscape?: () => void;
   /** Label of a group header's add button, e.g. "Add cue" (default "Add row"). */
   addRowLabel?: string;
+  /**
+   * Go to a remembered scroll position (and active cell) once per `key`, as soon as the grid
+   * has rows: before that frame paints, on the same rows (`anchors`), not the same pixels.
+   * `position: null` leaves the scroll alone (and doesn't use up the key). See README
+   * "Scroll memory".
+   */
+  scrollRestore?: ScrollRestore;
+  /** The scroll position or the active cell changed (at most once per scroll event). */
+  onScrollPositionChange?: (position: ScrollPosition) => void;
 }

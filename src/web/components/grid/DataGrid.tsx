@@ -26,6 +26,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { anchorTarget, captureAnchors } from "../../lib/scrollMemory";
 import { Chip, optionColor } from "./Chip";
 import { ContextMenu } from "./ContextMenu";
 import { CellContent, TextEditor } from "./cells";
@@ -52,6 +53,7 @@ import type {
   InsertPosition,
   MenuItem,
   PickerItem,
+  ScrollPosition,
 } from "./types";
 import {
   copyText,
@@ -229,6 +231,14 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
   const settle = useRef<{
     target: CellRef;
     center: boolean;
+    until: number;
+    offsets: number[];
+  } | null>(null);
+  /** The last `scrollRestore.key` applied (README "Scroll memory"). */
+  const restoredKey = useRef<string | null>(null);
+  /** A restore re-checked while the rows around it get measured, until `until` or you act. */
+  const restoreSettle = useRef<{
+    position: ScrollPosition;
     until: number;
     offsets: number[];
   } | null>(null);
@@ -650,6 +660,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     if (!opts.keepRange) setRange(null);
     if (opts.focus !== false) focusPending.current = true;
     if (opts.scroll) {
+      restoreSettle.current = null; // a scroll to this cell wins over a restore settling
       const i = target.group
         ? ref.current.groupIndexById.get(target.rowId)
         : ref.current.indexById.get(target.rowId);
@@ -1026,6 +1037,116 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     guard("delete", () => cur.props.onDelete?.(ids));
     setSelected([]);
   };
+
+  // --- Scroll memory (props.scrollRestore / onScrollPositionChange; README "Scroll memory") ---
+  const anchorItem = (key: string) => {
+    const cur = ref.current;
+    const i = key.startsWith("g:")
+      ? cur.groupIndexById.get(key.slice(2))
+      : key.startsWith("r:")
+        ? cur.indexById.get(key.slice(2))
+        : undefined;
+    if (i === undefined) return undefined;
+    const start = cur.offsets[i] ?? 0;
+    return { start, size: (cur.offsets[i + 1] ?? start) - start };
+  };
+  /** The body offset to scroll to for `position` (scrollTop = body offset of the view's top). */
+  const restoreTarget = (position: ScrollPosition) =>
+    anchorTarget(position.anchors, anchorItem) ?? position.top;
+  const capturePosition = (): ScrollPosition | null => {
+    const el = scrollRef.current;
+    const cur = ref.current;
+    if (!el || cur.items.length === 0) return null;
+    // Live measurements, not the last render's `offsets`: this scroll event may be the
+    // virtualizer compensating for a row it just measured, before React re-rendered.
+    virtualizer.getVirtualItems(); // brings measurementsCache up to date
+    const ms = virtualizer.measurementsCache;
+    const list = cur.items.map((it, i) => {
+      const m = ms[i];
+      const start = m ? m.start - HEADER_HEIGHT : (cur.offsets[i] ?? 0);
+      return { key: it.key, start, size: m ? m.size : 0 };
+    });
+    const a = cur.active;
+    return {
+      anchors: captureAnchors(list, el.scrollTop),
+      top: el.scrollTop,
+      left: el.scrollLeft,
+      active: a ? { rowId: a.rowId, key: a.key, ...(a.group ? { group: true } : {}) } : null,
+    };
+  };
+  const report = () => {
+    const on = ref.current.props.onScrollPositionChange;
+    if (!on) return;
+    const p = capturePosition();
+    if (p) on(p);
+  };
+  const reportRef = useRef(report);
+  reportRef.current = report;
+  useLayoutEffect(() => {
+    const r = props.scrollRestore;
+    const el = scrollRef.current;
+    if (!el || !r?.position || r.key === restoredKey.current || items.length === 0) return;
+    restoredKey.current = r.key;
+    const position = r.position;
+    el.scrollTop = restoreTarget(position);
+    el.scrollLeft = position.left;
+    // Lay out the rows at the new offset in this commit (the virtualizer would only hear of
+    // it from the scroll event, after a frame of blank rows).
+    virtualizer.scrollOffset = el.scrollTop;
+    restoreSettle.current = { position, until: performance.now() + 1000, offsets };
+    const a = position.active;
+    const known = a && (a.group ? groupIndexById.has(a.rowId) : indexById.has(a.rowId));
+    const entry = a && !a.group ? allRows.get(a.rowId) : undefined;
+    if (a && known) {
+      const key = a.key ?? firstEditableKey(entry?.row);
+      activate(a.group ? { rowId: a.rowId, key, group: true } : { rowId: a.rowId, key });
+    } else if (a?.reveal && entry) {
+      // The URL's row, in a group collapsed since: show it the way focusRow does.
+      expandGroup(entry.groupId);
+      pendingFocus.current = { id: a.rowId, key: a.key, focus: true, center: true };
+    }
+    bump();
+  });
+  // Auto rows: measuring the restored rows (estimated until rendered) can move them.
+  useLayoutEffect(() => {
+    const st = restoreSettle.current;
+    const el = scrollRef.current;
+    if (!st || !el) return;
+    if (performance.now() > st.until) restoreSettle.current = null;
+    else if (st.offsets !== offsets) {
+      st.offsets = offsets;
+      const top = restoreTarget(st.position);
+      if (Math.abs(el.scrollTop - top) > 1) el.scrollTop = top;
+    }
+  });
+  // Report every scroll (and active cell change) to the consumer, which keeps the latest.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => reportRef.current();
+    // Scrolling or keys of your own end a restore's settling.
+    const stop = () => {
+      restoreSettle.current = null;
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    for (const t of ["wheel", "touchstart", "pointerdown", "keydown"])
+      el.addEventListener(t, stop, { passive: true });
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      for (const t of ["wheel", "touchstart", "pointerdown", "keydown"])
+        el.removeEventListener(t, stop);
+    };
+  }, []);
+  const activeSeen = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reports when the active cell changes
+  useEffect(() => {
+    // Not the mount: nothing has happened yet, and a restore may still be coming.
+    if (!activeSeen.current) {
+      activeSeen.current = true;
+      return;
+    }
+    reportRef.current();
+  }, [active]);
 
   // Activate a pending row (new row, focusRow) once it shows up in the data; scroll to
   // a pending row; scroll to the active row after Escape released it; FLIP a settled row.

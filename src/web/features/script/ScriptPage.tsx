@@ -6,7 +6,7 @@
 // `?resolve=<versionId>` is the Resolve screen for that version (pinned: if someone
 // imports a newer one meanwhile, the screen says so and offers to switch; "1" = current). Editors place and resolve; everyone else reads.
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
+import { Link, useLocation, useNavigate, useNavigationType, useSearchParams } from "react-router";
 import { attachmentUrl } from "../../../shared/attachments";
 import { newId } from "../../../shared/ids";
 import type { Op } from "../../../shared/ops";
@@ -58,6 +58,7 @@ import { buildResolveItems, type ReportCounts, reportCounts, reportText } from "
 import styles from "./Script.module.css";
 import { scriptPanelTab } from "./ScriptTab";
 import { type AnchorOp, useScriptSource, useScriptVersions } from "./source";
+import { useScriptScroll } from "./useScriptScroll";
 
 const selectState = (s: ShowState) => s;
 const NO_OPTIONS: FieldOption[] = [];
@@ -191,6 +192,11 @@ export function ScriptPage() {
     [flagged, anchors],
   );
 
+  const original = version?.attachment_id ? tables.attachments.get(version.attachment_id) : null;
+  const pdfUrl =
+    original?.content_type === "application/pdf" ? attachmentUrl(ws.showId, original.id) : null;
+  const showPdf = !!pdfUrl && viewMode === "pdf";
+
   // --- ?cue= → scroll + flash; the panel ---
   const cueParam = params.get("cue");
   const [panelCue, setPanelCue] = useState<string | null>(null);
@@ -198,8 +204,26 @@ export function ScriptPage() {
   const nonce = useRef(0);
   const written = useRef<string | null>(null);
   const focusState = (location.state as FocusState | null)?.focus;
+  // Where you were (scroll memory), unless this navigation points at a cue.
+  const navigationType = useNavigationType();
+  const scroll = useScriptScroll({
+    showId: ws.showId,
+    versionId: viewId,
+    mode: showPdf ? "pdf" : "text",
+    cueParam,
+    focusState,
+    navigationType,
+    locationKey: location.key,
+  });
+  const openingRestore = useRef(scroll.restoreOnMount);
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new navigation or ?cue= we didn't write
   useEffect(() => {
+    if (openingRestore.current) {
+      // Opened where you left it: the URL's ?cue= is the one you were on, not a jump.
+      openingRestore.current = false;
+      written.current = cueParam;
+      return;
+    }
     const id = focusState ?? cueParam;
     if (!id || (id === written.current && !focusState)) return;
     written.current = id;
@@ -419,10 +443,6 @@ export function ScriptPage() {
     [tables.persons],
   );
   const pending = flagged.length;
-  const original = version?.attachment_id ? tables.attachments.get(version.attachment_id) : null;
-  const pdfUrl =
-    original?.content_type === "application/pdf" ? attachmentUrl(ws.showId, original.id) : null;
-  const showPdf = !!pdfUrl && viewMode === "pdf";
 
   if (versions.length === 0) {
     return (
@@ -809,6 +829,8 @@ export function ScriptPage() {
             onFocusHandled={onFocusHandled}
             actions={actions}
             placement={placement}
+            restore={scroll.restore}
+            onScrollPositionChange={scroll.onScrollPositionChange}
           />
         </Suspense>
       ) : (
@@ -829,6 +851,8 @@ export function ScriptPage() {
           onFocusHandled={onFocusHandled}
           actions={actions}
           placement={placement}
+          restore={scroll.restore}
+          onScrollPositionChange={scroll.onScrollPositionChange}
         />
       )}
     </TableFrame>

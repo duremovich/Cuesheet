@@ -22,6 +22,7 @@ import { groupOrder, placementFor } from "../shared/ops";
 import { RowPanel } from "../shared/RowPanel";
 import { TableFrame, ToolbarButton } from "../shared/TableFrame";
 import styles from "../shared/TableFrame.module.css";
+import { useGridScrollMemory } from "../shared/useGridScrollMemory";
 import { GRID_ACTIONS, useTableChrome } from "../shared/useTableChrome";
 import { useWorkspace } from "../show/workspace";
 import type { FieldDef } from "../views/evaluate";
@@ -157,6 +158,14 @@ export function CueGrid() {
   const vcRef = useRef(vc);
   vcRef.current = vc;
   revealRef.current = vc.reveal;
+  const scroll = useGridScrollMemory({
+    showId: ws.showId,
+    tab: "cues",
+    viewId: vc.viewId,
+    sig: vc.scrollSig,
+    ready: state.status === "ready",
+    chrome,
+  });
   const shownGroups = vc.groups;
   const shownRows = vc.rows;
 
@@ -506,6 +515,8 @@ export function CueGrid() {
           onOpenRow={chrome.onOpenRow}
           {...(chrome.onEscape ? { onEscape: chrome.onEscape } : {})}
           addRowLabel="Add cue"
+          scrollRestore={scroll.scrollRestore}
+          onScrollPositionChange={scroll.onScrollPositionChange}
           onEdit={onEdit}
           extraMenuItems={extraMenuItems}
           {...(editable ? { onInsert, onMove, onDelete } : {})}
