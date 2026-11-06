@@ -335,8 +335,10 @@ Notes for the integration:
   when it's at the end) stays in view (`editorScrollTarget`); a fixed row's long-text editor
   overlays the rows below (and the group headers) as before.
 - Group headers stay 40 px; section rows keep the one-line height.
-- Cost: about one ResizeObserver entry per rendered row; layout is the same as before
-  otherwise. Measured with 5,000 rows on `/dev/grid` (see the e2e "5,000 rows" test).
+- Cost: one ResizeObserver entry per rendered row. Measured (production build, desktop
+  Chrome, 60 scroll steps top to bottom): `/dev/grid` 5,000 rows, auto 16.5 ms median frame
+  (p95 22) vs normal 19.0 (p95 26); a 500-note Notes tab, auto 16.7 (p95 18.7) vs compact
+  16.4 (p95 18.6). First rows show in ~250 ms either way.
 
 ## Accessibility
 
