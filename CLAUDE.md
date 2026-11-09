@@ -436,7 +436,8 @@ views" below).
   bottom sheet at 60% height whose handle (click, or drag up/down) toggles full height.
   Escape in the grid closes the panel too when the grid has nothing else to cancel (the
   grid's `onEscape`). Grid undo covers cell edits only; inserts, moves, deletes and Sort
-  now aren't undoable yet.
+  now aren't undoable yet (except note deletes: an Undo toast, see "Multi-select +
+  selection bar").
 - **Notes panel** (`features/notes/`, R6): `NotesPanel({subject})` = `NoteList` (open
   first, newest first; `notesFor` in `compose.ts`: a cue's linked notes, content's
   linked notes (`notes.content`, many-to-many like `notes.cues`: the Notes grid's Content
@@ -1586,6 +1587,33 @@ position is kept outside React.
   a value (the row panel's editors); Apply sends one batch of the tab's own edit ops; the
   toast's **Undo** writes each row's previous value back. (The grid's own undo covers
   cell edits only.)
+- **Multi-select + selection bar** (`shared/SelectionBar.tsx`, every grid tab via
+  `TableGrid` and `CueGrid`; not the gallery layout). Selecting rows: click a cell, then
+  ⌘/Ctrl+click others (the first row counts), Shift+click extends a row selection, the
+  row-number column as before, the header checkbox / ⌘A for all, Esc clears; a Shift+click
+  **cell range** over several rows counts as selected rows too (the grid's
+  `onTargetRowsChange`; grid README "Mouse"). With ≥ 2 target rows the bar covers the
+  toolbar (`TableFrame`'s `selectionBar` slot: absolutely positioned, the toolbar under it
+  `visibility: hidden`, so no layout shift; pass `null`, not an element that renders
+  nothing, or the toolbar hides): "N notes selected", a one-click menu per select field
+  settable on all of them (`quickSetColumns`: `status` first, max 3; a pick = the bulk
+  edit's ops + Undo toast), **Set field…** (the dialog above), **Delete N** (the grid's
+  in-grid confirmation via `grid.deleteRows`), **Clear** (Esc in the bar too). Viewers get
+  count + Clear (⌘C still copies). **Keys**: Delete deletes a row selection (confirm if
+  > 1), Backspace too but always confirms; on a multi-row *cell range* both still clear
+  cells (spreadsheet rule; ⌘Z undoes). After a bulk status change the rows stay selected
+  even when they move into a collapsed group (e.g. Done).
+  **Undoable deletes**: `TableConfig.restoreOps(views) → () => Op[]` (built before the
+  delete, run on Undo) makes a delete toast "Deleted N notes." with Undo and tells the grid
+  `deleteUndoable` (its confirmation drops "can't be undone"). Only Notes has it
+  (`noteRestoreOps` + `attachmentRestoreOps`: same ids, fields, links, photos; like a note
+  card's ×, `created_at`/`created_by` become the restorer's, so restored notes sort
+  last). Other tables' deletes cascade (cue links, scene refs), so their confirmation is
+  the guard. **Batches**: bulk edits, the bar, deletes and `TableGrid`/`CueGrid` `send`
+  go through `mutateInBatches` (`shared/ops.ts`): one atomic batch up to 1000 ops (the
+  server's `MAX_OPS_PER_REQUEST`), else consecutive ≤ 1000-op batches (not atomic as a
+  whole). Tests: `DataGrid.test.tsx` "multi-select", `SelectionBar.test.tsx`,
+  `e2e/multi-select.spec.ts`.
 - **DataGrid API additions** (backwards compatible): `Column.href(value)` renders a text
   cell as a link (URL fields); `Column.masked` shows dots (sensitive fields).
   `cueNumberHints` takes an optional noun for its messages.

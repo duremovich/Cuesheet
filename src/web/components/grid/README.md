@@ -41,7 +41,8 @@ underlined; an unnumbered cue suggests the midpoint number). Source: `src/web/pa
 | `onEdit` | `(rowId, key, value) => void \| Promise` | Every cell change, including undo/redo replays |
 | `onInsert` | `({afterRowId?, beforeRowId?, groupId?}) => string \| Promise<string>` | Create the row, return its id. The grid focuses its first editable cell once the id shows up in `rows`/`groups` |
 | `onMove` | `(rowId, {afterRowId?, beforeRowId?, groupId?}) => void` | Drag to reorder. `groupId` is set when grouped (a different one = re-link, e.g. scene) |
-| `onDelete` | `(rowIds) => void` | Delete key on a row selection (the active row must be in it), or the context menu. More than one row asks for confirmation first |
+| `onDelete` | `(rowIds) => void` | Delete / Backspace on a row selection (the active row must be in it), the context menu, or the handle's `deleteRows`. More than one row (or any via Backspace) asks for confirmation first, in the grid |
+| `deleteUndoable` | `boolean` | Your deletes can be undone (an Undo toast): the confirmation drops "This can't be undone." |
 | `onOpenRow` | `(rowId) => void` | Space, the expand icon, or "Open" in the menu |
 | `sort` | `{key, dir}[]` | Live sort (see Ordering). Omit for show order |
 | `sortColumns` | `Column<Row>[]` | Columns `sort` keys resolve against when some aren't shown (a view sorting by a hidden field). Default: `columns` |
@@ -49,6 +50,7 @@ underlined; an unnumbered cue suggests the midpoint number). Source: `src/web/pa
 | `cellDecoration` | `(row, key) => {warning?, warningStyle?, ghost?} \| undefined` | `warning`: wavy orange underline + tooltip + screen-reader text (`warningStyle: "dashed"`: a dashed one, for "look elsewhere" warnings such as a cue's script anchor; `data-warning="dashed"`). `ghost`: a suggestion shown in the active empty cell (and as the editor's placeholder); Tab or → accepts it, typing replaces it. Text/long text/number columns. Memoize it |
 | `rowHeight` | `"auto" \| "compact" \| "normal" \| "tall"` | `auto` (default, "Fit to content"): each row is as tall as its tallest cell, text and chips wrapped, up to 12 lines a cell (then an ellipsis); one line = 40 px. The others are fixed: 30 / 40 / 72 px, long text clamped to 1 / 2 / 3 lines. See "Row heights" |
 | `selectedRowIds` + `onSelectionChange` | `string[]` | Controlled row selection; omit `selectedRowIds` for internal state |
+| `onTargetRowsChange` | `(ids) => void` | What row actions apply to changed: the row selection, else the rows of a cell range spanning more than one row, else `[]`. Only rows in the grid. Drive a selection bar from it (Cuesheet: `features/shared/SelectionBar.tsx`) |
 | `collapsed` + `onCollapsedChange` | `string[]` | Controlled collapsed group ids (per user, per ux.md); omit `collapsed` for internal state |
 | `onActiveRowChange` | `(rowId \| null) => void` | The active row changed (`null`: none, or a group header). Drive the detail panel / presence from it |
 | `extraMenuItems` | `({rowId, selectedRowIds}) => MenuItem[]` | Extra context-menu entries ("Show in script", "Move to scene…"), inserted before Delete |
@@ -59,7 +61,7 @@ underlined; an unnumbered cue suggests the midpoint number). Source: `src/web/pa
 | `addRowLabel` | `string` | The group header's add button ("Add cue"; default "Add row"); its accessible name is "<label> to <group>" |
 | `scrollRestore` | `{key, position: ScrollPosition | null}` | Go to a remembered position (and active cell) once per `key`, as soon as there are rows, before that frame paints. `null` leaves the scroll alone. See "Scroll memory" |
 | `onScrollPositionChange` | `(position: ScrollPosition) => void` | Every scroll event and active-cell change: the position to hand back later |
-| `ref` | `Ref<DataGridHandle>` | `focusRow(id, columnKey?)` activates and focuses a row (expanding its group; a row outside the view is scrolled to the vertical middle); `stepRow(±1)` makes the next/previous row active without moving DOM focus (↑/↓ in a panel); `scrollToRow(id)` scrolls to it without moving focus |
+| `ref` | `Ref<DataGridHandle>` | `focusRow(id, columnKey?)` activates and focuses a row (expanding its group; a row outside the view is scrolled to the vertical middle); `stepRow(±1)` makes the next/previous row active without moving DOM focus (↑/↓ in a panel); `scrollToRow(id)` scrolls to it without moving focus; `selectRows(ids)`, `clearSelection()` (also clears a range; focus returns to the active cell) and `deleteRows(ids)` (as the menu's Delete: confirmation for several) for a selection bar |
 | `aria-label` | `string` | Name of the grid (e.g. "Cue list") |
 | `className` | `string` | On the root. The root is `height: 100%`: **give its parent a height** |
 
@@ -134,6 +136,7 @@ Link values carry labels so the grid can render and undo without lookups. The co
 | Keys | Not editing | Editing |
 | --- | --- | --- |
 | ↑ / ↓ | Move (group headers are rows too). Clears a row selection | Move the caret |
+| Shift+↑ / ↓ with a row selection | Extend the row selection from its anchor (no selection: a cell range, below) | |
 | ← / → | Move (on an empty cell with a ghost, → accepts it) | Move the caret (→ on an empty editor with a ghost fills it in) |
 | Shift+arrows | Extend a cell range | |
 | Enter | Start editing (checkbox: toggle) | Commit, move down |
@@ -142,14 +145,14 @@ Link values carry labels so the grid can render and undo without lookups. The co
 | F2, double-click | Start editing | |
 | Any character | Start editing with it (select/link: open the picker with it as the query) | |
 | Space | `onOpenRow` | |
-| Delete | If the active row is in the row selection: delete the selection (confirm if > 1). Else clear the range / cell | |
-| Backspace | Clear the range / cell (never deletes rows) | |
+| Delete | If the active row is in the row selection: delete the selection (confirm if > 1). Else clear the range / cell (a multi-row cell range is cleared, not deleted: spreadsheet rule) | |
+| Backspace | As Delete, but deleting rows always asks first, even one (it's also the clear-cell key) | |
 | ⌘/Ctrl+Enter | | New line (long text). Shift+Enter also works |
 | ⌘/Ctrl+Shift+Enter | Insert row below | Commit, insert below |
 | ⌘/Ctrl+Shift+↑ | Insert row above | Commit, insert above |
 | ⌘/Ctrl+D | Duplicate row (insert below + `onEdit` per editable, non-empty column); only rows with an editable cell (also hidden from the row menu otherwise) | |
 | ⌘/Ctrl+Z, ⌘/Ctrl+Shift+Z (or ⌘/Ctrl+Y) | Undo / redo edits made through this grid | |
-| ⌘/Ctrl+A | Select all rows | |
+| ⌘/Ctrl+A | Select all rows (of expanded groups) | |
 | ⌘/Ctrl+C / V | Copy TSV (row selection, range or cell) / paste TSV from the active cell | |
 | Shift+F10, ContextMenu | Row menu (↑/↓/Home/End, Enter, Escape returns to the cell) | |
 | On a group header | Enter / Space toggles; ← collapses; → expands; ⌘/Ctrl+Shift+Enter adds a row to the group | |
@@ -181,12 +184,21 @@ changed by someone else" message. The step is still consumed.
 
 ## Mouse
 
-- Click selects a cell; Shift+click extends a range. Double-click edits.
+- Click selects a cell (and clears a row selection); double-click edits.
+- **Rows by clicking cells**: ⌘/Ctrl+click toggles that row in the row selection. With
+  nothing selected yet, the rows you were on count as selected first (a multi-row range,
+  else the active row), so click A, ⌘-click B selects A and B. Shift+click extends a row
+  selection that exists (anchor = the last plain/⌘ click) to the clicked row; with no row
+  selection, Shift+click extends a **cell range** as before.
 - Row number: click selects the row, Shift+click a range, ⌘/Ctrl+click toggles.
+- The header's corner checkbox selects every row (of expanded groups), or clears; it shows
+  a partial selection as indeterminate. Selected rows get the accent tint and a bar in the
+  row-number column.
 - Hover the row number for the drag handle, the expand (open) icon, and a `+` on the row's
   bottom edge that inserts below.
 - Right-click a row: Insert above / below, Duplicate, Open, your `extraMenuItems`, Delete
-  (the whole selection if the row is part of one).
+  (the whole selection if the row is part of one; inside a multi-row cell range, the range's
+  rows, and the range stays). `extraMenuItems` gets those target rows as `selectedRowIds`.
 - Group header: collapse toggle and **+ Add row** (`onInsert({groupId})`: append to that
   group). These buttons aren't tab stops; the header row itself is (via arrow keys).
 - Drag a header's right edge to resize; or Tab to the resizer (they're in the tab order

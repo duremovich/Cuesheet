@@ -89,3 +89,26 @@ export function placementFor(
   }
   return {};
 }
+
+/** The server's limit on ops per `POST /mutate` (`MAX_OPS_PER_REQUEST` in routes/shows.ts). */
+export const MAX_OPS_PER_BATCH = 1000;
+
+/** Splits ops into batches the server accepts, in order. */
+export function chunkOps<T>(ops: readonly T[], max = MAX_OPS_PER_BATCH): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < ops.length; i += max) out.push(ops.slice(i, i + max));
+  return out;
+}
+
+/**
+ * `store.mutate` for any number of ops: one batch when they fit (the usual case, atomic),
+ * else consecutive batches of ≤ 1000 (the store queues them in order; each applies
+ * optimistically at once). Rejects with the first failure; earlier batches stay applied.
+ */
+export function mutateInBatches<T>(
+  mutate: (ops: T[]) => Promise<void>,
+  ops: readonly T[],
+): Promise<void> {
+  if (ops.length === 0) return Promise.resolve();
+  return Promise.all(chunkOps(ops).map((batch) => mutate(batch))).then(() => undefined);
+}

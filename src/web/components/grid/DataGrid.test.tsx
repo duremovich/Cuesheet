@@ -172,6 +172,22 @@ const rowOrder = () =>
     (el) => el.dataset.rowId,
   );
 const editor = () => document.querySelector<HTMLInputElement>("[data-editor]");
+const selectedIds = () =>
+  [...document.querySelectorAll<HTMLElement>("[data-testid=grid-row][data-selected]")].map(
+    (el) => el.dataset.rowId,
+  );
+const buttonNamed = (root: Element, name: string) => {
+  const b = [...root.querySelectorAll("button")].find((x) => x.textContent === name);
+  if (!b) throw new Error(`no button ${name}`);
+  return b;
+};
+const menuItem = (name: string) => {
+  const m = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+    (x) => x.firstChild?.textContent === name,
+  );
+  if (!m) throw new Error(`no menu item ${name}`);
+  return m;
+};
 
 const THREE = [
   row("r1", "one", { qty: 1 }),
@@ -853,18 +869,24 @@ describe("DataGrid selection, groups and menus", () => {
     expect(focused()).toBe("r2:name");
   });
 
-  it("Backspace never deletes rows; arrows clear a stale row selection", () => {
+  it("Backspace on a row selection asks first, even for one row; arrows clear a stale selection", () => {
     const s = spies();
     render(<Harness initial={THREE} s={s} />);
     const nums = [...document.querySelectorAll<HTMLElement>('[data-testid="row-number"]')];
     click(nums[1] as HTMLElement);
     expect(document.querySelectorAll("[data-selected]").length).toBe(1);
     press("Backspace");
+    const dialog = document.querySelector('[role="alertdialog"]') as HTMLElement;
+    expect(dialog.textContent).toContain("Delete this row? This can't be undone.");
     expect(s.onDelete).not.toHaveBeenCalled();
-    expect(s.onEdit).toHaveBeenCalledWith("r2", "name", "");
+    expect(s.onEdit).not.toHaveBeenCalled();
+    click(buttonNamed(dialog, "Cancel"));
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(focused()).toBe("r2:name");
     press("ArrowDown");
     expect(document.querySelectorAll("[data-selected]").length).toBe(0);
     press("Delete"); // no selection any more: clears r3's cell
+    press("Backspace");
     expect(s.onDelete).not.toHaveBeenCalled();
     expect(s.onEdit).toHaveBeenLastCalledWith("r3", "name", "");
   });
@@ -1124,5 +1146,165 @@ describe("DataGrid column drag", () => {
     const before = header("qty").style.width;
     press("ArrowRight");
     expect(header("qty").style.width).not.toBe(before);
+  });
+});
+
+describe("DataGrid multi-select (cells, keys, select-all, targets)", () => {
+  const FIVE = [...THREE, row("r4", "four"), row("r5", "five")];
+
+  it("⌘/Ctrl+click on cells toggles rows, seeded by the row you were on; Shift+click extends", () => {
+    const s = spies();
+    render(<Harness initial={FIVE} s={s} />);
+    pointerDown(cell("r1", "name"));
+    expect(selectedIds()).toEqual([]); // a plain click selects a cell, not the row
+    pointerDown(cell("r3", "qty"), { mod: true });
+    expect(selectedIds()).toEqual(["r1", "r3"]);
+    expect(focused()).toBe("r3:qty");
+    pointerDown(cell("r1", "kind"), { mod: true }); // toggles r1 off
+    expect(selectedIds()).toEqual(["r3"]);
+    // Shift+click with a selection: the rows from the anchor (r1, the last ⌘-click) to here.
+    pointerDown(cell("r4", "name"), { shift: true });
+    expect(selectedIds()).toEqual(["r1", "r2", "r3", "r4"]);
+    expect(document.querySelector("[data-cell][data-inrange]")).toBeNull(); // not a cell range
+    pointerDown(cell("r5", "name")); // a plain click clears it
+    expect(selectedIds()).toEqual([]);
+  });
+
+  it("⌘/Ctrl+click on the active row with nothing selected selects it", () => {
+    const s = spies();
+    render(<Harness initial={THREE} s={s} />);
+    pointerDown(cell("r2", "name"));
+    pointerDown(cell("r2", "name"), { mod: true });
+    expect(selectedIds()).toEqual(["r2"]);
+    pointerDown(cell("r2", "name"), { mod: true });
+    expect(selectedIds()).toEqual([]);
+  });
+
+  it("Shift+↑/↓ extends a row selection; Escape clears it", () => {
+    const s = spies();
+    render(<Harness initial={FIVE} s={s} />);
+    pointerDown(cell("r2", "name"));
+    pointerDown(cell("r2", "name"), { mod: true });
+    press("ArrowDown", { shift: true });
+    press("ArrowDown", { shift: true });
+    expect(selectedIds()).toEqual(["r2", "r3", "r4"]);
+    press("ArrowUp", { shift: true });
+    expect(selectedIds()).toEqual(["r2", "r3"]);
+    expect(focused()).toBe("r3:name");
+    press("Escape");
+    expect(selectedIds()).toEqual([]);
+  });
+
+  it("Delete on a row selection made by clicking cells deletes after one confirmation", () => {
+    const s = spies();
+    render(<Harness initial={FIVE} s={s} />);
+    pointerDown(cell("r1", "name"));
+    pointerDown(cell("r2", "name"), { mod: true });
+    pointerDown(cell("r4", "name"), { mod: true });
+    press("Delete");
+    const dialog = document.querySelector('[role="alertdialog"]') as HTMLElement;
+    expect(dialog.textContent).toContain("Delete 3 rows? This can't be undone.");
+    click(buttonNamed(dialog, "Delete 3 rows"));
+    expect(s.onDelete).toHaveBeenCalledTimes(1);
+    expect(s.onDelete).toHaveBeenCalledWith(["r1", "r2", "r4"]);
+    expect(rowOrder()).toEqual(["r3", "r5"]);
+  });
+
+  it("the header checkbox selects all rows, shows a partial selection, and clears", () => {
+    const s = spies();
+    render(<Harness initial={THREE} s={s} />);
+    const box = () => document.querySelector<HTMLInputElement>('[data-testid="select-all"]');
+    expect(box()?.checked).toBe(false);
+    click(box() as HTMLInputElement);
+    expect(selectedIds()).toEqual(["r1", "r2", "r3"]);
+    expect(box()?.checked).toBe(true);
+    pointerDown(cell("r2", "name"), { mod: true }); // r2 off
+    expect(box()?.checked).toBe(false);
+    expect(box()?.indeterminate).toBe(true);
+    click(box() as HTMLInputElement);
+    expect(selectedIds()).toEqual(["r1", "r2", "r3"]);
+    click(box() as HTMLInputElement);
+    expect(selectedIds()).toEqual([]);
+  });
+
+  it("reports target rows: the selection, else a cell range over several rows", () => {
+    const s = spies();
+    const onTargetRowsChange = vi.fn();
+    render(<Harness initial={FIVE} s={s} extra={{ onTargetRowsChange }} />);
+    const last = () => onTargetRowsChange.mock.lastCall?.[0];
+    pointerDown(cell("r2", "name"));
+    expect(onTargetRowsChange).not.toHaveBeenCalled(); // a single cell: nothing to report
+    pointerDown(cell("r4", "qty"), { shift: true }); // a cell range over three rows
+    expect(last()).toEqual(["r2", "r3", "r4"]);
+    press("Escape");
+    expect(last()).toEqual([]);
+    pointerDown(cell("r1", "name"));
+    pointerDown(cell("r5", "name"), { mod: true });
+    expect(last()).toEqual(["r1", "r5"]);
+    pointerDown(cell("r3", "name"));
+    expect(last()).toEqual([]);
+  });
+
+  it("the row menu inside a multi-row range acts on the range's rows", () => {
+    const s = spies();
+    const extraMenuItems = vi.fn((_: { rowId: string; selectedRowIds: string[] }) => []);
+    render(<Harness initial={FIVE} s={s} extra={{ extraMenuItems }} />);
+    pointerDown(cell("r2", "name"));
+    pointerDown(cell("r4", "name"), { shift: true });
+    // Right-click a cell in the middle of the range: the range stays.
+    act(() => {
+      cell("r3", "qty").dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }),
+      );
+    });
+    expect(extraMenuItems).toHaveBeenLastCalledWith({
+      rowId: "r3",
+      selectedRowIds: ["r2", "r3", "r4"],
+    });
+    click(menuItem("Delete 3 rows"));
+    const dialog = document.querySelector('[role="alertdialog"]') as HTMLElement;
+    click(buttonNamed(dialog, "Delete 3 rows"));
+    expect(s.onDelete).toHaveBeenCalledWith(["r2", "r3", "r4"]);
+  });
+
+  it("Delete on a multi-row cell range still clears the cells (spreadsheet rule)", () => {
+    const s = spies();
+    render(<Harness initial={THREE} s={s} />);
+    pointerDown(cell("r1", "name"));
+    pointerDown(cell("r3", "name"), { shift: true });
+    press("Delete");
+    expect(s.onDelete).not.toHaveBeenCalled();
+    expect(s.onEdit).toHaveBeenCalledTimes(3);
+  });
+
+  it("handle: selectRows, clearSelection and deleteRows (confirmation; undoable wording)", () => {
+    const s = spies();
+    let handle: DataGridHandle | null = null;
+    render(
+      <Harness
+        initial={FIVE}
+        s={s}
+        extra={{
+          deleteUndoable: true,
+          ref: (h: DataGridHandle | null) => {
+            handle = h;
+          },
+        }}
+      />,
+    );
+    const h = () => handle as unknown as DataGridHandle;
+    act(() => h().selectRows(["r2", "r3", "gone"]));
+    expect(selectedIds()).toEqual(["r2", "r3"]);
+    act(() => h().clearSelection());
+    expect(selectedIds()).toEqual([]);
+    act(() => h().deleteRows(["r4", "r5"]));
+    const dialog = document.querySelector('[role="alertdialog"]') as HTMLElement;
+    expect(dialog.textContent).toContain("Delete 2 rows?");
+    expect(dialog.textContent).not.toContain("can't be undone");
+    expect(s.onDelete).not.toHaveBeenCalled();
+    click(buttonNamed(dialog, "Delete 2 rows"));
+    expect(s.onDelete).toHaveBeenCalledWith(["r4", "r5"]);
+    act(() => h().deleteRows(["r1"])); // one row: no confirmation
+    expect(s.onDelete).toHaveBeenLastCalledWith(["r1"]);
   });
 });

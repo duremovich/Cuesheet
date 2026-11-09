@@ -11,6 +11,7 @@ export function TableFrame({
   panel,
   notice,
   testId,
+  selectionBar,
 }: {
   title: string;
   toolbar?: ReactNode;
@@ -19,14 +20,17 @@ export function TableFrame({
   /** A line between the toolbar and the grid (e.g. an empty-table hint). */
   notice?: ReactNode;
   testId?: string;
+  /** Shown over the toolbar while several rows are selected (`SelectionBar`; null hides). */
+  selectionBar?: ReactNode;
 }) {
   const status = useShowStore((s) => s.status);
   const error = useShowStore((s) => s.error);
   return (
     <section className={styles.frame} aria-label={title} data-testid={testId}>
-      <div className={styles.toolbar}>
+      <div className={styles.toolbar} data-selecting={selectionBar ? true : undefined}>
         <h2 className={styles.title}>{title}</h2>
         {toolbar}
+        {selectionBar}
       </div>
       {status === "loading" && <p className="muted">Loading…</p>}
       {status === "error" && <p className="error">Couldn't load the show: {error}</p>}

@@ -82,6 +82,7 @@ const PASTE_TYPES = new Set(["text", "longtext", "number", "select", "measuremen
 const PICKER_TYPES = new Set(["select", "multiselect", "link", "multilink"]);
 const GHOST_TYPES = new Set(["text", "longtext", "number"]);
 const MRU_SIZE = 5;
+const NO_IDS: string[] = [];
 /** How far (px) a header must be dragged before it moves (a shorter one is a click). */
 const COL_DRAG_SLOP = 5;
 const GROUP_COL = "__group";
@@ -506,6 +507,41 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     if (ref.current.selected.length === 0 && ids.length === 0) return;
     if (props.selectedRowIds === undefined) setInternalSelection(ids);
     props.onSelectionChange?.(ids);
+    ref.current = { ...ref.current, selected: ids };
+  };
+  /** Row ids in display order (rows of expanded groups). */
+  const rowOrderOf = (cur: typeof S) => cur.navRows.map((i) => (cur.items[i] as RowItem<Row>).id);
+  /** The rows from `anchor` to `id` in display order (just `id` without a usable anchor). */
+  const rowSpan = (cur: typeof S, anchor: string | null, id: string) => {
+    const order = rowOrderOf(cur);
+    const a = anchor === null ? -1 : order.indexOf(anchor);
+    const b = order.indexOf(id);
+    if (a < 0 || b < 0) return [id];
+    return order.slice(Math.min(a, b), Math.max(a, b) + 1);
+  };
+  /** The rows a cell range covers, when it spans more than one row. */
+  const rangeRowIds = (cur: typeof S): string[] => {
+    const r = cur.range;
+    if (!r || r.anchor.group || r.focus.group || r.anchor.rowId === r.focus.rowId) return [];
+    return rowSpan(cur, r.anchor.rowId, r.focus.rowId);
+  };
+  /**
+   * ⌘/Ctrl+click on a row: toggle it. With nothing selected yet, the rows you were already
+   * on (a multi-row range, else the active row) count as selected, like a plain click in a
+   * file list, so click A then ⌘-click B selects both.
+   */
+  const toggledSelection = (cur: typeof S, id: string) => {
+    if (cur.selected.length)
+      return cur.selected.includes(id)
+        ? cur.selected.filter((x) => x !== id)
+        : [...cur.selected, id];
+    const ranged = rangeRowIds(cur);
+    const seed = ranged.length
+      ? ranged
+      : cur.active && !cur.active.group && cur.allRows.has(cur.active.rowId)
+        ? [cur.active.rowId]
+        : [];
+    return seed.includes(id) ? seed : [...seed, id];
   };
 
   const setCollapsed = (update: (s: Set<string>) => Set<string>) => {
@@ -779,6 +815,22 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     opts: { extend?: boolean; wrap?: boolean } = {},
   ) => {
     const cur = ref.current;
+    // Shift+↑/↓ with a row selection extends it from its anchor, a row at a time.
+    const a0 = cur.active;
+    if (opts.extend && cur.selected.length && a0 && !a0.group && (dir === "up" || dir === "down")) {
+      let n = cur.navRows.indexOf(cur.indexById.get(a0.rowId) ?? -1);
+      if (n < 0) return;
+      n = dir === "up" ? Math.max(0, n - 1) : Math.min(cur.navRows.length - 1, n + 1);
+      const target = rowItemAt(cur.navRows[n] ?? -1);
+      if (!target) return;
+      const anchor = cur.selected.includes(selectionAnchor.current ?? "")
+        ? selectionAnchor.current
+        : a0.rowId;
+      selectionAnchor.current = anchor;
+      setSelected(rowSpan(cur, anchor, target.id));
+      activate({ rowId: target.id, key: a0.key }, { scroll: true });
+      return;
+    }
     if (cur.selected.length) setSelected([]);
     const from = opts.extend && cur.range ? cur.range.focus : cur.active;
     if (!from) {
@@ -1010,11 +1062,15 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
   };
   const runDuplicate = (id: string) => guard("duplicate", () => duplicate(id));
 
-  /** Deletes rows; more than one needs a confirmation (deletes aren't undoable yet). */
-  const deleteRows = (ids: string[], confirmed = false) => {
+  /**
+   * Deletes rows; more than one (or any, with `ask`: Backspace) needs a confirmation first.
+   * Ids no longer in the grid are dropped.
+   */
+  const deleteRows = (requested: string[], confirmed = false, ask = false) => {
+    const ids = requested.filter((id) => ref.current.allRows.has(id));
     if (!ref.current.props.onDelete || ids.length === 0) return;
     commitAny();
-    if (ids.length > 1 && !confirmed) {
+    if ((ids.length > 1 || ask) && !confirmed) {
       setConfirm(ids);
       return;
     }
@@ -1364,9 +1420,26 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
   expandGroupRef.current = expandGroup;
   const activateRef = useRef(activate);
   activateRef.current = activate;
+  const selectionOps = useRef({ setSelected, deleteRows, setRange });
+  selectionOps.current = { setSelected, deleteRows, setRange };
   useImperativeHandle(
     props.ref,
     () => ({
+      selectRows(ids: string[]) {
+        selectionOps.current.setSelected(ids.filter((id) => ref.current.allRows.has(id)));
+      },
+      clearSelection() {
+        selectionOps.current.setRange(null);
+        selectionOps.current.setSelected([]);
+        // Called from outside (a selection bar that's about to unmount): back to the cell.
+        focusPending.current = true;
+        bump();
+      },
+      deleteRows(ids: string[]) {
+        selectionOps.current.deleteRows(ids);
+        focusPending.current = true;
+        bump();
+      },
       focusRow(id: string, columnKey?: string) {
         // A row the grid hasn't rendered yet (an optimistic insert) is focused in the commit
         // that adds it, so keys typed right after "+ Add" land in it.
@@ -1549,10 +1622,11 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       case "Backspace": {
         e.preventDefault();
         if (!a || a.group) return;
-        // Delete removes selected rows only when the active row is one of them; Backspace
-        // (and Delete otherwise) clears cells.
-        if (e.key === "Delete" && cur.selected.length > 0 && cur.selected.includes(a.rowId)) {
-          deleteRows(cur.selected);
+        // Delete / Backspace remove the selected rows when the active row is one of them
+        // (Backspace always asks first, even for one row: it's also the clear-cell key);
+        // otherwise they clear cells (a range, else the active cell).
+        if (cur.selected.length > 0 && cur.selected.includes(a.rowId)) {
+          deleteRows(cur.selected, false, e.key === "Backspace");
           return;
         }
         const edits: Edit[] = [];
@@ -2167,12 +2241,28 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       if (t.dataset.editor === "true" || t.closest("[data-editor]")) return;
       const cur = ref.current;
       if (cur.editing && (cur.editing.rowId !== id || cur.editing.key !== key)) commitAny();
+      // Row selection by clicking cells (README "Mouse"): ⌘/Ctrl toggles the row, Shift
+      // extends a row selection that exists; otherwise Shift makes a cell range.
+      if (isMod(e)) {
+        e.preventDefault();
+        setSelected(toggledSelection(cur, id));
+        selectionAnchor.current = id;
+        activate({ rowId: id, key });
+        return;
+      }
+      if (e.shiftKey && cur.selected.length) {
+        e.preventDefault();
+        setSelected(rowSpan(cur, selectionAnchor.current, id));
+        activate({ rowId: id, key });
+        return;
+      }
       if (e.shiftKey && cur.active && !cur.active.group) {
         e.preventDefault();
         setRange({ anchor: cur.range?.anchor ?? cur.active, focus: { rowId: id, key } });
         return;
       }
-      if (cur.selected.length && !isMod(e)) setSelected([]);
+      if (cur.selected.length) setSelected([]);
+      selectionAnchor.current = id;
       activate({ rowId: id, key });
     },
     cellDoubleClick(id, key) {
@@ -2196,16 +2286,15 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     rowNumberClick(id, e) {
       const cur = ref.current;
       commitAny();
-      const order = cur.navRows.map((i) => (cur.items[i] as RowItem<Row>).id);
       let next: string[];
-      if (e.shiftKey && selectionAnchor.current && order.includes(selectionAnchor.current)) {
-        const a = order.indexOf(selectionAnchor.current);
-        const b = order.indexOf(id);
-        next = order.slice(Math.min(a, b), Math.max(a, b) + 1);
+      if (
+        e.shiftKey &&
+        selectionAnchor.current &&
+        rowOrderOf(cur).includes(selectionAnchor.current)
+      ) {
+        next = rowSpan(cur, selectionAnchor.current, id);
       } else if (isMod(e)) {
-        next = cur.selected.includes(id)
-          ? cur.selected.filter((x) => x !== id)
-          : [...cur.selected, id];
+        next = toggledSelection(cur, id);
         selectionAnchor.current = id;
       } else {
         next = [id];
@@ -2229,7 +2318,10 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       commitAny();
       const cur = ref.current;
       const key = (cur.active && !cur.active.group ? cur.active.key : cur.cols[0]?.key) ?? "";
-      if (!cur.active || cur.active.group || cur.active.rowId !== id) activate({ rowId: id, key });
+      // Right-clicking inside a multi-row range keeps it: the menu acts on its rows.
+      const keepRange = rangeRowIds(cur).includes(id);
+      if (!cur.active || cur.active.group || cur.active.rowId !== id)
+        activate({ rowId: id, key }, { keepRange });
       // Keyboard-invoked context menus (Shift+F10 in some browsers) report 0,0.
       const at =
         e.clientX || e.clientY
@@ -2260,8 +2352,8 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
 
   // --- Menu ---
   const menuItems = (id: string): MenuItem[] => {
-    const inSel = selected.includes(id) && selected.length > 1;
-    const targets = inSel ? selected : [id];
+    // The selection (or a multi-row range) when the row is part of it, else just this row.
+    const targets = targetRows.length > 1 && targetRows.includes(id) ? targetRows : [id];
     const list: MenuItem[] = [];
     const at: CellRef = { rowId: id, key: "" };
     if (onInsert) {
@@ -2282,7 +2374,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       }
     }
     if (onOpenRow) list.push({ label: "Open", shortcut: "Space", onSelect: () => onOpenRow(id) });
-    list.push(...(props.extraMenuItems?.({ rowId: id, selectedRowIds: selected }) ?? []));
+    list.push(...(props.extraMenuItems?.({ rowId: id, selectedRowIds: targets }) ?? []));
     if (onDelete) {
       list.push({
         label: targets.length > 1 ? `Delete ${targets.length} rows` : "Delete row",
@@ -2305,6 +2397,28 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       c: [Math.min(c0, c1), Math.max(c0, c1)] as [number, number],
     };
   }, [range, navRows, indexById, colIndex]);
+
+  // What row actions apply to (props.onTargetRowsChange): the selection, else a multi-row range.
+  const targetRows = useMemo(() => {
+    const live = selected.filter((id) => allRows.has(id));
+    if (live.length) return live.length === selected.length ? selected : live;
+    if (!rangeRect || rangeRect.n[0] < 0 || rangeRect.n[0] === rangeRect.n[1]) return NO_IDS;
+    return navRows
+      .slice(rangeRect.n[0], rangeRect.n[1] + 1)
+      .map((i) => (items[i] as RowItem<Row>).id);
+  }, [selected, allRows, rangeRect, navRows, items]);
+  const allSelected = useMemo(
+    () =>
+      navRows.length > 0 && navRows.every((i) => selectedSet.has((items[i] as RowItem<Row>).id)),
+    [navRows, items, selectedSet],
+  );
+  const reportedTargets = useRef<string[]>(NO_IDS);
+  useEffect(() => {
+    const prev = reportedTargets.current;
+    reportedTargets.current = targetRows;
+    if (prev.length === targetRows.length && prev.every((id, i) => id === targetRows[i])) return;
+    ref.current.props.onTargetRowsChange?.(targetRows);
+  }, [targetRows]);
 
   const pickerCol =
     editing?.kind === "picker" ? cols[colIndex.get(editing.key) ?? -1]?.col : undefined;
@@ -2470,6 +2584,28 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
             className={`${styles.hcell} ${styles.rownumHeader}`}
             style={{ width: ROWNUM_WIDTH }}
           >
+            {navRows.length > 0 && (
+              <input
+                type="checkbox"
+                tabIndex={-1}
+                className={styles.selectAll}
+                aria-label="Select all rows"
+                title="Select all rows (⌘/Ctrl+A)"
+                data-testid="select-all"
+                checked={allSelected}
+                ref={(el) => {
+                  if (el) el.indeterminate = !allSelected && selected.length > 0;
+                }}
+                onMouseDown={(e) => e.preventDefault()}
+                onChange={() => {
+                  commitAny();
+                  setRange(null);
+                  setSelected(allSelected ? [] : rowOrderOf(ref.current));
+                  focusPending.current = true;
+                  bump();
+                }}
+              />
+            )}
             <span className={styles.visuallyHidden}>Row</span>#
           </div>
           {cols.map((c) => {
@@ -2560,6 +2696,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       {confirm && (
         <ConfirmDelete
           count={confirm.length}
+          undoable={!!props.deleteUndoable}
           onConfirm={() => {
             const ids = confirm;
             setConfirm(null);
@@ -2612,10 +2749,12 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
 /** In-grid confirmation for multi-row deletes (testable, unlike window.confirm). */
 function ConfirmDelete({
   count,
+  undoable,
   onConfirm,
   onCancel,
 }: {
   count: number;
+  undoable: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -2636,9 +2775,12 @@ function ConfirmDelete({
         }
       }}
     >
-      <span id={textId}>Delete {count} rows? This can't be undone.</span>
+      <span id={textId}>
+        Delete {count === 1 ? "this row" : `${count} rows`}?
+        {undoable ? "" : " This can't be undone."}
+      </span>
       <button type="button" className={styles.danger} onClick={onConfirm}>
-        Delete {count} rows
+        Delete {count === 1 ? "row" : `${count} rows`}
       </button>
       <button type="button" ref={cancelRef} onClick={onCancel}>
         Cancel

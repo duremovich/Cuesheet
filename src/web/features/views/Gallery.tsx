@@ -200,6 +200,10 @@ export function Gallery<V>(p: GalleryProps<V>) {
         return next ?? activeRef.current;
       },
       scrollToRow: (id) => scrollTo(id),
+      // Cards have no multi-select (yet): the table's selection bar never shows here.
+      selectRows: () => undefined,
+      clearSelection: () => undefined,
+      deleteRows: () => undefined,
     }),
     [focusCard, activate, scrollTo, rowId],
   );

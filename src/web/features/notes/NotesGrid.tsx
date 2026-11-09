@@ -4,7 +4,7 @@ import { useMemo, useRef } from "react";
 import type { Group } from "../../components/grid/types";
 import { ViewCache } from "../../lib/show-selectors";
 import { type ShowState, useShowStore, useShowStoreInstance } from "../../lib/show-store";
-import { attachmentsOf } from "../attachments/selectors";
+import { attachmentRestoreOps, attachmentsOf } from "../attachments/selectors";
 import { contentItem, cueItem, personItem, sceneItem } from "../shared/pickers";
 import { TableGrid } from "../shared/TableGrid";
 import { useWorkspace } from "../show/workspace";
@@ -17,6 +17,7 @@ import {
   statusFromGroupId,
   statusGroupId,
 } from "./columns";
+import { noteLinkIds, noteRestoreOps } from "./compose";
 
 const NONE: string[] = [];
 /** Done notes start folded away; the per-user collapse state takes over once changed. */
@@ -142,6 +143,23 @@ export function NotesGrid() {
               vs.every((v) => v.editable)
                 ? vs.map((v) => ({ op: "delete", table: "notes", id: v.id }))
                 : "You can only delete notes you created.",
+            // Undo, as for a note card's ×: same ids, fields, links and photos.
+            restoreOps: (vs) => {
+              const state = store.getState();
+              const saved = vs.map((v) => ({
+                note: v.note,
+                links: noteLinkIds(state, v.id),
+                photos: attachmentsOf(state.tables.attachments, "notes", v.id),
+              }));
+              return () => {
+                const exists = (table: "cues" | "persons" | "content" | "scenes", id: string) =>
+                  store.getState().tables[table].has(id);
+                return saved.flatMap(({ note, links, photos }) => [
+                  ...noteRestoreOps(note, links, exists),
+                  ...attachmentRestoreOps(photos),
+                ]);
+              };
+            },
           }
         : {})}
       panelTitle={(v) => `Note by ${v.author || "unknown"} · ${formatTimestamp(v.note.created_at)}`}

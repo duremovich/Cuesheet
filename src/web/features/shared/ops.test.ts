@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Op } from "../../../shared/ops";
-import { linkDiffOps, placementFor, textField } from "./ops";
+import { chunkOps, linkDiffOps, mutateInBatches, placementFor, textField } from "./ops";
 
 /** Applies link/unlink ops to a list like the store does. */
 function replay(start: string[], ops: Op[]): string[] {
@@ -88,5 +88,36 @@ describe("placementFor", () => {
     expect(textField("  ")).toBeNull();
     expect(textField("x")).toBe("x");
     expect(textField(null)).toBeNull();
+  });
+});
+
+describe("chunkOps / mutateInBatches", () => {
+  const ops = (n: number) => Array.from({ length: n }, (_, i) => i);
+
+  it("splits into batches of at most 1000, in order", () => {
+    expect(chunkOps(ops(0))).toEqual([]);
+    expect(chunkOps(ops(1000)).map((b) => b.length)).toEqual([1000]);
+    expect(chunkOps(ops(2001)).map((b) => b.length)).toEqual([1000, 1000, 1]);
+    expect(chunkOps(ops(5), 2)).toEqual([[0, 1], [2, 3], [4]]);
+  });
+
+  it("sends one batch when they fit, else several in order; rejects on a failure", async () => {
+    const mutate = vi.fn((_: number[]) => Promise.resolve());
+    await mutateInBatches(mutate, ops(3));
+    expect(mutate.mock.calls.map((c) => c[0].length)).toEqual([3]);
+    mutate.mockClear();
+    await mutateInBatches(mutate, ops(2500));
+    expect(mutate.mock.calls.map((c) => [c[0][0], c[0].length])).toEqual([
+      [0, 1000],
+      [1000, 1000],
+      [2000, 500],
+    ]);
+    mutate.mockClear();
+    await mutateInBatches(mutate, []);
+    expect(mutate).not.toHaveBeenCalled();
+    const failing = vi.fn((b: number[]) =>
+      b[0] === 1000 ? Promise.reject(new Error("nope")) : Promise.resolve(),
+    );
+    await expect(mutateInBatches(failing, ops(1500))).rejects.toThrow("nope");
   });
 });

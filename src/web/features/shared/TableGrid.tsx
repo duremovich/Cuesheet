@@ -28,7 +28,9 @@ import { Gallery } from "../views/Gallery";
 import { DATE_FIELDS, NATIVE_GROUP_KEY } from "../views/tableDefaults";
 import { useViewConfig } from "../views/useViewConfig";
 import { BulkEditDialog, type BulkEditRequest, bulkOps, rowIdsOf } from "./BulkEdit";
+import { mutateInBatches } from "./ops";
 import { type PanelSection, type PanelTab, RowPanel } from "./RowPanel";
+import { SelectionBar, useSelectionTargets } from "./SelectionBar";
 import { TableFrame, ToolbarButton } from "./TableFrame";
 import { useGridScrollMemory } from "./useGridScrollMemory";
 import { GRID_ACTIONS, useTableChrome } from "./useTableChrome";
@@ -64,6 +66,13 @@ export interface TableConfig<V> {
   moveOps?: (view: V, pos: InsertPosition) => Op[];
   /** Delete ops (omit: no deleting). Return a string to refuse with that message. */
   deleteOps?: (views: V[]) => Op[] | string;
+  /**
+   * Deletes can be undone: called just before the delete is sent, returns a function that
+   * builds the ops recreating the rows (run when the toast's Undo is clicked, so it can
+   * skip links to records deleted meanwhile). Omit: deletes aren't undoable (the grid's
+   * confirmation for several rows is the guard).
+   */
+  restoreOps?: (views: V[]) => () => Op[];
   panelTitle: (v: V) => string;
   panelSections?: (v: V) => PanelSection[];
   /** Extra row panel tabs after Fields (e.g. a surface's Calculator). */
@@ -108,6 +117,9 @@ export interface TableConfig<V> {
   /** Rows left out of exports. */
   isSection?: (v: V) => boolean;
 }
+
+/** How long a delete's Undo stays in the toast (as for a note card's ×). */
+const UNDO_MS = 8000;
 
 const noRow = (): { id: string; custom: CustomValues } => ({ id: "", custom: {} });
 
@@ -194,8 +206,14 @@ export function TableGrid<V>(config: TableConfig<V>) {
   const report = ws.reportError;
   const send = useCallback(
     (ops: Op[], what: string) => {
-      if (ops.length === 0) return;
-      store.mutate(ops).catch((e: unknown) => report(e, what));
+      if (ops.length === 0) return Promise.resolve(false);
+      return mutateInBatches((b) => store.mutate(b), ops).then(
+        () => true,
+        (e: unknown) => {
+          report(e, what);
+          return false;
+        },
+      );
     },
     [store, report],
   );
@@ -227,12 +245,11 @@ export function TableGrid<V>(config: TableConfig<V>) {
     ],
     [extraMenu, canBulk],
   );
-  const applyBulk = (column: Column<V>, value: unknown) => {
-    const rows = (bulk?.rowIds ?? []).flatMap((id) => byIdRef.current.get(id) ?? []);
+  const applyBulk = (rowIds: readonly string[], column: Column<V>, value: unknown) => {
+    const rows = rowIds.flatMap((id) => byIdRef.current.get(id) ?? []);
     const { ops, undo } = bulkOps<V>({ rows, rowId: config.rowId, column, value, editOps });
     if (ops.length === 0) return;
-    store
-      .mutate(ops)
+    mutateInBatches((b) => store.mutate(b), ops)
       .then(() =>
         ws.toast(
           `Set ${column.title} on ${rows.length} ${rows.length === 1 ? "row" : "rows"}`,
@@ -241,7 +258,7 @@ export function TableGrid<V>(config: TableConfig<V>) {
             action: {
               label: "Undo",
               run: () =>
-                send(
+                void send(
                   undo((id) => byIdRef.current.get(id)),
                   "undo the change",
                 ),
@@ -251,6 +268,11 @@ export function TableGrid<V>(config: TableConfig<V>) {
       )
       .catch((e: unknown) => report(e, "change the rows"));
   };
+  const selection = useSelectionTargets(byId);
+  const selectedViews = useMemo(
+    () => selection.targets.flatMap((id) => byId.get(id) ?? []),
+    [selection.targets, byId],
+  );
 
   const insert = useCallback(
     (pos: InsertPosition) => {
@@ -288,7 +310,17 @@ export function TableGrid<V>(config: TableConfig<V>) {
         ws.toast(ops, "error");
         return;
       }
-      send(ops, `delete ${ids.length === 1 ? `the ${cfg.current.noun}` : "the rows"}`);
+      const { noun, plural } = cfg.current;
+      const n = views.length;
+      const what = n === 1 ? `the ${noun}` : `the ${plural ?? `${noun}s`}`;
+      const restore = cfg.current.restoreOps?.(views);
+      void send(ops, `delete ${what}`).then((ok) => {
+        if (!ok || !restore) return;
+        ws.toast(`Deleted ${n === 1 ? `1 ${noun}` : `${n} ${plural ?? `${noun}s`}`}.`, "info", {
+          duration: UNDO_MS,
+          action: { label: "Undo", run: () => void send(restore(), `restore ${what}`) },
+        });
+      });
     },
     [send, ws],
   );
@@ -331,6 +363,21 @@ export function TableGrid<V>(config: TableConfig<V>) {
     <TableFrame
       title={config.title}
       testId={config.testId}
+      selectionBar={
+        selection.targets.length > 1 && view.layout !== "gallery" ? (
+          <SelectionBar<V>
+            grid={chrome.grid}
+            targets={selection.targets}
+            rows={selectedViews}
+            columns={columns}
+            plural={config.plural ?? `${config.noun}s`}
+            canEdit={canBulk}
+            canDelete={!!config.deleteOps}
+            onQuickSet={applyBulk}
+            onSetField={(rowIds) => setBulk({ rowIds })}
+          />
+        ) : null
+      }
       toolbar={
         <>
           <span className="muted" data-testid="row-count">
@@ -416,6 +463,8 @@ export function TableGrid<V>(config: TableConfig<V>) {
             {...(canInsert ? { onInsert: insert } : {})}
             {...(config.moveOps ? { onMove } : {})}
             {...(config.deleteOps ? { onDelete } : {})}
+            deleteUndoable={!!config.restoreOps}
+            onTargetRowsChange={selection.onTargetRowsChange}
             onError={(e, action) => report(e, GRID_ACTIONS[action])}
           />
         )}
@@ -425,7 +474,7 @@ export function TableGrid<V>(config: TableConfig<V>) {
           request={bulk}
           columns={columns}
           rows={bulk.rowIds.flatMap((id) => byId.get(id) ?? [])}
-          onApply={applyBulk}
+          onApply={(column, value) => applyBulk(bulk.rowIds, column, value)}
           onClose={() => setBulk(null)}
         />
       )}

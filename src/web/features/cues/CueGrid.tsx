@@ -18,8 +18,9 @@ import { anchorWarnings } from "../script/markers";
 import { scriptPanelTab } from "../script/ScriptTab";
 import { useScriptSnapshot, useScriptVersions } from "../script/source";
 import { BulkEditDialog, type BulkEditRequest, bulkOps, rowIdsOf } from "../shared/BulkEdit";
-import { groupOrder, placementFor } from "../shared/ops";
+import { groupOrder, mutateInBatches, placementFor } from "../shared/ops";
 import { RowPanel } from "../shared/RowPanel";
+import { SelectionBar, useSelectionTargets } from "../shared/SelectionBar";
 import { TableFrame, ToolbarButton } from "../shared/TableFrame";
 import styles from "../shared/TableFrame.module.css";
 import { useGridScrollMemory } from "../shared/useGridScrollMemory";
@@ -212,7 +213,7 @@ export function CueGrid() {
   const send = useCallback(
     (ops: Op[], what: string) => {
       if (ops.length === 0) return Promise.resolve();
-      return store.mutate(ops).catch((e: unknown) => {
+      return mutateInBatches((b) => store.mutate(b), ops).catch((e: unknown) => {
         report(e, what);
         throw e;
       });
@@ -248,8 +249,8 @@ export function CueGrid() {
 
   // --- Bulk edit (S8): "Set field for selection…" / "Move to scene…" ---
   const [bulk, setBulk] = useState<BulkEditRequest | null>(null);
-  const applyBulk = (column: Column<CueView>, value: unknown) => {
-    const rows = (bulk?.rowIds ?? []).flatMap((id) => viewsRef.current.get(id) ?? []);
+  const applyBulk = (rowIds: readonly string[], column: Column<CueView>, value: unknown) => {
+    const rows = rowIds.flatMap((id) => viewsRef.current.get(id) ?? []);
     const { ops, undo } = bulkOps<CueView>({
       rows,
       rowId: (v) => v.id,
@@ -272,7 +273,7 @@ export function CueGrid() {
                   { groupId },
                   groups.map((g) => ({
                     ...g,
-                    rowIds: g.rowIds.filter((r) => !bulk?.rowIds.includes(r)),
+                    rowIds: g.rowIds.filter((r) => !rowIds.includes(r)),
                   })),
                 )
               : {};
@@ -282,8 +283,7 @@ export function CueGrid() {
     }
     if (ops.length === 0) return;
     const n = rows.length;
-    store
-      .mutate(ops)
+    mutateInBatches((b) => store.mutate(b), ops)
       .then(() =>
         ws.toast(`Set ${column.title} on ${n} ${n === 1 ? "cue" : "cues"}`, "info", {
           action: {
@@ -298,6 +298,12 @@ export function CueGrid() {
       )
       .catch((e: unknown) => report(e, "change the cues"));
   };
+
+  const selection = useSelectionTargets(viewsById);
+  const selectedViews = useMemo(
+    () => selection.targets.flatMap((id) => viewsById.get(id) ?? []),
+    [selection.targets, viewsById],
+  );
 
   const insert = useCallback(
     (at: InsertPosition, fields: Record<string, unknown> = {}) => {
@@ -458,6 +464,21 @@ export function CueGrid() {
     <TableFrame
       title="Cues"
       testId="cue-list"
+      selectionBar={
+        selection.targets.length > 1 ? (
+          <SelectionBar<CueView>
+            grid={chrome.grid}
+            targets={selection.targets}
+            rows={selectedViews}
+            columns={baseColumns}
+            plural="cues"
+            canEdit={editable}
+            canDelete={editable}
+            onQuickSet={applyBulk}
+            onSetField={(rowIds) => setBulk({ rowIds })}
+          />
+        ) : null
+      }
       toolbar={
         <>
           <span className="muted" data-testid="cue-count">
@@ -519,6 +540,7 @@ export function CueGrid() {
           onScrollPositionChange={scroll.onScrollPositionChange}
           onEdit={onEdit}
           extraMenuItems={extraMenuItems}
+          onTargetRowsChange={selection.onTargetRowsChange}
           {...(editable ? { onInsert, onMove, onDelete } : {})}
           onError={(e, action) => report(e, GRID_ACTIONS[action])}
         />
@@ -528,7 +550,7 @@ export function CueGrid() {
           request={bulk}
           columns={baseColumns}
           rows={bulk.rowIds.flatMap((id) => viewsById.get(id) ?? [])}
-          onApply={applyBulk}
+          onApply={(column, value) => applyBulk(bulk.rowIds, column, value)}
           onClose={() => setBulk(null)}
         />
       )}

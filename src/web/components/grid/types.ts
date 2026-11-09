@@ -197,6 +197,15 @@ export interface DataGridHandle {
   stepRow(delta: number): string | null;
   /** Scroll a row into view (expanding its group if collapsed) without moving focus. */
   scrollToRow(rowId: string): void;
+  /** Replace the row selection (ids not in the grid are dropped). */
+  selectRows(rowIds: string[]): void;
+  /** Clear the row selection and any cell range (a selection bar's ✕). */
+  clearSelection(): void;
+  /**
+   * Delete rows as the menu's Delete does: more than one asks for confirmation in the grid
+   * first, then `onDelete`; focus moves to a neighbour (a selection bar's Delete).
+   */
+  deleteRows(rowIds: string[]): void;
 }
 
 export type GridAction = "edit" | "insert" | "duplicate" | "move" | "delete";
@@ -231,6 +240,17 @@ export interface DataGridProps<Row> {
   /** Controlled row selection; omit for internal state. */
   selectedRowIds?: string[];
   onSelectionChange?: (ids: string[]) => void;
+  /**
+   * The rows row actions apply to changed: the row selection, else the rows a cell range
+   * spans when it covers more than one row, else none (`[]`). In display order for ranges,
+   * click order for selections; only rows in the grid. Drives a selection bar.
+   */
+  onTargetRowsChange?: (ids: string[]) => void;
+  /**
+   * Deletes can be undone (e.g. an Undo toast): the multi-row confirmation doesn't say
+   * "This can't be undone."
+   */
+  deleteUndoable?: boolean;
   /** The user resized a column (persist it per view). */
   onColumnResize?: (key: string, width: number) => void;
   /**

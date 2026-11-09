@@ -76,6 +76,13 @@
 .rownumHeader {
   left: 0;
   justify-content: center;
+  gap: var(--space-2);
+}
+
+.selectAll {
+  margin: 0;
+  accent-color: var(--color-accent);
+  cursor: pointer;
 }
 
 .typeIcon {
@@ -204,6 +211,14 @@
 .cell[data-inrange] {
   background: var(--color-accent-subtle);
   color: var(--color-text);
+}
+
+/* A selected row is marked in the row-number column too, so a selection reads at a glance
+   even on rows colored by a rule. */
+.row[data-selected] .rownum {
+  box-shadow: inset 3px 0 0 var(--color-accent);
+  color: var(--color-accent);
+  font-weight: 600;
 }
 
 .row[data-moved] {
