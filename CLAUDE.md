@@ -320,6 +320,10 @@ for a second trace, but `failOnFlakyTests` still fails the run.
   CPU throttling makes render races show up: `(await page.context().newCDPSession(page))
   .send("Emulation.setCPUThrottlingRate", {rate: 6})`. Fix the app when the race is in
   the app.
+- **Known flake (open, 2026-11-09):** `e2e/row-height.spec.ts` "typing a long note inline
+  grows the row and keeps the caret in view" fails ~1 in 8 with `--repeat-each=30
+  --workers=6` (the row `ids[12]` isn't rendered yet at `toBeVisible`), already on
+  `536c0c1`, before multi-select. Not fixed yet; rerun, don't retry-annotate.
 - **Rate limits are shared.** Failed logins and bad invite/reset/share tokens count toward
   per-IP limits (sign-in: 50 an hour per IP; tokens: 10 a minute), and every test's IP is
   the same locally. Keep deliberate
@@ -1631,8 +1635,11 @@ position is kept outside React.
   adjacent cues, scenes, scene + cue in one batch both orders, content with versions,
   people, surfaces with a region, shots, notes, custom rows, and a target deleted
   meanwhile), `script.test.ts` (a cue's anchors), `ops.test.ts` "undo of a delete"
-  (creation stamps). The Scenes tab still asks with a native `window.confirm` (in its
-  `deleteOps`, predating this) before moving cues to Unassigned. **Batches**: bulk edits, the bar, deletes and `TableGrid`/`CueGrid` `send`
+  (creation stamps). **No native dialogs on the delete path**: a table that must always
+  ask or say more uses `TableConfig.deleteConfirm(views) → {always?, message?}` (DataGrid
+  `deleteConfirm`), shown in the grid's strip; Scenes: always, "Delete scene 101 Open? Its
+  4 cues move to Unassigned." (`sceneDeleteMessage`). e2e asserts no `dialog` fires.
+  **Batches**: bulk edits, the bar, deletes and `TableGrid`/`CueGrid` `send`
   go through `mutateInBatches` (`shared/ops.ts`): one atomic batch up to 1000 ops (the
   server's `MAX_OPS_PER_REQUEST`), else consecutive ≤ 1000-op batches (not atomic as a
   whole). Tests: `DataGrid.test.tsx` "multi-select", `SelectionBar.test.tsx`,

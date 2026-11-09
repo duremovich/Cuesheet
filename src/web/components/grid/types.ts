@@ -251,6 +251,11 @@ export interface DataGridProps<Row> {
    * "This can't be undone."
    */
   deleteUndoable?: boolean;
+  /**
+   * Before a delete: `always` confirms even one row (in the grid's strip, never a native
+   * dialog), `message` replaces the strip's question (say what else the delete does).
+   */
+  deleteConfirm?: (rowIds: string[]) => { message?: string; always?: boolean } | undefined;
   /** What a row is called in the delete menu and confirmation ("note"/"notes"; default row/rows). */
   rowNoun?: { one: string; other: string };
   /** The user resized a column (persist it per view). */

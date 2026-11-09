@@ -77,27 +77,28 @@ export function SceneGrid() {
             moveOps: (v, pos) => [
               { op: "move", table: "scenes", id: v.id, ...placementFor(pos, undefined, v.id) },
             ],
-            deleteOps: (views) => {
-              // Always ask for one scene (the grid asks for several); say what happens to
-              // its cues.
-              const cues = views.reduce((n, v) => n + v.cueCount, 0);
-              const what =
-                views.length === 1
-                  ? `Delete scene ${sceneTitle(views[0]?.scene)}?`
-                  : `Delete ${views.length} scenes?`;
-              const effect =
-                cues > 0
-                  ? ` ${views.length === 1 ? "Its" : "Their"} ${cues} ${cues === 1 ? "cue moves" : "cues move"} to Unassigned.`
-                  : "";
-              if ((views.length === 1 || cues > 0) && !window.confirm(`${what}${effect}`)) {
-                return [];
-              }
-              return views.map((v) => ({ op: "delete", table: "scenes", id: v.id }));
-            },
+            // Always ask, even for one scene (in the grid's strip), and say what happens to
+            // its cues; Undo (the toast) gives them their scene back.
+            deleteConfirm: (views) => ({ always: true, message: sceneDeleteMessage(views) }),
+            deleteOps: (views) => views.map((v) => ({ op: "delete", table: "scenes", id: v.id })),
           }
         : {})}
       panelTitle={(v) => sceneTitle(v.scene)}
       empty={<p className="muted">No scenes yet.</p>}
     />
   );
+}
+
+/** "Delete scene 101 Open? Its 4 cues move to Unassigned." */
+export function sceneDeleteMessage(views: readonly SceneView[]): string {
+  const cues = views.reduce((n, v) => n + v.cueCount, 0);
+  const what =
+    views.length === 1
+      ? `Delete scene ${sceneTitle(views[0]?.scene)}?`
+      : `Delete ${views.length} scenes?`;
+  const effect =
+    cues > 0
+      ? ` ${views.length === 1 ? "Its" : "Their"} ${cues} ${cues === 1 ? "cue moves" : "cues move"} to Unassigned.`
+      : "";
+  return `${what}${effect}`;
 }

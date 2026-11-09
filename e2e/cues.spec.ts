@@ -102,17 +102,21 @@ test("the other tabs show their tables", async ({ page }) => {
   await page.getByTestId("grid-scroll").evaluate((el) => {
     el.scrollTop = 0;
   });
-  let message = "";
-  page.once("dialog", (d) => {
-    message = d.message();
+  // In the grid's own confirmation strip, never a native dialog.
+  const dialogs: string[] = [];
+  page.on("dialog", (d) => {
+    dialogs.push(d.message());
     void d.dismiss();
   });
   await overture.locator('[data-col="name"]').click({ button: "right" });
   await page.getByRole("menuitem", { name: "Delete scene", exact: true }).click();
-  await expect
-    .poll(() => message)
-    .toBe("Delete scene 100 Overture? Its 11 cues move to Unassigned.");
+  const strip = page.getByRole("alertdialog");
+  await expect(strip).toContainText("Delete scene 100 Overture? Its 11 cues move to Unassigned.");
+  await expect(strip).not.toContainText("can't be undone");
+  await strip.getByRole("button", { name: "Cancel" }).click();
+  await expect(strip).toHaveCount(0);
   await expect(overture).toBeVisible(); // declined: nothing deleted
+  expect(dialogs).toEqual([]);
 });
 
 test("a commenter can add notes and edit only their own", async ({ browser }) => {

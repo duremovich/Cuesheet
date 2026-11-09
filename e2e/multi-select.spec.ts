@@ -264,12 +264,21 @@ test("delete → Undo restores a linked cue, and a scene with its cues' scene re
   await expect.poll(() => fullSnapshot(page, showId)).toEqual(original);
 
   // A scene: its cues, content and note go to Unassigned; Undo gives them their scene back.
-  page.on("dialog", (d) => void d.accept()); // the Scenes tab asks before moving cues
+  // The Scenes tab asks in the grid's strip; a native dialog would be a regression.
+  const dialogs: string[] = [];
+  page.on("dialog", (d) => {
+    dialogs.push(d.message());
+    void d.dismiss();
+  });
   await page.goto(`/shows/${showId}/scenes`);
   await waitForShowReady(page);
   const scenes = page.getByRole("grid", { name: "Scene list" });
   await scenes.locator(`[data-row-id="${s1}"] [data-col="name"]`).click({ button: "right" });
   await page.getByRole("menuitem", { name: "Delete scene" }).click();
+  await expect(confirmStrip(page)).toHaveText(
+    /Delete scene 101 Open\? Its 2 cues move to Unassigned\./,
+  );
+  await confirmStrip(page).getByRole("button", { name: "Delete scene" }).click();
   await expect
     .poll(async () =>
       (await rowsOf(page, showId, "cues")).map((q) => (q as { scene_id?: unknown }).scene_id),
@@ -281,4 +290,5 @@ test("delete → Undo restores a linked cue, and a scene with its cues' scene re
     .getByRole("button", { name: "Undo" })
     .click();
   await expect.poll(() => fullSnapshot(page, showId)).toEqual(original);
+  expect(dialogs).toEqual([]);
 });

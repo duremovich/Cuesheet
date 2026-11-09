@@ -1308,6 +1308,25 @@ describe("DataGrid multi-select (cells, keys, select-all, targets)", () => {
     expect(s.onDelete).toHaveBeenLastCalledWith(["r1"]);
   });
 
+  it("deleteConfirm: confirms even one row in the strip, with its own message", () => {
+    const s = spies();
+    const deleteConfirm = vi.fn((ids: string[]) => ({
+      always: true,
+      message: `Delete ${ids.join("+")}? Its cues move.`,
+    }));
+    render(<Harness initial={THREE} s={s} extra={{ deleteConfirm, deleteUndoable: true }} />);
+    pointerDown(cell("r2", "name"));
+    press("ContextMenu");
+    click(menuItem("Delete row"));
+    expect(deleteConfirm).toHaveBeenCalledWith(["r2"]);
+    const dialog = document.querySelector('[role="alertdialog"]') as HTMLElement;
+    expect(dialog.textContent).toContain("Delete r2? Its cues move.");
+    expect(s.onDelete).not.toHaveBeenCalled();
+    click(buttonNamed(dialog, "Delete row"));
+    expect(s.onDelete).toHaveBeenCalledWith(["r2"]);
+    expect(deleteConfirm).toHaveBeenCalledTimes(1); // not asked again once confirmed
+  });
+
   it("rowNoun names the rows in the delete menu and the confirmation", () => {
     const s = spies();
     render(

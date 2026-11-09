@@ -67,6 +67,8 @@ export interface TableConfig<V> {
   moveOps?: (view: V, pos: InsertPosition) => Op[];
   /** Delete ops (omit: no deleting). Return a string to refuse with that message. */
   deleteOps?: (views: V[]) => Op[] | string;
+  /** The grid's delete confirmation for these rows (DataGrid `deleteConfirm`). */
+  deleteConfirm?: (views: V[]) => { message?: string; always?: boolean } | undefined;
   panelTitle: (v: V) => string;
   panelSections?: (v: V) => PanelSection[];
   /** Extra row panel tabs after Fields (e.g. a surface's Calculator). */
@@ -313,6 +315,11 @@ export function TableGrid<V>(config: TableConfig<V>) {
     },
     [store, ws],
   );
+  const deleteConfirm = useCallback(
+    (ids: string[]) =>
+      cfg.current.deleteConfirm?.(ids.flatMap((id) => byIdRef.current.get(id) ?? [])),
+    [],
+  );
   const rowNoun = useMemo(
     () => ({ one: config.noun, other: config.plural ?? `${config.noun}s` }),
     [config.noun, config.plural],
@@ -458,6 +465,7 @@ export function TableGrid<V>(config: TableConfig<V>) {
             {...(config.deleteOps ? { onDelete } : {})}
             deleteUndoable
             rowNoun={rowNoun}
+            {...(config.deleteConfirm ? { deleteConfirm } : {})}
             onTargetRowsChange={selection.onTargetRowsChange}
             onError={(e, action) => report(e, GRID_ACTIONS[action])}
           />

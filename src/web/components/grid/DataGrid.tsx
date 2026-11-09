@@ -207,7 +207,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     x: number;
     height: number;
   } | null>(null);
-  const [confirm, setConfirm] = useState<string[] | null>(null);
+  const [confirm, setConfirm] = useState<{ ids: string[]; message?: string } | null>(null);
   const [hint, setHint] = useState<string>("");
   const [viewportWidth, setViewportWidth] = useState(0);
   const [pickerAnchor, setPickerAnchor] = useState<HTMLElement | null>(null);
@@ -1065,16 +1065,19 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
   const runDuplicate = (id: string) => guard("duplicate", () => duplicate(id));
 
   /**
-   * Deletes rows; more than one (or any, with `ask`: Backspace) needs a confirmation first.
-   * Ids no longer in the grid are dropped.
+   * Deletes rows; more than one (or any, with `ask`: Backspace, or when `deleteConfirm`
+   * says so) needs a confirmation first. Ids no longer in the grid are dropped.
    */
   const deleteRows = (requested: string[], confirmed = false, ask = false) => {
     const ids = requested.filter((id) => ref.current.allRows.has(id));
     if (!ref.current.props.onDelete || ids.length === 0) return;
     commitAny();
-    if ((ids.length > 1 || ask) && !confirmed) {
-      setConfirm(ids);
-      return;
+    if (!confirmed) {
+      const custom = ref.current.props.deleteConfirm?.(ids);
+      if (ids.length > 1 || ask || custom?.always) {
+        setConfirm({ ids, ...(custom?.message ? { message: custom.message } : {}) });
+        return;
+      }
     }
     const cur = ref.current;
     const gone = new Set(ids);
@@ -2697,11 +2700,12 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       </div>
       {confirm && (
         <ConfirmDelete
-          count={confirm.length}
+          count={confirm.ids.length}
           noun={noun}
+          message={confirm.message}
           undoable={!!props.deleteUndoable}
           onConfirm={() => {
-            const ids = confirm;
+            const { ids } = confirm;
             setConfirm(null);
             deleteRows(ids, true);
             focusPending.current = true;
@@ -2753,12 +2757,15 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
 function ConfirmDelete({
   count,
   noun,
+  message,
   undoable,
   onConfirm,
   onCancel,
 }: {
   count: number;
   noun: { one: string; other: string };
+  /** Replaces the question ("Delete scene 101 Open? Its 4 cues move to Unassigned."). */
+  message?: string | undefined;
   undoable: boolean;
   onConfirm: () => void;
   onCancel: () => void;
@@ -2781,7 +2788,7 @@ function ConfirmDelete({
       }}
     >
       <span id={textId}>
-        Delete {count === 1 ? `this ${noun.one}` : `${count} ${noun.other}`}?
+        {message ?? `Delete ${count === 1 ? `this ${noun.one}` : `${count} ${noun.other}`}?`}
         {undoable ? "" : " This can't be undone."}
       </span>
       <button type="button" className={styles.danger} onClick={onConfirm}>
