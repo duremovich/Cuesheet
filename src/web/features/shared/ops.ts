@@ -104,11 +104,14 @@ export function chunkOps<T>(ops: readonly T[], max = MAX_OPS_PER_BATCH): T[][] {
  * `store.mutate` for any number of ops: one batch when they fit (the usual case, atomic),
  * else consecutive batches of ≤ 1000 (the store queues them in order; each applies
  * optimistically at once). Rejects with the first failure; earlier batches stay applied.
+ * With `store.mutateResolved` it resolves to every batch's resolved ops, in order.
  */
-export function mutateInBatches<T>(
-  mutate: (ops: T[]) => Promise<void>,
+export function mutateInBatches<T, R = never>(
+  mutate: (ops: T[]) => Promise<readonly R[]> | Promise<void>,
   ops: readonly T[],
-): Promise<void> {
-  if (ops.length === 0) return Promise.resolve();
-  return Promise.all(chunkOps(ops).map((batch) => mutate(batch))).then(() => undefined);
+): Promise<R[]> {
+  if (ops.length === 0) return Promise.resolve([]);
+  return Promise.all(chunkOps(ops).map((batch) => mutate(batch))).then((all) =>
+    all.flatMap((r) => (Array.isArray(r) ? (r as readonly R[]) : [])),
+  );
 }

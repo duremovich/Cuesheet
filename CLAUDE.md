@@ -436,7 +436,7 @@ views" below).
   bottom sheet at 60% height whose handle (click, or drag up/down) toggles full height.
   Escape in the grid closes the panel too when the grid has nothing else to cancel (the
   grid's `onEscape`). Grid undo covers cell edits only; inserts, moves, deletes and Sort
-  now aren't undoable yet (except note deletes: an Undo toast, see "Multi-select +
+  now aren't undoable yet; grid row deletes are (an Undo toast, see "Multi-select +
   selection bar").
 - **Notes panel** (`features/notes/`, R6): `NotesPanel({subject})` = `NoteList` (open
   first, newest first; `notesFor` in `compose.ts`: a cue's linked notes, content's
@@ -1603,13 +1603,36 @@ position is kept outside React.
   > 1), Backspace too but always confirms; on a multi-row *cell range* both still clear
   cells (spreadsheet rule; ⌘Z undoes). After a bulk status change the rows stay selected
   even when they move into a collapsed group (e.g. Done).
-  **Undoable deletes**: `TableConfig.restoreOps(views) → () => Op[]` (built before the
-  delete, run on Undo) makes a delete toast "Deleted N notes." with Undo and tells the grid
-  `deleteUndoable` (its confirmation drops "can't be undone"). Only Notes has it
-  (`noteRestoreOps` + `attachmentRestoreOps`: same ids, fields, links, photos; like a note
-  card's ×, `created_at`/`created_by` become the restorer's, so restored notes sort
-  last). Other tables' deletes cascade (cue links, scene refs), so their confirmation is
-  the guard. **Batches**: bulk edits, the bar, deletes and `TableGrid`/`CueGrid` `send`
+  After a bulk change lands (bar or dialog) the selection clears, unless you've already
+  selected other rows meanwhile (`sameIds`); the Undo toast stays.
+  **Undoable deletes (every grid tab)**: `shared/deleteWithUndo.ts` sends the delete with
+  `store.mutateResolved` (resolves to the server's resolved ops: the cascade included),
+  keeps `store.getState()` from just before, and toasts "Deleted N cues." with Undo (8 s),
+  which sends `deleteRestoreOps(before, resolved, exists)` (`shared/restore.ts`, pure):
+  (1) creates every deleted row (cascaded ones too: content versions, cue anchors,
+  attachments via `attachmentRestoreOps`) under its old id with its stored fields; ordered
+  tables in their old order next to the nearest old neighbour still there; non-ordered ones
+  in reverse delete order (the engine deletes dependants before parents); (2) updates:
+  refs to rows restored later in the batch and every row's `custom` (link values) are
+  deferred to here, then the fields the cascade cleared on surviving rows (scene_id,
+  creator_id, rendered_by, parent_id, custom link lists) get their old values; (3) links
+  at their old positions, ascending (link inserts and shifts, so chip order comes back).
+  Built at Undo time: rows/targets someone else deleted meanwhile are left out (refs set
+  null) instead of failing the batch. **The engine restores `created_at`/`created_by`**
+  (and a Done note's `completed_*`) when a create reuses an id whose last `changes` entry
+  is its delete (`deletedRow`: the server's own log, never client data), so a restored
+  note keeps its author and sorts where it was; `updated_*` and `order_key` are new.
+  The grid gets `deleteUndoable` (no "can't be undone") and `rowNoun` ("Delete 3 cues",
+  same words as the bar). `TableConfig.restoreOps` is gone; the note card's × keeps its
+  own `noteRestoreOps`. Not restored: an attachment whose R2 file was purged (a day
+  later; the toast is 8 s), and anything that wasn't in the delete's cascade (views'
+  filters never referenced ids by cascade anyway). Tests: `test/worker/delete-undo.test.ts`
+  (round trip through the real engine: snapshot equal after delete + undo, for cues, two
+  adjacent cues, scenes, scene + cue in one batch both orders, content with versions,
+  people, surfaces with a region, shots, notes, custom rows, and a target deleted
+  meanwhile), `script.test.ts` (a cue's anchors), `ops.test.ts` "undo of a delete"
+  (creation stamps). The Scenes tab still asks with a native `window.confirm` (in its
+  `deleteOps`, predating this) before moving cues to Unassigned. **Batches**: bulk edits, the bar, deletes and `TableGrid`/`CueGrid` `send`
   go through `mutateInBatches` (`shared/ops.ts`): one atomic batch up to 1000 ops (the
   server's `MAX_OPS_PER_REQUEST`), else consecutive ≤ 1000-op batches (not atomic as a
   whole). Tests: `DataGrid.test.tsx` "multi-select", `SelectionBar.test.tsx`,

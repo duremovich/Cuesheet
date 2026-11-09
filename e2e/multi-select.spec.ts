@@ -96,19 +96,21 @@ test("notes: ⌘/Ctrl+click rows, set Done for all of them, bulk delete + Undo",
         .sort(),
     )
     .toEqual([a, c, d].sort());
-  // Escape (in the bar) clears the selection; the bar goes.
-  await bar(page).getByRole("button", { name: "Clear selection" }).press("Escape");
+  // Once the change lands the selection clears (the Undo toast stays).
   await expect(bar(page)).toHaveCount(0);
+  await expect(
+    page.getByTestId("toast").filter({ hasText: "Set Status on 3 notes" }),
+  ).toBeVisible();
 
   // A Shift+click range over the two remaining open notes counts as selected rows too.
   await body(b).click();
   await body(e).click({ modifiers: ["Shift"] });
   await expect(bar(page).getByTestId("selection-count")).toHaveText("2 notes selected");
   await bar(page).getByRole("button", { name: "Delete 2 notes" }).click();
-  // Notes can be restored, so the confirmation doesn't say "can't be undone".
-  await expect(confirmStrip(page)).toHaveText(/Delete 2 rows\?/);
+  // Deletes can be undone, so the confirmation doesn't say "can't be undone"; it says notes.
+  await expect(confirmStrip(page)).toHaveText(/Delete 2 notes\?/);
   await expect(confirmStrip(page)).not.toContainText("can't be undone");
-  await confirmStrip(page).getByRole("button", { name: "Delete 2 rows" }).click();
+  await confirmStrip(page).getByRole("button", { name: "Delete 2 notes" }).click();
   await expect(row(b)).toHaveCount(0);
   await expect(row(e)).toHaveCount(0);
   await expect
@@ -160,17 +162,123 @@ test("cues: select all, quick-set status, Backspace deletes the selection after 
     .poll(async () => (await rowsOf(page, showId, "cues")).map((q) => q.status))
     .toEqual(["Cued", "Cued", "Cued", "Cued"]);
   await expect(page.getByTestId("toast").filter({ hasText: "Set Status on 4 cues" })).toBeVisible();
+  await expect(bar(page)).toHaveCount(0); // the change landed: selection cleared
 
   // Click cue 2, ⌘/Ctrl+click cue 4, Backspace: confirm, then both go.
   await cell(ids[1] as string).click();
   await cell(ids[3] as string).click({ modifiers: ["ControlOrMeta"] });
   await expect(bar(page).getByTestId("selection-count")).toHaveText("2 cues selected");
   await page.keyboard.press("Backspace");
-  await expect(confirmStrip(page)).toContainText("Delete 2 rows? This can't be undone.");
-  await confirmStrip(page).getByRole("button", { name: "Delete 2 rows" }).click();
+  await expect(confirmStrip(page)).toHaveText(/Delete 2 cues\?/);
+  await expect(confirmStrip(page)).not.toContainText("can't be undone");
+  await confirmStrip(page).getByRole("button", { name: "Delete 2 cues" }).click();
   await expect(row(ids[1] as string)).toHaveCount(0);
   await expect
     .poll(async () => (await rowsOf(page, showId, "cues")).map((q) => q.number))
     .toEqual(["1", "3"]);
   await expect(bar(page)).toHaveCount(0);
+  // Undo puts both back where they were.
+  await page
+    .getByTestId("toast")
+    .filter({ hasText: "Deleted 2 cues." })
+    .getByRole("button", { name: "Undo" })
+    .click();
+  await expect(cell(ids[1] as string)).toHaveText("cue 2");
+  await expect
+    .poll(async () => (await rowsOf(page, showId, "cues")).map((q) => `${q.number}:${q.status}`))
+    .toEqual(["1:Cued", "2:Cued", "3:Cued", "4:Cued"]);
+});
+
+/** Everything a delete's Undo must put back, read from the server. */
+async function fullSnapshot(page: Page, showId: string) {
+  const res = await page.request.get(`/api/shows/${showId}/snapshot`);
+  expect(res.status()).toBe(200);
+  const snap = (await res.json()) as {
+    tables: Record<string, Record<string, unknown>[]>;
+    joins: Record<string, Record<string, string[]>>;
+  };
+  const tables: Record<string, unknown[]> = {};
+  for (const [t, rows] of Object.entries(snap.tables)) {
+    tables[t] = rows.map(({ updated_at: _a, updated_by: _b, order_key: _k, ...rest }) => rest);
+  }
+  return { tables, joins: snap.joins };
+}
+
+test("delete → Undo restores a linked cue, and a scene with its cues' scene refs", async ({
+  browser,
+}) => {
+  const page = await newPage(browser);
+  const showId = await apiCreateShow(page, uniqueName("Undo"));
+  const [s1, s2, k1, k2, p1, c1, c2, c3, n1] = Array.from({ length: 9 }, () =>
+    recordId(),
+  ) as string[] as [string, string, string, string, string, string, string, string, string];
+  const create = (table: string, id: string, fields: Record<string, unknown>) => ({
+    op: "create",
+    table,
+    id,
+    fields,
+  });
+  const link = (table: string, id: string, field: string, targetId: string) => ({
+    op: "link",
+    table,
+    id,
+    field,
+    targetId,
+  });
+  await mutate(page, showId, [
+    create("scenes", s1, { number: "101", name: "Open" }),
+    create("scenes", s2, { number: "102", name: "Train" }),
+    create("content", k1, { name: "101-001-RAIN", scene_id: s1 }),
+    create("content", k2, { name: "101-002-FOG", scene_id: s1 }),
+    create("persons", p1, { name: "Casey" }),
+    create("cues", c1, { number: "1", description: "one", scene_id: s1 }),
+    create("cues", c2, { number: "2", description: "rain", scene_id: s1, status: "Cued" }),
+    create("cues", c3, { number: "3", description: "three", scene_id: s2 }),
+    create("notes", n1, { body: "check rain", status: "Open", scene_id: s1 }),
+    link("cues", c2, "content", k2),
+    link("cues", c2, "content", k1),
+    link("cues", c2, "assignees", p1),
+    link("notes", n1, "cues", c1),
+    link("notes", n1, "cues", c2),
+    link("notes", n1, "cues", c3),
+  ]);
+  const original = await fullSnapshot(page, showId);
+
+  // A cue with links and a scene: right-click → Delete cue, then Undo.
+  await page.goto(`/shows/${showId}/cues`);
+  await waitForShowReady(page);
+  const cues = page.getByRole("grid", { name: "Cue list" });
+  const cueCell = (id: string) => cues.locator(`[data-row-id="${id}"] [data-col="description"]`);
+  await cueCell(c2).click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Delete cue" }).click();
+  await expect(cueCell(c2)).toHaveCount(0);
+  await expect
+    .poll(async () => (await fullSnapshot(page, showId)).joins.noteCues?.[n1])
+    .toEqual([c1, c3]);
+  await page
+    .getByTestId("toast")
+    .filter({ hasText: "Deleted 1 cue." })
+    .getByRole("button", { name: "Undo" })
+    .click();
+  await expect(cueCell(c2)).toHaveText("rain");
+  await expect.poll(() => fullSnapshot(page, showId)).toEqual(original);
+
+  // A scene: its cues, content and note go to Unassigned; Undo gives them their scene back.
+  page.on("dialog", (d) => void d.accept()); // the Scenes tab asks before moving cues
+  await page.goto(`/shows/${showId}/scenes`);
+  await waitForShowReady(page);
+  const scenes = page.getByRole("grid", { name: "Scene list" });
+  await scenes.locator(`[data-row-id="${s1}"] [data-col="name"]`).click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Delete scene" }).click();
+  await expect
+    .poll(async () =>
+      (await rowsOf(page, showId, "cues")).map((q) => (q as { scene_id?: unknown }).scene_id),
+    )
+    .toEqual([null, null, s2]);
+  await page
+    .getByTestId("toast")
+    .filter({ hasText: "Deleted 1 scene." })
+    .getByRole("button", { name: "Undo" })
+    .click();
+  await expect.poll(() => fullSnapshot(page, showId)).toEqual(original);
 });

@@ -28,9 +28,10 @@ import { Gallery } from "../views/Gallery";
 import { DATE_FIELDS, NATIVE_GROUP_KEY } from "../views/tableDefaults";
 import { useViewConfig } from "../views/useViewConfig";
 import { BulkEditDialog, type BulkEditRequest, bulkOps, rowIdsOf } from "./BulkEdit";
+import { deleteWithUndo } from "./deleteWithUndo";
 import { mutateInBatches } from "./ops";
 import { type PanelSection, type PanelTab, RowPanel } from "./RowPanel";
-import { SelectionBar, useSelectionTargets } from "./SelectionBar";
+import { SelectionBar, sameIds, useSelectionTargets } from "./SelectionBar";
 import { TableFrame, ToolbarButton } from "./TableFrame";
 import { useGridScrollMemory } from "./useGridScrollMemory";
 import { GRID_ACTIONS, useTableChrome } from "./useTableChrome";
@@ -66,13 +67,6 @@ export interface TableConfig<V> {
   moveOps?: (view: V, pos: InsertPosition) => Op[];
   /** Delete ops (omit: no deleting). Return a string to refuse with that message. */
   deleteOps?: (views: V[]) => Op[] | string;
-  /**
-   * Deletes can be undone: called just before the delete is sent, returns a function that
-   * builds the ops recreating the rows (run when the toast's Undo is clicked, so it can
-   * skip links to records deleted meanwhile). Omit: deletes aren't undoable (the grid's
-   * confirmation for several rows is the guard).
-   */
-  restoreOps?: (views: V[]) => () => Op[];
   panelTitle: (v: V) => string;
   panelSections?: (v: V) => PanelSection[];
   /** Extra row panel tabs after Fields (e.g. a surface's Calculator). */
@@ -117,9 +111,6 @@ export interface TableConfig<V> {
   /** Rows left out of exports. */
   isSection?: (v: V) => boolean;
 }
-
-/** How long a delete's Undo stays in the toast (as for a note card's ×). */
-const UNDO_MS = 8000;
 
 const noRow = (): { id: string; custom: CustomValues } => ({ id: "", custom: {} });
 
@@ -250,9 +241,11 @@ export function TableGrid<V>(config: TableConfig<V>) {
     const { ops, undo } = bulkOps<V>({ rows, rowId: config.rowId, column, value, editOps });
     if (ops.length === 0) return;
     mutateInBatches((b) => store.mutate(b), ops)
-      .then(() =>
+      .then(() => {
+        // Done with these rows: drop the selection (unless you've moved on to another one).
+        if (sameIds(targetsRef.current, rowIds)) chrome.grid.current?.clearSelection();
         ws.toast(
-          `Set ${column.title} on ${rows.length} ${rows.length === 1 ? "row" : "rows"}`,
+          `Set ${column.title} on ${rows.length} ${rows.length === 1 ? rowNoun.one : rowNoun.other}`,
           "info",
           {
             action: {
@@ -264,11 +257,13 @@ export function TableGrid<V>(config: TableConfig<V>) {
                 ),
             },
           },
-        ),
-      )
+        );
+      })
       .catch((e: unknown) => report(e, "change the rows"));
   };
   const selection = useSelectionTargets(byId);
+  const targetsRef = useRef(selection.targets);
+  targetsRef.current = selection.targets;
   const selectedViews = useMemo(
     () => selection.targets.flatMap((id) => byId.get(id) ?? []),
     [selection.targets, byId],
@@ -311,18 +306,16 @@ export function TableGrid<V>(config: TableConfig<V>) {
         return;
       }
       const { noun, plural } = cfg.current;
-      const n = views.length;
-      const what = n === 1 ? `the ${noun}` : `the ${plural ?? `${noun}s`}`;
-      const restore = cfg.current.restoreOps?.(views);
-      void send(ops, `delete ${what}`).then((ok) => {
-        if (!ok || !restore) return;
-        ws.toast(`Deleted ${n === 1 ? `1 ${noun}` : `${n} ${plural ?? `${noun}s`}`}.`, "info", {
-          duration: UNDO_MS,
-          action: { label: "Undo", run: () => void send(restore(), `restore ${what}`) },
-        });
+      void deleteWithUndo(store, ws, ops, views.length, {
+        one: noun,
+        other: plural ?? `${noun}s`,
       });
     },
-    [send, ws],
+    [store, ws],
+  );
+  const rowNoun = useMemo(
+    () => ({ one: config.noun, other: config.plural ?? `${config.noun}s` }),
+    [config.noun, config.plural],
   );
 
   const addAtEnd = () => {
@@ -463,7 +456,8 @@ export function TableGrid<V>(config: TableConfig<V>) {
             {...(canInsert ? { onInsert: insert } : {})}
             {...(config.moveOps ? { onMove } : {})}
             {...(config.deleteOps ? { onDelete } : {})}
-            deleteUndoable={!!config.restoreOps}
+            deleteUndoable
+            rowNoun={rowNoun}
             onTargetRowsChange={selection.onTargetRowsChange}
             onError={(e, action) => report(e, GRID_ACTIONS[action])}
           />

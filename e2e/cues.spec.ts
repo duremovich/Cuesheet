@@ -108,7 +108,7 @@ test("the other tabs show their tables", async ({ page }) => {
     void d.dismiss();
   });
   await overture.locator('[data-col="name"]').click({ button: "right" });
-  await page.getByRole("menuitem", { name: /Delete row/ }).click();
+  await page.getByRole("menuitem", { name: "Delete scene", exact: true }).click();
   await expect
     .poll(() => message)
     .toBe("Delete scene 100 Overture? Its 11 cues move to Unassigned.");

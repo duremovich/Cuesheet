@@ -13,6 +13,9 @@ import type {
   ScriptText,
 } from "../../src/shared/script";
 import { makeAnchor } from "../../src/shared/script-anchor";
+import type { TableName } from "../../src/shared/tables";
+import { deleteRestoreOps } from "../../src/web/features/shared/restore";
+import { fromSnapshot } from "../../src/web/lib/show-state";
 import { api, createShow, loginAdmin, newUser, post } from "./helpers";
 
 /** A small script: `n` lines, `perPage` per page, labels "1", "2", … unless given. */
@@ -626,5 +629,41 @@ describe("cascades", () => {
       "manual",
     ]);
     expect(snap.fieldOptions["cues.status"]?.at(-1)).toEqual({ value: "Cut", color: "red" });
+  });
+
+  it("undo of a cue delete brings its script anchors (and page) back", async () => {
+    const { admin, showId } = await setup();
+    const text = scriptText(LINES);
+    const v1 = newId();
+    expect((await importVersion(showId, admin, { label: "v1", text, versionId: v1 })).status).toBe(
+      201,
+    );
+    const [a, b] = (await createCues(showId, admin, 2)) as [string, string];
+    const placed = await mutate(showId, admin, [
+      anchorOp(a, v1, text, 3),
+      anchorOp(b, v1, text, 8),
+    ]);
+    expect(placed.status, await placed.clone().text()).toBe(200);
+    const snap0 = await snapshot(showId, admin);
+    const before = fromSnapshot(snap0);
+    const res = await mutate(showId, admin, [{ op: "delete", table: "cues", id: b }]);
+    expect(res.status).toBe(200);
+    const { ops } = (await res.json()) as MutateResponse;
+    expect(ops.filter((o) => o.op === "delete").map((o) => ("table" in o ? o.table : ""))).toEqual([
+      "cue_anchors",
+      "cues",
+    ]);
+    const after = fromSnapshot(await snapshot(showId, admin));
+    const exists = (t: TableName, id: string) => (after.tables[t] as Map<string, unknown>).has(id);
+    const undo = await mutate(showId, admin, deleteRestoreOps(before, ops, exists));
+    expect(undo.status, await undo.clone().text()).toBe(200);
+    const snap = await snapshot(showId, admin);
+    const strip = (rows: unknown[]) =>
+      (rows as Record<string, unknown>[]).map(
+        ({ updated_at: _a, updated_by: _b, order_key: _k, ...r }) => r,
+      );
+    expect(strip(snap.tables.cues)).toEqual(strip(snap0.tables.cues));
+    expect(strip(snap.tables.cue_anchors)).toEqual(strip(snap0.tables.cue_anchors));
+    expect(snap.tables.cues.find((c) => c.id === b)?.page).toBe("3");
   });
 });

@@ -18,9 +18,10 @@ import { anchorWarnings } from "../script/markers";
 import { scriptPanelTab } from "../script/ScriptTab";
 import { useScriptSnapshot, useScriptVersions } from "../script/source";
 import { BulkEditDialog, type BulkEditRequest, bulkOps, rowIdsOf } from "../shared/BulkEdit";
+import { deleteWithUndo } from "../shared/deleteWithUndo";
 import { groupOrder, mutateInBatches, placementFor } from "../shared/ops";
 import { RowPanel } from "../shared/RowPanel";
-import { SelectionBar, useSelectionTargets } from "../shared/SelectionBar";
+import { SelectionBar, sameIds, useSelectionTargets } from "../shared/SelectionBar";
 import { TableFrame, ToolbarButton } from "../shared/TableFrame";
 import styles from "../shared/TableFrame.module.css";
 import { useGridScrollMemory } from "../shared/useGridScrollMemory";
@@ -47,6 +48,7 @@ const selectState = (s: ShowState) => s;
 const cueRowOf = (v: CueView) => v.cue;
 const isSectionView = (v: CueView) => v.cue.is_section;
 const NO_RULES: never[] = [];
+const CUE_NOUN = { one: "cue", other: "cues" };
 
 export function CueGrid() {
   const ws = useWorkspace();
@@ -284,7 +286,9 @@ export function CueGrid() {
     if (ops.length === 0) return;
     const n = rows.length;
     mutateInBatches((b) => store.mutate(b), ops)
-      .then(() =>
+      .then(() => {
+        // Done with these cues: drop the selection (unless you've moved on to another one).
+        if (sameIds(targetsRef.current, rowIds)) chrome.grid.current?.clearSelection();
         ws.toast(`Set ${column.title} on ${n} ${n === 1 ? "cue" : "cues"}`, "info", {
           action: {
             label: "Undo",
@@ -294,12 +298,14 @@ export function CueGrid() {
                 "undo the change",
               ).catch(() => undefined),
           },
-        }),
-      )
+        });
+      })
       .catch((e: unknown) => report(e, "change the cues"));
   };
 
   const selection = useSelectionTargets(viewsById);
+  const targetsRef = useRef(selection.targets);
+  targetsRef.current = selection.targets;
   const selectedViews = useMemo(
     () => selection.targets.flatMap((id) => viewsById.get(id) ?? []),
     [selection.targets, viewsById],
@@ -365,11 +371,9 @@ export function CueGrid() {
       const ops: Op[] = ids
         .filter((id) => viewsRef.current.has(id))
         .map((id) => ({ op: "delete", table: "cues", id }));
-      void send(ops, ids.length === 1 ? "delete the cue" : "delete the cues").catch(
-        () => undefined,
-      );
+      void deleteWithUndo(store, ws, ops, ops.length, CUE_NOUN);
     },
-    [send],
+    [store, ws],
   );
 
   const onActiveRowChange = chrome.onActiveRowChange;
@@ -541,6 +545,8 @@ export function CueGrid() {
           onEdit={onEdit}
           extraMenuItems={extraMenuItems}
           onTargetRowsChange={selection.onTargetRowsChange}
+          deleteUndoable
+          rowNoun={CUE_NOUN}
           {...(editable ? { onInsert, onMove, onDelete } : {})}
           onError={(e, action) => report(e, GRID_ACTIONS[action])}
         />

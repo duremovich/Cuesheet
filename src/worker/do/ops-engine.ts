@@ -750,6 +750,14 @@ export class Batch {
     row.created_by = this.ctx.userId;
     row.updated_at = this.now;
     row.updated_by = this.ctx.userId;
+    // Undo of a delete recreates the row under its old id: it keeps its original author and
+    // creation time (from this show's own history, never from the client), so a restored
+    // note still says who wrote it and sorts where it was.
+    const was = table === "attachments" ? null : this.deletedRow(table, id);
+    if (was) {
+      if (typeof was.created_at === "number") row.created_at = was.created_at;
+      if (typeof was.created_by === "string") row.created_by = was.created_by;
+    }
     let used: Placement | undefined;
     if (isOrderedTable(table)) {
       used = this.createPlacement(table, placement, row.scene_id as string | null | undefined);
@@ -757,8 +765,9 @@ export class Batch {
     }
     this.checkRowSize(table, row);
     if (table === "notes" && row.status === DONE_STATUS) {
-      row.completed_at = this.now;
-      row.completed_by = this.ctx.userId;
+      const kept = was?.status === DONE_STATUS && typeof was.completed_at === "number";
+      row.completed_at = kept ? was.completed_at : this.now;
+      row.completed_by = kept ? (was.completed_by ?? null) : this.ctx.userId;
     }
 
     const cols = Object.keys(row);
@@ -788,6 +797,18 @@ export class Batch {
       this.fieldDefs = null;
       this.afterCustomFieldUpdate(null, this.mustGet("custom_fields", id));
     }
+  }
+
+  /** The row as it was when `id` was last deleted (its `changes` log entry), or null. */
+  private deletedRow(table: TableName, id: string): Record<string, unknown> | null {
+    const hit = this.sql
+      .exec<{ old: string | null }>(
+        `SELECT old FROM changes WHERE "table" = ? AND record_id = ? AND field = '*' AND new IS NULL ORDER BY version DESC LIMIT 1`,
+        table,
+        id,
+      )
+      .toArray()[0];
+    return hit?.old ? parseJson<Record<string, unknown> | null>(hit.old, null) : null;
   }
 
   /**

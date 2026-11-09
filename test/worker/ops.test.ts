@@ -316,6 +316,55 @@ describe("ops: links and deletes", () => {
   });
 });
 
+describe("ops: undo of a delete", () => {
+  it("recreating a deleted id keeps its author, creation time and completion", async () => {
+    const stub = await freshShow();
+    const [c, n, fresh] = [newId(), newId(), newId()];
+    ok(
+      await stub.mutate(ctx("editor", "u-alice"), [
+        cue(c, { number: "1" }),
+        { op: "create", table: "notes", id: n, fields: { body: "fix", status: "Done" } },
+      ]),
+    );
+    const before = await snapshot(stub);
+    const oldCue = before.tables.cues[0] as { created_at: number; created_by: string };
+    const oldNote = before.tables.notes[0] as unknown as Record<string, unknown>;
+    expect(oldCue.created_by).toBe("u-alice");
+    ok(
+      await stub.mutate(ctx("editor", "u-bob"), [
+        { op: "delete", table: "cues", id: c },
+        { op: "delete", table: "notes", id: n },
+      ]),
+    );
+    await new Promise((r) => setTimeout(r, 5)); // a later "now", so a fresh stamp would differ
+    const res = ok(
+      await stub.mutate(ctx("editor", "u-bob"), [
+        cue(c, { number: "1" }),
+        { op: "create", table: "notes", id: n, fields: { body: "fix", status: "Done" } },
+        cue(fresh, { number: "2" }),
+      ]),
+    );
+    const after = await snapshot(stub);
+    const cueRow = after.tables.cues.find((x) => x.id === c) as unknown as Record<string, unknown>;
+    const noteRow = after.tables.notes[0] as unknown as Record<string, unknown>;
+    expect(cueRow.created_at).toBe(oldCue.created_at);
+    expect(cueRow.created_by).toBe("u-alice");
+    expect(cueRow.updated_by).toBe("u-bob");
+    expect(noteRow.created_by).toBe("u-alice");
+    expect(noteRow.created_at).toBe(oldNote.created_at);
+    expect(noteRow.completed_at).toBe(oldNote.completed_at);
+    expect(noteRow.completed_by).toBe("u-alice");
+    // A brand-new id is stamped as usual; the resolved create says what was stored.
+    const freshRow = after.tables.cues.find((x) => x.id === fresh) as unknown as Record<
+      string,
+      unknown
+    >;
+    expect(freshRow.created_by).toBe("u-bob");
+    const created = res.ops.find((o) => o.op === "create" && o.id === c);
+    expect((created as { fields: Record<string, unknown> }).fields.created_by).toBe("u-alice");
+  });
+});
+
 describe("ops: roles", () => {
   it("viewers can't change anything", async () => {
     const stub = await freshShow();

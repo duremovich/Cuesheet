@@ -24,6 +24,13 @@ export function quickSetColumns<V>(columns: readonly Column<V>[], rows: readonly
   return [...status, ...selects.filter((c) => c.key !== "status")].slice(0, QUICK_MAX);
 }
 
+/** Same ids, in any order. */
+export function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  const set = new Set(a);
+  return b.every((id) => set.has(id));
+}
+
 /** The grid's target rows, kept to rows that still exist. */
 export function useSelectionTargets<V>(byId: ReadonlyMap<string, V>) {
   const [targets, setTargets] = useState<string[]>([]);

@@ -83,6 +83,7 @@ const PICKER_TYPES = new Set(["select", "multiselect", "link", "multilink"]);
 const GHOST_TYPES = new Set(["text", "longtext", "number"]);
 const MRU_SIZE = 5;
 const NO_IDS: string[] = [];
+const ROWS = { one: "row", other: "rows" };
 /** How far (px) a header must be dragged before it moves (a shorter one is a click). */
 const COL_DRAG_SLOP = 5;
 const GROUP_COL = "__group";
@@ -251,6 +252,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
   const hintTimer = useRef<number | undefined>(undefined);
 
   const selected = props.selectedRowIds ?? internalSelection;
+  const noun = props.rowNoun ?? ROWS;
   const selectedSet = useMemo(() => new Set(selected), [selected]);
   const collapsedList = props.collapsed ?? internalCollapsed;
   const collapsed = useMemo<ReadonlySet<string>>(() => new Set(collapsedList), [collapsedList]);
@@ -2377,7 +2379,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     list.push(...(props.extraMenuItems?.({ rowId: id, selectedRowIds: targets }) ?? []));
     if (onDelete) {
       list.push({
-        label: targets.length > 1 ? `Delete ${targets.length} rows` : "Delete row",
+        label: targets.length > 1 ? `Delete ${targets.length} ${noun.other}` : `Delete ${noun.one}`,
         danger: true,
         onSelect: () => deleteRows(targets),
       });
@@ -2696,6 +2698,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       {confirm && (
         <ConfirmDelete
           count={confirm.length}
+          noun={noun}
           undoable={!!props.deleteUndoable}
           onConfirm={() => {
             const ids = confirm;
@@ -2749,11 +2752,13 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
 /** In-grid confirmation for multi-row deletes (testable, unlike window.confirm). */
 function ConfirmDelete({
   count,
+  noun,
   undoable,
   onConfirm,
   onCancel,
 }: {
   count: number;
+  noun: { one: string; other: string };
   undoable: boolean;
   onConfirm: () => void;
   onCancel: () => void;
@@ -2776,11 +2781,11 @@ function ConfirmDelete({
       }}
     >
       <span id={textId}>
-        Delete {count === 1 ? "this row" : `${count} rows`}?
+        Delete {count === 1 ? `this ${noun.one}` : `${count} ${noun.other}`}?
         {undoable ? "" : " This can't be undone."}
       </span>
       <button type="button" className={styles.danger} onClick={onConfirm}>
-        Delete {count === 1 ? "row" : `${count} rows`}
+        Delete {count === 1 ? noun.one : `${count} ${noun.other}`}
       </button>
       <button type="button" ref={cancelRef} onClick={onCancel}>
         Cancel

@@ -78,6 +78,11 @@ export interface ShowStore {
   readonly fieldOptions: ShowState["fieldOptions"];
   /** Optimistic: applies locally at once, sends, reconciles; on error rolls back and rethrows. */
   mutate(ops: AnyOp[]): Promise<void>;
+  /**
+   * `mutate` that resolves to what the server applied (its resolved ops, a delete's cascade
+   * included), so a caller can build an Undo from it (`features/shared/restore.ts`).
+   */
+  mutateResolved(ops: AnyOp[]): Promise<AnyResolvedOp[]>;
   subscribe(listener: Listener): () => void;
   getState(): ShowState;
   /** This store's id, sent with each batch and echoed in broadcasts. */
@@ -194,7 +199,11 @@ export class ShowStoreImpl implements ShowStore {
   };
 
   mutate = async (ops: AnyOp[]): Promise<void> => {
-    if (ops.length === 0) return;
+    await this.mutateResolved(ops);
+  };
+
+  mutateResolved = async (ops: AnyOp[]): Promise<AnyResolvedOp[]> => {
+    if (ops.length === 0) return [];
     const local = resolveLocal(this.visible, ops, { userId: this.userId, now: this.now() });
     const p: Pending = { ops, local };
     this.pending.push(p);
@@ -266,8 +275,8 @@ export class ShowStoreImpl implements ShowStore {
 
   // ---- internals ----
 
-  private async send(p: Pending): Promise<void> {
-    if (this.disposed) return;
+  private async send(p: Pending): Promise<AnyResolvedOp[]> {
+    if (this.disposed) return [];
     this.inflight = p;
     let res: MutateResponse;
     try {
@@ -279,7 +288,7 @@ export class ShowStoreImpl implements ShowStore {
       throw e;
     }
     this.inflight = null;
-    if (!this.pending.includes(p)) return; // our echo already retired it
+    if (!this.pending.includes(p)) return res.ops; // our echo already retired it
     const v = this.confirmed.version;
     if (res.version === res.prevVersion || v >= res.version) {
       this.drop(p);
@@ -293,6 +302,7 @@ export class ShowStoreImpl implements ShowStore {
       void this.refetch();
     }
     this.recompute();
+    return res.ops;
   }
 
   private async refetch(): Promise<void> {

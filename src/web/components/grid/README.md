@@ -43,6 +43,7 @@ underlined; an unnumbered cue suggests the midpoint number). Source: `src/web/pa
 | `onMove` | `(rowId, {afterRowId?, beforeRowId?, groupId?}) => void` | Drag to reorder. `groupId` is set when grouped (a different one = re-link, e.g. scene) |
 | `onDelete` | `(rowIds) => void` | Delete / Backspace on a row selection (the active row must be in it), the context menu, or the handle's `deleteRows`. More than one row (or any via Backspace) asks for confirmation first, in the grid |
 | `deleteUndoable` | `boolean` | Your deletes can be undone (an Undo toast): the confirmation drops "This can't be undone." |
+| `rowNoun` | `{one, other}` | What a row is called in the menu's Delete and the confirmation ("Delete 3 notes?"); default row / rows |
 | `onOpenRow` | `(rowId) => void` | Space, the expand icon, or "Open" in the menu |
 | `sort` | `{key, dir}[]` | Live sort (see Ordering). Omit for show order |
 | `sortColumns` | `Column<Row>[]` | Columns `sort` keys resolve against when some aren't shown (a view sorting by a hidden field). Default: `columns` |

@@ -1307,4 +1307,33 @@ describe("DataGrid multi-select (cells, keys, select-all, targets)", () => {
     act(() => h().deleteRows(["r1"])); // one row: no confirmation
     expect(s.onDelete).toHaveBeenLastCalledWith(["r1"]);
   });
+
+  it("rowNoun names the rows in the delete menu and the confirmation", () => {
+    const s = spies();
+    render(
+      <Harness
+        initial={FIVE}
+        s={s}
+        extra={{ rowNoun: { one: "note", other: "notes" }, deleteUndoable: true }}
+      />,
+    );
+    pointerDown(cell("r1", "name"));
+    press("ContextMenu");
+    expect(menuItem("Delete note")).toBeTruthy();
+    press("Escape");
+    pointerDown(cell("r1", "name"));
+    pointerDown(cell("r3", "name"), { mod: true });
+    press("ContextMenu");
+    click(menuItem("Delete 2 notes"));
+    const dialog = document.querySelector('[role="alertdialog"]') as HTMLElement;
+    expect(dialog.textContent).toContain("Delete 2 notes?");
+    click(buttonNamed(dialog, "Delete 2 notes"));
+    expect(s.onDelete).toHaveBeenCalledWith(["r1", "r3"]);
+    pointerDown(cell("r2", "name"));
+    pointerDown(cell("r2", "name"), { mod: true });
+    press("Backspace");
+    expect((document.querySelector('[role="alertdialog"]') as HTMLElement).textContent).toContain(
+      "Delete this note?",
+    );
+  });
 });

@@ -251,6 +251,8 @@ export interface DataGridProps<Row> {
    * "This can't be undone."
    */
   deleteUndoable?: boolean;
+  /** What a row is called in the delete menu and confirmation ("note"/"notes"; default row/rows). */
+  rowNoun?: { one: string; other: string };
   /** The user resized a column (persist it per view). */
   onColumnResize?: (key: string, width: number) => void;
   /**

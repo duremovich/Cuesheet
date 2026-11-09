@@ -120,4 +120,12 @@ describe("chunkOps / mutateInBatches", () => {
     );
     await expect(mutateInBatches(failing, ops(1500))).rejects.toThrow("nope");
   });
+
+  it("collects every batch's resolved ops, in order (for an Undo)", async () => {
+    const echo = (b: number[]) => Promise.resolve(b.map((x) => `r${x}`));
+    const out = await mutateInBatches(echo, ops(2001));
+    expect(out).toHaveLength(2001);
+    expect([out[0], out[1000], out[2000]]).toEqual(["r0", "r1000", "r2000"]);
+    expect(await mutateInBatches(echo, [])).toEqual([]);
+  });
 });
