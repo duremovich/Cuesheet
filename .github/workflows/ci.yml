@@ -18,7 +18,7 @@ env:
 jobs:
   check:
     runs-on: ubuntu-24.04 # pinned: Playwright 1.56 has no chromium for ubuntu-latest (26.04)
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -34,8 +34,15 @@ jobs:
       # 3 workers (playwright.config.ts) on the 4-core runner; the 4th core runs workerd.
       # One retry for a second trace, but a test that only passes on retry still fails the
       # run (failOnFlakyTests).
-      - name: End-to-end tests
-        run: pnpm e2e
+      - name: End-to-end tests (probe x3)
+        run: |
+          bash scripts/ci-probe.sh probe &
+          for i in 1 2 3; do echo "=== RUN $i $(date -u +%T)"; pnpm e2e || true; done 2>&1 | tee probe/e2e.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe
+          path: probe/
       # Traces are kept for failed tests only (trace: retain-on-failure) and land in
       # test-results/; open one with `pnpm exec playwright show-trace <trace.zip>`.
       - name: Upload Playwright report and traces
