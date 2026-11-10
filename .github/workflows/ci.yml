@@ -36,8 +36,10 @@ jobs:
       # run (failOnFlakyTests).
       - name: End-to-end tests (probe x3)
         run: |
+          mkdir -p probe
           bash scripts/ci-probe.sh probe &
-          for i in 1 2 3; do echo "=== RUN $i $(date -u +%T)"; pnpm e2e || true; done 2>&1 | tee probe/e2e.log
+          export REQUEST_LOG_DIR=$PWD/probe
+          for i in 1 2 3 4; do echo "=== RUN $i $(date -u +%T)"; pnpm e2e || true; done 2>&1 | tee probe/e2e.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
