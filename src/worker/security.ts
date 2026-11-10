@@ -91,20 +91,42 @@ export function logError(...args: unknown[]): void {
   );
 }
 
+/** Vite's hashed build output: a missing file here is a real 404, never the app shell. */
+export function isBuildAsset(pathname: string): boolean {
+  return pathname.startsWith("/assets/");
+}
+
 /**
  * Serve a page from the assets binding with security headers. HTML gets the CSP (built
  * from its inline scripts; cached per isolate) and frame protection; `csp: false` skips
  * the CSP (Vite's dev server injects inline scripts of its own). A 304 keeps the CSP the
  * browser stored with the page.
+ *
+ * SPA fallback is done here, not by the platform (`not_found_handling: "none"` in
+ * wrangler.jsonc): a path with no file gets index.html, except under /assets/, which
+ * answers 404. A tab still running the previous build asks for chunks the deploy removed;
+ * a 404 makes that import fail cleanly (the client reloads, lib/staleBuild.ts) instead of
+ * "succeeding" with HTML.
  */
 export async function serveAsset(
   request: Request,
   assets: Fetcher,
   opts: { csp: boolean },
 ): Promise<Response> {
-  const res = await assets.fetch(request);
   const url = new URL(request.url);
   const https = url.protocol === "https:";
+  let res = await assets.fetch(request);
+  if (res.status === 404) {
+    if (isBuildAsset(url.pathname) || (request.method !== "GET" && request.method !== "HEAD")) {
+      const out = new Response("Not found", {
+        status: 404,
+        headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+      });
+      baseSecurityHeaders(out.headers, https);
+      return out;
+    }
+    res = await assets.fetch(new Request(new URL("/", url), request));
+  }
   const html = (res.headers.get("Content-Type") ?? "").includes("text/html");
   if (!html || !opts.csp || res.status !== 200) {
     const out = new Response(res.body, res);

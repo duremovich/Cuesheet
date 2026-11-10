@@ -1,8 +1,8 @@
 // Worker entry point. Durable Object classes must be exported from here.
 // /api/* goes to the Hono app; every other path (pages, robots.txt, …) is served from the
-// static assets with security headers (src/worker/security.ts), except the hashed build
-// files under /assets/, which the platform serves without running the Worker
-// (wrangler.jsonc `run_worker_first`).
+// static assets with security headers (src/worker/security.ts), index.html for app routes,
+// except the hashed build files under /assets/, which the platform serves without running
+// the Worker (wrangler.jsonc `run_worker_first`); a missing one is a 404.
 import { app } from "./app";
 import { scheduled } from "./routes/backup";
 import { serveAsset } from "./security";

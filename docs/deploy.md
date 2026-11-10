@@ -126,7 +126,27 @@ The same steps as a bare checklist: [`scripts/cf-setup.md`](../scripts/cf-setup.
 3. `wrangler deploy`: uploads the Worker and assets; Durable Object class migrations run.
 4. Optionally `GET $PRODUCTION_URL/api/health`.
 
-## Rollback
+## Old tabs after a deploy
+
+A deploy replaces every hashed file under `/assets/`; Workers static assets only hold the
+current build. A tab opened before the deploy keeps running the old build until it
+reloads, and the first time it needs a lazy chunk it hasn't loaded yet (the PDF reader, the
+calling-script print, papaparse, jszip, pdf.js…), that import fails. Two parts handle it:
+
+- **The server says 404.** The platform does no SPA fallback (`not_found_handling: "none"`
+  in `wrangler.jsonc`); the Worker serves `index.html` for app routes itself
+  (`serveAsset` in `src/worker/security.ts`), and a missing file under `/assets/` is a plain
+  404 (`Cache-Control: no-store`). With the platform's SPA mode, the old chunk URL answered
+  `200 text/html`. Check: `curl -s -o /dev/null -w "%{http_code} %{content_type}"
+  <url>/assets/does-not-exist.js` → `404`.
+- **The client reloads once** (`src/web/lib/staleBuild.ts`). Vite's `vite:preloadError`
+  event and the router's error element (`RouteError`, which sees a failed `React.lazy`)
+  both call `staleBuild.recover()`: reload the page onto the new build, unless one
+  automatic reload already happened in the last 60 s (sessionStorage), which means the new
+  build fails too; then a banner asks the user to reload instead of looping. Unsent edits
+  (the show store's unanswered batches) and running uploads hold the reload ("Reloading
+  once your edits are saved…"); it happens when they settle.
+
 
 - **Code:** `pnpm exec wrangler rollback --env production --config wrangler.jsonc` (or
   dashboard → the Worker → Deployments → Rollback). It returns to the previous version

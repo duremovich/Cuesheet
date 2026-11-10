@@ -8,6 +8,7 @@ import {
   useLocation,
   useParams,
 } from "react-router";
+import { RouteError, StaleBuildBanner } from "./components/StaleBuild";
 import { ContentGrid } from "./features/content/ContentGrid";
 import { CueGrid } from "./features/cues/CueGrid";
 import { CustomTableGrid } from "./features/custom/CustomTableGrid";
@@ -23,6 +24,7 @@ import { ShotGrid } from "./features/shots/ShotGrid";
 import { SurfaceGrid } from "./features/surfaces/SurfaceGrid";
 import { TechPage } from "./features/tech/TechPage";
 import { AuthProvider, RequireAuth } from "./lib/auth";
+import { installStaleBuildRecovery } from "./lib/staleBuild";
 import { devRoutes } from "./pages/dev/routes";
 import { InvitePage } from "./pages/InvitePage";
 import { LoginPage } from "./pages/LoginPage";
@@ -42,43 +44,58 @@ const GRIDS = {
   people: PeopleGrid,
 };
 
+// After a deploy, an old tab's lazy chunks are gone: reload onto the new build
+// (lib/staleBuild.ts). Route errors (a failed React.lazy included) land in RouteError: at
+// the top level, and inside a show so the show (its store and unsent edits) stays mounted.
+installStaleBuildRecovery();
+
 const router = createBrowserRouter([
-  { path: "/login", element: <LoginPage /> },
-  { path: "/invite/:token", element: <InvitePage /> },
-  { path: "/reset/:token", element: <ResetPasswordPage /> },
-  // Read-only share links (R23): no sign-in.
-  { path: "/s/:token", element: <SharePage grids={GRIDS} /> },
-  { path: "/", element: <RequireAuth>{(user) => <ShowsPage user={user} />}</RequireAuth> },
   {
-    path: "/shows/:id",
-    element: <RequireAuth>{() => <ShowPage />}</RequireAuth>,
+    errorElement: <RouteError />,
     children: [
-      { index: true, element: <ToCues /> },
-      { path: "cues", element: <CueGrid /> },
-      { path: "scenes", element: <SceneGrid /> },
-      { path: "content", element: <ContentGrid /> },
-      { path: "surfaces", element: <SurfaceGrid /> },
-      { path: "shots", element: <ShotGrid /> },
-      { path: "tables/:tableId", element: <CustomTableGrid /> },
-      { path: "notes", element: <NotesGrid /> },
-      { path: "people", element: <PeopleGrid /> },
-      { path: "script", element: <ScriptPage /> },
-      { path: "script/print", element: <CallingScriptPrint /> },
-      { path: "print/:table", element: <TablePrintRoute grids={GRIDS} /> },
-      { path: "tech", element: <TechPage /> },
-      { path: "quick", element: <QuickAddPage /> },
-      { path: "*", element: <ToCues /> },
+      { path: "/login", element: <LoginPage /> },
+      { path: "/invite/:token", element: <InvitePage /> },
+      { path: "/reset/:token", element: <ResetPasswordPage /> },
+      // Read-only share links (R23): no sign-in.
+      { path: "/s/:token", element: <SharePage grids={GRIDS} /> },
+      { path: "/", element: <RequireAuth>{(user) => <ShowsPage user={user} />}</RequireAuth> },
+      {
+        path: "/shows/:id",
+        element: <RequireAuth>{() => <ShowPage />}</RequireAuth>,
+        children: [
+          {
+            errorElement: <RouteError />,
+            children: [
+              { index: true, element: <ToCues /> },
+              { path: "cues", element: <CueGrid /> },
+              { path: "scenes", element: <SceneGrid /> },
+              { path: "content", element: <ContentGrid /> },
+              { path: "surfaces", element: <SurfaceGrid /> },
+              { path: "shots", element: <ShotGrid /> },
+              { path: "tables/:tableId", element: <CustomTableGrid /> },
+              { path: "notes", element: <NotesGrid /> },
+              { path: "people", element: <PeopleGrid /> },
+              { path: "script", element: <ScriptPage /> },
+              { path: "script/print", element: <CallingScriptPrint /> },
+              { path: "print/:table", element: <TablePrintRoute grids={GRIDS} /> },
+              { path: "tech", element: <TechPage /> },
+              { path: "quick", element: <QuickAddPage /> },
+              { path: "*", element: <ToCues /> },
+            ],
+          },
+        ],
+      },
+      ...devRoutes,
+      {
+        path: "*",
+        element: (
+          <main style={{ padding: 24 }}>
+            <p>Page not found.</p>
+            <Link to="/">Back to shows</Link>
+          </main>
+        ),
+      },
     ],
-  },
-  ...devRoutes,
-  {
-    path: "*",
-    element: (
-      <main style={{ padding: 24 }}>
-        <p>Page not found.</p>
-        <Link to="/">Back to shows</Link>
-      </main>
-    ),
   },
 ]);
 
@@ -96,6 +113,7 @@ createRoot(root).render(
   <StrictMode>
     <AuthProvider>
       <RouterProvider router={router} />
+      <StaleBuildBanner />
     </AuthProvider>
   </StrictMode>,
 );

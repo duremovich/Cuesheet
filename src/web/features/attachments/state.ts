@@ -3,6 +3,7 @@
 // (in the show workspace) renders the lightbox and reports upload errors.
 import { useSyncExternalStore } from "react";
 import { api, putFile } from "../../lib/api";
+import { staleBuild } from "../../lib/staleBuild";
 import { shrinkLargeImage } from "./resize";
 import { UploadQueue } from "./uploads";
 
@@ -41,6 +42,12 @@ export const uploadQueue = new UploadQueue(
     prepare: shrinkLargeImage,
   },
 );
+
+// A stale-build reload (lib/staleBuild.ts) waits for uploads still waiting or sending.
+staleBuild.trackUnsavedWork({
+  busy: () => uploadQueue.getItems().some((i) => i.status !== "error"),
+  subscribe: uploadQueue.subscribe,
+});
 
 // ---- lightbox ----
 

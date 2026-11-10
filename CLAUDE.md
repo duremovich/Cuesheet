@@ -1386,6 +1386,19 @@ position is kept outside React.
   --config wrangler.jsonc` → deploy after CI passes on `main`, and skips with a notice
   without the `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID` secrets or with the placeholder
   database id. `compatibility_date` is the newest the local test runtime supports.
+- **Stale builds** (docs/deploy.md, "Old tabs after a deploy"): `assets.not_found_handling`
+  is `"none"`; `serveAsset` does the SPA fallback (index.html for any GET/HEAD with no
+  file) except under `/assets/`, where a missing file is a 404, so an old tab's removed
+  chunk fails cleanly. The client recovers in `lib/staleBuild.ts`: `vite:preloadError`
+  (main.tsx) and `RouteError` (the router's `errorElement`, at the top level and again
+  inside `/shows/:id` so the show and its store stay mounted) call `staleBuild.recover()`,
+  which reloads once (sessionStorage guard, 60 s; a second failure shows the
+  `StaleBuildBanner` prompt instead). Anything a reload would lose registers with
+  `staleBuild.trackUnsavedWork({busy, subscribe})` and holds the reload until it settles:
+  the show store (`hasUnsent()`: batches the server hasn't answered) and the upload queue.
+  Add new in-flight work there. `RouteError` also replaces React Router's raw
+  "Unexpected Application Error" for any other route error. e2e: `e2e/stale-build.spec.ts`
+  (404s the PDF reader chunk with `page.route`).
 - **Security headers** (`src/worker/security.ts`): pages go through the Worker
   (`assets.run_worker_first: ["/*", "!/assets/*"]`, binding `ASSETS`), which adds a CSP
   built from the page's inline scripts (sha256 of index.html's theme script; `'self'`,

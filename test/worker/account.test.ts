@@ -458,6 +458,41 @@ describe("health, export, backups, headers", () => {
     expect(js.headers.get("Strict-Transport-Security")).toBeNull();
   });
 
+  it("SPA fallback: app routes get index.html, a missing /assets/ file is a 404", async () => {
+    // The binding as configured (`not_found_handling: "none"`): files or 404.
+    const html = `<!doctype html><html><head><script>var a = 1;</script></head><body></body></html>`;
+    const files: Record<string, Response> = {
+      "/": new Response(html, { headers: { "Content-Type": "text/html" } }),
+      "/assets/index-abc.js": new Response("x", { headers: { "Content-Type": "text/javascript" } }),
+    };
+    const assets = {
+      fetch: async (req: Request) =>
+        files[new URL(req.url).pathname]?.clone() ?? new Response(null, { status: 404 }),
+    } as unknown as Fetcher;
+    const get = (path: string, init?: RequestInit) =>
+      serveAsset(new Request(`https://cuesheet.example${path}`, init), assets, { csp: true });
+
+    // An old tab's chunk, removed by a deploy: 404, not the app shell.
+    const gone = await get("/assets/PdfReader-ESiLCMse.js");
+    expect(gone.status).toBe(404);
+    expect(gone.headers.get("Content-Type")).not.toContain("text/html");
+    expect(gone.headers.get("Cache-Control")).toBe("no-store");
+    expect(gone.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    // App routes: index.html with its CSP.
+    for (const path of ["/shows/x/script", "/login", "/s/tok"]) {
+      const page = await get(path);
+      expect(page.status, path).toBe(200);
+      expect(await page.text()).toBe(html);
+      expect(page.headers.get("Content-Security-Policy")).toContain("default-src 'self'");
+    }
+    // Files that exist are served as they are.
+    const js = await get("/assets/index-abc.js");
+    expect(js.status).toBe(200);
+    expect(await js.text()).toBe("x");
+    // Only reads fall back to the app.
+    expect((await get("/shows/x", { method: "POST" })).status).toBe(404);
+  });
+
   it("CSP: wss only over https, ws only on local http; reports to /api/csp-report", async () => {
     expect(contentSecurityPolicy("c.example", [], true)).toContain(
       "connect-src 'self' wss://c.example;",

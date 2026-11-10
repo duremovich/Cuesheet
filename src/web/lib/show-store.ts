@@ -36,6 +36,7 @@ import { isOrderedTable } from "../../shared/tables";
 import type { ServerMessage } from "../../shared/ws";
 import { api } from "./api";
 import { applyResolved, emptyData, fromSnapshot, resolveLocal, type ShowData } from "./show-state";
+import { staleBuild } from "./staleBuild";
 import { type ShowSocketState, useShowSocket } from "./useShowSocket";
 
 export type { AnyOp, Op, ResolvedOp } from "../../shared/ops";
@@ -190,6 +191,12 @@ export class ShowStoreImpl implements ShowStore {
       (p.acked?.ops ?? p.local).some((o) => o.op !== "meta" && o.table === table && o.id === id),
     );
   }
+
+  /**
+   * Whether a batch hasn't been answered by the server yet (queued or in flight): a page
+   * reload now would lose it. Acked batches are committed, so they don't count.
+   */
+  hasUnsent = (): boolean => this.pending.some((p) => !p.acked);
 
   getState = (): ShowState => this.visible;
 
@@ -389,7 +396,10 @@ export function ShowStoreProvider({
     storeRef.current = s;
     setStore(s);
     void s.load();
+    // A stale-build reload (lib/staleBuild.ts) waits for unsent edits.
+    const untrack = staleBuild.trackUnsavedWork({ busy: s.hasUnsent, subscribe: s.subscribe });
     return () => {
+      untrack();
       s.dispose();
       storeRef.current = null;
     };

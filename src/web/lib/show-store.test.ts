@@ -137,6 +137,26 @@ describe("ShowStore", () => {
     expect(store.tables.cues.get("c2")?.created_by).toBe("server");
   });
 
+  it("says whether batches are still unsent or unanswered (hasUnsent), notifying on change", async () => {
+    const { server, store, calls, releaseNext } = setup();
+    server.apply({ clientId: "x", ops: [cue("c1", "1")] });
+    await store.load();
+    expect(store.hasUnsent()).toBe(false);
+    const listener = vi.fn(() => store.hasUnsent());
+    store.subscribe(listener);
+    const a = store.mutate([cue("c2", "2")]);
+    const b = store.mutate([cue("c3", "3")]); // queued behind a
+    expect(store.hasUnsent()).toBe(true);
+    await releaseNext();
+    await a;
+    expect(store.hasUnsent()).toBe(true);
+    await vi.waitFor(() => expect(calls.length).toBe(1));
+    calls.shift()?.d.reject(new Error("offline"));
+    await expect(b).rejects.toThrow("offline");
+    expect(store.hasUnsent()).toBe(false);
+    expect(listener).toHaveLastReturnedWith(false);
+  });
+
   it("says which rows still have unconfirmed local changes (hasPending)", async () => {
     const { server, store, releaseNext } = setup();
     server.apply({ clientId: "x", ops: [cue("c1", "1")] });

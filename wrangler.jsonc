@@ -11,8 +11,10 @@
   "assets": {
     // The Worker serves pages through this binding so it can add security headers
     // (src/worker/security.ts); hashed build files under /assets/ skip the Worker.
+    // No platform SPA fallback: the Worker serves index.html for app routes itself, so a
+    // missing /assets/ file (an old tab after a deploy) is a 404, not the app shell.
     "binding": "ASSETS",
-    "not_found_handling": "single-page-application",
+    "not_found_handling": "none",
     "run_worker_first": ["/*", "!/assets/*"]
   },
   "durable_objects": {
