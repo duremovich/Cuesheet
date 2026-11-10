@@ -12,6 +12,8 @@
     "playwright.config.ts",
     "drizzle.*.config.ts",
     "scripts",
-    "e2e"
+    "e2e",
+    // Pure, import-free: scripts/migrate-show.ts runs it under plain Node.
+    "src/shared/show-transfer.ts"
   ]
 }

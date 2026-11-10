@@ -1648,6 +1648,36 @@ position is kept outside React.
   cell as a link (URL fields); `Column.masked` shows dots (sensitive fields).
   `cueNumberHints` takes an optional noun for its messages.
 
+## Moving a show between instances (docs/deploy.md)
+
+- **Pieces.** `scripts/migrate-show.ts` (Node CLI, run with plain `node`: type stripping
+  only, so **no parameter properties / enums** in it or in what it imports),
+  `src/shared/show-transfer.ts` (types + pure helpers; **import-free**, listed in
+  `tsconfig.node.json` too), `src/worker/routes/transfer.ts` (instance-admin routes),
+  `src/worker/do/transfer.ts` (raw SQL in the ShowDO) + `ShowDO.transfer*` RPCs.
+- **Raw, below the op engine.** Rows are read as stored (`SELECT rowid AS __rowid, *`) and
+  written back with the same rowid; every table `sqlite_master` lists except `sqlite_*` and
+  names starting with `_` (`_cf_*`, `__drizzle_migrations`, our `_transfer_staging`). A new
+  DO table is therefore transferred automatically; a new **blob** column is not (refused:
+  values must be text/number/null). Show schemas must match (`__drizzle_migrations` hashes).
+- **Import = stage, then swap.** `begin` (re)creates `_transfer_staging` and sets the KV
+  marker `transfer:state` = importing; `rows` stages one JSON row per staging row; `finish`
+  deletes every table and inserts the staged rows in **one `transactionSync` with
+  `PRAGMA defer_foreign_keys = ON`** (so table/row order never matters), checks row counts,
+  writes `sqlite_sequence`, drops staging, marks `imported` with the DO version, schedules
+  the R2 purge alarm if `pending_r2_deletes` has rows; then the D1 rows (show, memberships,
+  share links) go in one D1 batch. `begin` refuses an existing show (D1 row, or a DO with
+  meta/data/history) unless the marker is there **and** `overwrite` **and** (for
+  `imported`) the DO version hasn't moved; it deletes that earlier import's D1 row.
+- **User ids** are remapped by the CLI, not the server: a plain string replace of each
+  source user id over the JSON (UUIDs, so ids inside JSON-in-string columns, history
+  old/new values and view configs follow). The server takes rows as given.
+- Tests: `test/worker/transfer.test.ts` (one instance plays both sides by also remapping
+  the show id; share-link ids/token hashes are remapped there only because both copies
+  share one D1), `src/shared/show-transfer.test.ts`. The real check is two `vite preview`
+  servers on scratch state dirs (start them one after the other: each picks the first free
+  inspector port from 9229 and simultaneous starts collide).
+
 ## Theme and colors
 
 Dark is the default **regardless of the system color scheme**; only the user's toggle

@@ -154,7 +154,9 @@ Durable Object point-in-time recovery below.
   hashes), and a manifest of its files in R2 (key, size, type) for copying them with
   `wrangler r2 object get … --config wrangler.jsonc`. Keep one per active show every week
   and before risky changes (a big import, a new script version) and at the end of a
-  production. There's no import of an export yet.
+  production. The export.json is for keeping, not for restoring: it has no history and
+  no file bytes. To restore or move a show, use the instance-to-instance copy in "Moving a
+  show between instances" below (it reads the source instance live).
 - **Show data: point-in-time recovery.** SQLite-backed Durable Objects keep 30 days of
   history. At the time of writing it's reached through the Durable Object Storage API
   (`ctx.storage.getBookmarkForTime(time)` then
@@ -174,6 +176,58 @@ Durable Object point-in-time recovery below.
   D1 Time Travel covers finer-grained cases.
 - **R2** has no automatic backup here. For more than the show exports, add an R2 bucket
   replication or a periodic `rclone` copy (R2 is S3-compatible).
+
+## Moving a show between instances
+
+`scripts/migrate-show.ts` copies one show from instance A (say the local one on 4318) to
+instance B (say production) **under the same show id**, then verifies the copy. It needs
+Node 22.18+ (it runs the TypeScript file directly) and an **instance admin** login on both
+sides. Both instances must run **the same Cuesheet version** (the code with the transfer
+routes, and the same show schema: the import refuses a different `__drizzle_migrations`
+list).
+
+```sh
+# creds files: ADMIN_EMAIL=… / ADMIN_PASSWORD=… lines (a .dev.vars) or {"email","password"}
+node scripts/migrate-show.ts   --from http://localhost:4318 --from-creds ../cuesheet-live/admin.dev.vars   --to https://cuesheet.example.com --to-creds prod-admin.creds   --show 9f6bf44e-3e7c-4fdf-9d73-08f252f57f21
+```
+
+- **What's copied:** every row of every table in the show's Durable Object, raw and with
+  the same rowids (scenes, cues, content, notes, links, views incl. personal ones, select
+  options, custom fields/tables, script + versions + anchors, attachments, the **whole
+  change history**, files waiting for their deferred delete, the AUTOINCREMENT counter);
+  the D1 show row (name, session, `storage_bytes`, template flag, `created_at`), its
+  memberships and share links (token hashes included, so a link keeps working if its
+  token's path is opened on the new host); and every R2 object under `shows/<id>/`
+  (attachments, thumbnails, the gzipped script texts) with its metadata.
+- **Users:** each user id the show references maps to the target account with the **same
+  email**; anyone without an account there maps to the **target login** (the CLI prints
+  each mapping; "NO ACCOUNT ON TARGET" lines are those). Several users mapped onto one
+  account merge into one membership with the highest role. To keep people's authorship,
+  invite them on the target first, then migrate.
+- **Not copied:** sessions (everyone signs in again), pending invites, rate-limit events,
+  upload reservations, other shows. Nothing is deleted on the source.
+- **Safety:** the target accepts an import only into a show id it doesn't have (no D1
+  row, an empty Durable Object). A previous import of the same show (the DO's
+  `transfer:state` marker) is replaced only with `--overwrite`, and never once someone has
+  edited it (its version moved). Rows are staged first and swapped in with one
+  transaction at the end, and the D1 rows are written last: until then the show is in
+  nobody's list.
+- **Re-running:** safe. After an interrupted run, run it again with `--overwrite` (the CLI
+  says so). If the target already holds a finished import, a plain re-run only verifies.
+- **Verify** (always runs after an import; alone with `--verify-only`): per table, row
+  count and SHA-256 of the canonical rows (source with the user mapping applied) on both
+  sides; DO version and counters; the D1 show row, memberships and share links; for every
+  R2 object the size, metadata and a SHA-256 **computed by each instance from its own
+  bucket**; and the app's own snapshot as each admin sees it (shared views). Exit 0 =
+  migrated and identical, 1 = differences (listed), 2 = refused or failed.
+- **Limits:** rows go in ≤ 8 MB requests, files one request each (≤ 95 MB; attachments are
+  capped at 25 MB anyway). Files pass through the machine running the CLI.
+
+The routes behind it (instance admins only, `src/worker/routes/transfer.ts`):
+`GET /api/admin/users`, `GET /api/admin/shows/:id/transfer` (manifest / status),
+`…/transfer/rows?table=&after=`, `…/transfer/files`, `…/transfer/file?key=`,
+`…/transfer/file-hash?key=`; and on the target `POST …/transfer/begin`, `POST …/rows`,
+`PUT …/file?key=`, `POST …/finish`.
 
 ## Monitoring and logs
 

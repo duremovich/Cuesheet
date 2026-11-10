@@ -17,6 +17,11 @@ import type {
 } from "../../shared/ops";
 import type { ShareScope } from "../../shared/share";
 import {
+  TRANSFER_STATE_KEY,
+  type TransferDoInfo,
+  type TransferState,
+} from "../../shared/show-transfer";
+import {
   type AttachmentRow,
   type CueAnchorRow,
   DATA_TABLES,
@@ -45,6 +50,14 @@ import {
   readSnapshot,
   seedDefaultViews,
 } from "./ops-engine";
+import {
+  applyStaged,
+  baseInfo,
+  beginStaging,
+  readRowsPage,
+  stageRows,
+  TransferError,
+} from "./transfer";
 
 /** Header the Worker uses to tell the DO who opened a WebSocket. */
 export const USER_ID_HEADER = "X-Cuesheet-User";
@@ -81,6 +94,16 @@ export const ACCESS_REVOKED_CODE = 4003;
  * every socket.
  */
 const MAX_BROADCAST_BYTES = 256 * 1024;
+
+/** A transfer step's outcome (refusals come back as values, like `MutateResult`). */
+export type TransferResult<T> =
+  | ({ ok: true } & T)
+  | { ok: false; status: 400 | 409; error: string };
+
+function transferFailure(e: unknown): { ok: false; status: 400 | 409; error: string } {
+  if (e instanceof TransferError) return { ok: false, status: e.status, error: e.message };
+  throw e;
+}
 
 export type MutateResult =
   | ({ ok: true } & MutateResponse)
@@ -613,6 +636,92 @@ export class ShowDO extends DurableObject<Env> {
     return [...DATA_TABLES, "custom_rows"].some(
       (t) => this.ctx.storage.sql.exec(`SELECT 1 FROM "${t}" LIMIT 1`).toArray().length > 0,
     );
+  }
+
+  // ---- moving a show between instances (routes/transfer.ts, do/transfer.ts) ----
+
+  /** Tables, schema, counters and the import marker (GET …/transfer, both sides). */
+  async transferInfo(): Promise<TransferDoInfo> {
+    return {
+      ...baseInfo(this.ctx.storage.sql),
+      hasData: await this.hasData(),
+      transfer: (await this.ctx.storage.get<TransferState>(TRANSFER_STATE_KEY)) ?? null,
+      alarm: await this.ctx.storage.getAlarm(),
+    };
+  }
+
+  /** The import marker alone (cheap; checked before each file is written). */
+  async transferState(): Promise<TransferState | null> {
+    return (await this.ctx.storage.get<TransferState>(TRANSFER_STATE_KEY)) ?? null;
+  }
+
+  /** A page of a table's raw rows as JSON `{rows, next}` (see `readRowsPage`). */
+  async transferRows(
+    table: string,
+    after: number,
+    maxBytes: number,
+  ): Promise<TransferResult<{ json: string }>> {
+    try {
+      return {
+        ok: true,
+        json: JSON.stringify(readRowsPage(this.ctx.storage.sql, table, after, maxBytes)),
+      };
+    } catch (e) {
+      return transferFailure(e);
+    }
+  }
+
+  /** Start (or restart) an import: empty staging, marker `importing`. Data untouched. */
+  async transferBegin(): Promise<void> {
+    beginStaging(this.ctx.storage.sql);
+    await this.ctx.storage.put(TRANSFER_STATE_KEY, {
+      state: "importing",
+      at: Date.now(),
+    } satisfies TransferState);
+  }
+
+  /** Stage one chunk of rows (JSON array) for `table`. */
+  async transferStage(
+    table: string,
+    rowsJson: string,
+  ): Promise<TransferResult<{ staged: number }>> {
+    try {
+      const state = await this.ctx.storage.get<TransferState>(TRANSFER_STATE_KEY);
+      if (state?.state !== "importing") throw new TransferError(409, "No import in progress");
+      return { ok: true, staged: stageRows(this.ctx.storage.sql, table, JSON.parse(rowsJson)) };
+    } catch (e) {
+      return transferFailure(e);
+    }
+  }
+
+  /**
+   * Swap the show's tables for the staged rows (one transaction; refused unless the row
+   * counts match `counts`), mark it `imported`, and schedule the purge of any deleted
+   * files that came along.
+   */
+  async transferFinish(
+    counts: Record<string, number>,
+    sequences: Record<string, number>,
+  ): Promise<TransferResult<{ version: number }>> {
+    try {
+      const state = await this.ctx.storage.get<TransferState>(TRANSFER_STATE_KEY);
+      if (state?.state !== "importing") throw new TransferError(409, "No import in progress");
+      const sql = this.ctx.storage.sql;
+      this.ctx.storage.transactionSync(() => applyStaged(sql, counts, sequences));
+      const version = currentVersion(sql);
+      await this.ctx.storage.put(TRANSFER_STATE_KEY, {
+        state: "imported",
+        at: Date.now(),
+        version,
+      } satisfies TransferState);
+      const { first } = sql
+        .exec<{ first: number | null }>("SELECT min(deleted_at) AS first FROM pending_r2_deletes")
+        .one();
+      if (first !== null) await this.schedulePurge(first + R2_DELETE_DELAY_MS);
+      return { ok: true, version };
+    } catch (e) {
+      return transferFailure(e);
+    }
   }
 
   /** Tell a user's open sockets their role changed (`{type:"role"}`). Returns how many. */
