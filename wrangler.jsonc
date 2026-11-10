@@ -49,8 +49,7 @@
         {
           "binding": "DB",
           "database_name": "cuesheet",
-          // Replace with the id printed by `wrangler d1 create cuesheet` (docs/deploy.md).
-          "database_id": "00000000-0000-0000-0000-000000000000",
+          "database_id": "f926a344-956e-4a8a-9fd4-4bc1fdcc5890",
           "migrations_dir": "src/worker/db/d1/migrations"
         }
       ],
