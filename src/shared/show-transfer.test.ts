@@ -4,9 +4,34 @@ import {
   chunkRows,
   diffDigests,
   mapMemberships,
+  parseCreds,
   referencedIds,
   remapIds,
 } from "./show-transfer";
+
+describe("parseCreds", () => {
+  it("reads .dev.vars lines: BOM, CRLF, quotes, comments, a URL line", () => {
+    const vars =
+      '﻿# production\r\nADMIN_EMAIL=a@b.c\r\nADMIN_PASSWORD="p w=1"\r\nURL=https://x.workers.dev\r\n';
+    expect(parseCreds(vars)).toEqual({
+      email: "a@b.c",
+      password: "p w=1",
+      url: "https://x.workers.dev",
+    });
+    expect(parseCreds("export EMAIL=a@b.c\nPASSWORD='x'\n")).toEqual({
+      email: "a@b.c",
+      password: "x",
+    });
+  });
+
+  it("reads JSON; null without a password", () => {
+    expect(parseCreds('{"email":"a@b.c","password":"x"}')).toEqual({
+      email: "a@b.c",
+      password: "x",
+    });
+    expect(parseCreds("ADMIN_EMAIL=a@b.c\n")).toBeNull();
+  });
+});
 
 const A = "0195f0a0-0000-7000-8000-00000000000a";
 const B = "0195f0a0-0000-7000-8000-00000000000b";

@@ -187,9 +187,18 @@ routes, and the same show schema: the import refuses a different `__drizzle_migr
 list).
 
 ```sh
-# creds files: ADMIN_EMAIL=… / ADMIN_PASSWORD=… lines (a .dev.vars) or {"email","password"}
-node scripts/migrate-show.ts   --from http://localhost:4318 --from-creds ../cuesheet-live/admin.dev.vars   --to https://cuesheet.example.com --to-creds prod-admin.creds   --show 9f6bf44e-3e7c-4fdf-9d73-08f252f57f21
+node scripts/migrate-show.ts \
+  --from http://localhost:4318 --from-creds ../cuesheet-live/admin.dev.vars \
+  --to-creds ../cuesheet-live/admin.prod.vars \
+  --show 9f6bf44e-3e7c-4fdf-9d73-08f252f57f21
 ```
+
+A creds file is `ADMIN_EMAIL=…` / `ADMIN_PASSWORD=…` lines like a `.dev.vars` (BOM, CRLF,
+quotes and comments are fine), optionally with `URL=https://…`, which stands in for a
+missing `--from` / `--to`; or JSON `{"email", "password", "url"?}`. Every request sends
+`User-Agent: cuesheet-migrate/1.0`: Cloudflare's Browser Integrity Check answers library
+default user agents with 403 "error code: 1010". https targets with `Secure` cookies work
+(the CLI keeps its own cookie jar).
 
 - **What's copied:** every row of every table in the show's Durable Object, raw and with
   the same rowids (scenes, cues, content, notes, links, views incl. personal ones, select

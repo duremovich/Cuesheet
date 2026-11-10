@@ -122,6 +122,48 @@ export function remapIds(text: string, map: ReadonlyMap<string, string>): string
   return out;
 }
 
+/** Sent on every CLI request: Cloudflare's Browser Integrity Check blocks library defaults (1010). */
+export const TRANSFER_USER_AGENT = "cuesheet-migrate/1.0";
+
+export interface TransferCreds {
+  email: string;
+  password: string;
+  url?: string;
+}
+
+/**
+ * A creds file: JSON `{email, password, url?}` or `KEY=VALUE` lines like a .dev.vars
+ * (`ADMIN_EMAIL`, `ADMIN_PASSWORD`, optional `URL`; `EMAIL` / `PASSWORD` work too). A BOM
+ * (PowerShell writes one), CRLF, quotes, `export ` and comment lines are fine. Null when
+ * there's no email or password.
+ */
+export function parseCreds(text: string): TransferCreds | null {
+  const clean = text.replace(/^﻿/, "");
+  try {
+    const j = JSON.parse(clean) as { email?: unknown; password?: unknown; url?: unknown };
+    if (typeof j.email === "string" && typeof j.password === "string") {
+      return {
+        email: j.email,
+        password: j.password,
+        ...(typeof j.url === "string" && j.url ? { url: j.url } : {}),
+      };
+    }
+  } catch {
+    // KEY=VALUE lines
+  }
+  const vars: Record<string, string> = {};
+  for (const line of clean.split(/\r?\n/)) {
+    const m = /^\s*(?:export\s+)?([A-Za-z_]+)\s*=\s*(.*?)\s*$/.exec(line);
+    if (m?.[1] && m[2] !== undefined) {
+      vars[m[1].toUpperCase()] = m[2].replace(/^"(.*)"$/, "$1").replace(/^'(.*)'$/, "$1");
+    }
+  }
+  const email = vars.ADMIN_EMAIL ?? vars.EMAIL;
+  const password = vars.ADMIN_PASSWORD ?? vars.PASSWORD;
+  if (!email || !password) return null;
+  return { email, password, ...(vars.URL ? { url: vars.URL } : {}) };
+}
+
 /** JSON with object keys sorted at every level (stable for hashing). */
 export function canonicalJson(value: unknown): string {
   return JSON.stringify(sortKeys(value));

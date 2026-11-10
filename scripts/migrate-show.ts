@@ -5,8 +5,9 @@
 //   node scripts/migrate-show.ts --from <url> --from-creds <file> --to <url> --to-creds <file>
 //                                --show <id> [--overwrite] [--verify-only] [--concurrency 4]
 //
-// Creds files: `ADMIN_EMAIL=… / ADMIN_PASSWORD=…` lines (a .dev.vars) or JSON
-// `{"email": …, "password": …}`. Users referenced by the show map to the target account
+// Creds files: `ADMIN_EMAIL=… / ADMIN_PASSWORD=… [/ URL=…]` lines (a .dev.vars) or JSON
+// `{"email", "password", "url"?}`; a file's URL stands in for a missing --from / --to. Every
+// request sends User-Agent `cuesheet-migrate/1.0` (Cloudflare blocks library defaults). Users referenced by the show map to the target account
 // with the same email; anyone without one maps to the target login. Exit 0 = migrated (or
 // already migrated) and verified; 1 = verify found differences; 2 = refused / failed.
 import { createHash } from "node:crypto";
@@ -17,11 +18,14 @@ import {
   chunkRows,
   diffDigests,
   mapMemberships,
+  parseCreds,
   R2_METADATA_HEADER,
   referencedIds,
   remapIds,
   SHA256_HEADER,
   type TableDigest,
+  TRANSFER_USER_AGENT,
+  type TransferCreds,
   type TransferFile,
   type TransferFinishResponse,
   type TransferManifest,
@@ -55,6 +59,7 @@ class Instance {
   async request(path: string, init: RequestInit = {}): Promise<Response> {
     const headers = new Headers(init.headers);
     headers.set("Origin", this.base);
+    headers.set("User-Agent", TRANSFER_USER_AGENT);
     if (this.cookies.size) {
       headers.set("Cookie", [...this.cookies].map(([k, v]) => `${k}=${v}`).join("; "));
     }
@@ -110,23 +115,10 @@ class HttpError extends Failure {
   }
 }
 
-function readCreds(file: string): { email: string; password: string } {
-  const text = readFileSync(file, "utf8");
-  try {
-    const j = JSON.parse(text) as { email?: string; password?: string };
-    if (j.email && j.password) return { email: j.email, password: j.password };
-  } catch {
-    // KEY=VALUE lines
-  }
-  const vars: Record<string, string> = {};
-  for (const line of text.split(/\r?\n/)) {
-    const m = /^\s*([A-Z_]+)\s*=\s*(.*?)\s*$/.exec(line);
-    if (m?.[1] && m[2] !== undefined) vars[m[1]] = m[2].replace(/^"(.*)"$/, "$1");
-  }
-  const email = vars.ADMIN_EMAIL ?? vars.EMAIL;
-  const password = vars.ADMIN_PASSWORD ?? vars.PASSWORD;
-  if (!email || !password) throw new Failure(`${file}: no ADMIN_EMAIL / ADMIN_PASSWORD`);
-  return { email, password };
+function readCreds(file: string): TransferCreds {
+  const creds = parseCreds(readFileSync(file, "utf8"));
+  if (!creds) throw new Failure(`${file}: no ADMIN_EMAIL / ADMIN_PASSWORD`);
+  return creds;
 }
 
 const sha256 = (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex");
@@ -193,22 +185,31 @@ async function main(): Promise<number> {
       concurrency: { type: "string", default: "4" },
     },
   });
-  const need = ["from", "from-creds", "to", "to-creds", "show"] as const;
+  const usage =
+    "usage: node scripts/migrate-show.ts [--from <url>] --from-creds <file> [--to <url>] --to-creds <file> --show <id> [--overwrite] [--verify-only]";
+  const need = ["from-creds", "to-creds", "show"] as const;
   const missing = need.filter((k) => !values[k]);
   if (missing.length) {
+    throw new Failure(`missing ${missing.map((k) => `--${k}`).join(", ")}\n${usage}`);
+  }
+  const srcCreds = readCreds(values["from-creds"] as string);
+  const dstCreds = readCreds(values["to-creds"] as string);
+  // An explicit --from / --to wins over the creds file's URL.
+  const fromUrl = values.from ?? srcCreds.url;
+  const toUrl = values.to ?? dstCreds.url;
+  if (!fromUrl || !toUrl) {
     throw new Failure(
-      `missing ${missing.map((k) => `--${k}`).join(", ")}\n` +
-        "usage: node scripts/migrate-show.ts --from <url> --from-creds <file> --to <url> --to-creds <file> --show <id> [--overwrite] [--verify-only]",
+      `missing ${fromUrl ? "--to" : "--from"} (no URL= in its creds file)\n${usage}`,
     );
   }
   const showId = values.show as string;
   const concurrency = Math.max(1, Number(values.concurrency) || 4);
-  const src = new Instance("source", values.from as string);
-  const dst = new Instance("target", values.to as string);
+  const src = new Instance("source", fromUrl);
+  const dst = new Instance("target", toUrl);
   if (src.base === dst.base) throw new Failure("--from and --to are the same instance");
 
-  await src.login(readCreds(values["from-creds"] as string));
-  const admin = await dst.login(readCreds(values["to-creds"] as string));
+  await src.login(srcCreds);
+  const admin = await dst.login(dstCreds);
   console.log(`source ${src.base}  →  target ${dst.base} (as ${admin.email})`);
 
   const srcManifest = await src.json<TransferManifest>(base(showId));
