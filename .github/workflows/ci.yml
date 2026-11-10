@@ -18,7 +18,7 @@ env:
 jobs:
   check:
     runs-on: ubuntu-24.04 # pinned: Playwright 1.56 has no chromium for ubuntu-latest (26.04)
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -38,8 +38,11 @@ jobs:
         run: |
           mkdir -p probe
           bash scripts/ci-probe.sh probe &
-          export REQUEST_LOG_DIR=$PWD/probe
-          for i in 1 2 3 4; do echo "=== RUN $i $(date -u +%T)"; pnpm e2e || true; done 2>&1 | tee probe/e2e.log
+          for i in 1 2 3 4 5 6; do
+            if [ $((i % 2)) -eq 0 ]; then export E2E_STATE_DIR=/dev/shm/cuesheet-e2e; else export E2E_STATE_DIR=.wrangler/e2e-state-4317; fi
+            export REQUEST_LOG_DIR=$PWD/probe/run$i
+            echo "=== RUN $i $E2E_STATE_DIR $(date -u +%T)"; pnpm e2e || true
+          done 2>&1 | tee probe/e2e.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

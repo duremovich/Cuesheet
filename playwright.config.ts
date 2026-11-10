@@ -12,7 +12,7 @@ import { defineConfig, devices } from "@playwright/test";
 const ORIGIN = process.env.E2E_ORIGIN ?? "http://localhost:4317";
 process.env.E2E_ORIGIN = ORIGIN;
 const PORT = Number(new URL(ORIGIN).port || 80);
-const STATE_DIR = `.wrangler/e2e-state-${PORT}`;
+const STATE_DIR = process.env.E2E_STATE_DIR ?? `.wrangler/e2e-state-${PORT}`;
 
 // The server reads .dev.vars; make sure it exists (CI) and give the tests the same creds.
 if (!existsSync(".dev.vars")) copyFileSync(".dev.vars.example", ".dev.vars");
