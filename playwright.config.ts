@@ -1,4 +1,5 @@
-import { copyFileSync, existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { copyFileSync, existsSync, readFileSync, statfsSync } from "node:fs";
 import { defineConfig, devices } from "@playwright/test";
 
 // The e2e server builds the app and runs it with `vite preview` (the built Worker under
@@ -12,7 +13,28 @@ import { defineConfig, devices } from "@playwright/test";
 const ORIGIN = process.env.E2E_ORIGIN ?? "http://localhost:4317";
 process.env.E2E_ORIGIN = ORIGIN;
 const PORT = Number(new URL(ORIGIN).port || 80);
-const STATE_DIR = `.wrangler/e2e-state-${PORT}`;
+const STATE_DIR = process.env.E2E_STATE_DIR ?? stateDir(PORT);
+
+/**
+ * Where the e2e server keeps its D1/Durable Object/R2 state. On Linux (CI), in RAM
+ * (/dev/shm): workerd does its SQLite and file I/O on the one thread that serves every
+ * request, so on the CI runner's disk a write burst stalls the whole server for seconds
+ * (measured: health probes up to 2.2 s, a page load 4 s, past the 5 s expect timeout).
+ * On tmpfs the worst probe was 0.46 s. Elsewhere (or with < 1 GB free there), in
+ * .wrangler/. Per checkout and port, so parallel runs don't share it.
+ */
+function stateDir(port: number): string {
+  const local = `.wrangler/e2e-state-${port}`;
+  if (process.platform !== "linux") return local;
+  try {
+    const fs = statfsSync("/dev/shm");
+    if (fs.bavail * fs.bsize < 1024 ** 3) return local;
+  } catch {
+    return local;
+  }
+  const checkout = createHash("sha1").update(process.cwd()).digest("hex").slice(0, 8);
+  return `/dev/shm/cuesheet-e2e-${checkout}-${port}`;
+}
 
 // The server reads .dev.vars; make sure it exists (CI) and give the tests the same creds.
 if (!existsSync(".dev.vars")) copyFileSync(".dev.vars.example", ".dev.vars");

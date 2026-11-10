@@ -338,7 +338,17 @@ for a second trace, but `failOnFlakyTests` still fails the run.
   the same locally. Keep deliberate
   failures to one or two per test; a test that needs more (or a worker test) sends its own
   `CF-Connecting-IP` header. Never fail logins for the shared admin's email.
-- **Parallel runs.** Each run wipes and uses `.wrangler/e2e-state-<port>`. Another run
+- **Server stalls are disk I/O.** The e2e server is one workerd thread, and workerd does
+  its SQLite (D1, Durable Objects) and R2 file I/O synchronously on it: on the CI runner's
+  disk a write burst stalled every request for seconds (2026-11-10: a 4 s page load failed
+  `cue-grid.spec.ts` "content picker … without its prefix" in `goToCue`; probes measured
+  stalls to 2.2 s, Airtable imports to 2.3 s). So on Linux the state dir lives in
+  `/dev/shm` (`stateDir()` in `playwright.config.ts`: per checkout and port, `.wrangler/`
+  if /dev/shm has < 1 GB free; `E2E_STATE_DIR` overrides). With it the worst probe was
+  0.46 s and the suite ran 25% faster. A burst of tests all slow at the same moment in a
+  CI log means the server stalled, not the tests: look at the server before the test.
+- **Parallel runs.** Each run wipes and uses its state dir (`.wrangler/e2e-state-<port>`,
+  or under `/dev/shm` on Linux; see above). Another run
   (another checkout) holding :4317? Use `E2E_ORIGIN=http://localhost:4391 pnpm e2e`.
   Only one run per checkout at a time: runs share `dist/`.
 
