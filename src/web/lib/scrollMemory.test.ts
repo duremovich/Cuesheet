@@ -64,6 +64,17 @@ describe("anchorTarget", () => {
     expect(anchorTarget([{ key: "r:a", at: 50 }], byKey(LAYOUT))).toBe(0);
   });
 
+  it("keeps a shrunk row in view: the same fraction into it once its offset would hide it", () => {
+    // The view's top is 30 px into c (120 px): c stays at -30 while it's taller than that.
+    const anchors = captureAnchors(LAYOUT, 150);
+    expect(anchors[0]).toMatchObject({ key: "r:c", at: -30, frac: 0.25 });
+    const shorter = LAYOUT.map((i) => (i.key === "r:c" ? { ...i, size: 31 } : i));
+    expect(anchorTarget(anchors, byKey(shorter))).toBe(150);
+    // 30 px or less (compact rows): -30 would put the view's top at c's bottom or below it.
+    const compact = LAYOUT.map((i) => (i.key === "r:c" ? { ...i, size: 30 } : i));
+    expect(anchorTarget(anchors, byKey(compact))).toBe(120 + 0.25 * 30);
+  });
+
   it("frac mode keeps the same fraction of a page whose size changed (zoom)", () => {
     const pages = [
       { key: "p:1", start: 0, size: 800 },

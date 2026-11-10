@@ -14,6 +14,8 @@
     "scripts",
     "e2e",
     // Pure, import-free: scripts/migrate-show.ts runs it under plain Node.
-    "src/shared/show-transfer.ts"
+    "src/shared/show-transfer.ts",
+    // Pure, import-free: e2e/helpers.ts makes record ids with the app's generator.
+    "src/shared/ids.ts"
   ]
 }

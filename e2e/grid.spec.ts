@@ -1,6 +1,7 @@
 // The DataGrid on its dev page (/dev/grid), which runs against an in-memory copy of the
 // Some Like It Hot cue list. The e2e build includes the page (VITE_DEV_PAGES=1).
 import { expect, type Locator, type Page, test } from "@playwright/test";
+import { scrollGrid } from "./helpers";
 
 let errors: string[] = [];
 
@@ -186,9 +187,10 @@ test("group headers collapse and expand, and stay stuck while scrolling", async 
 
   // Scroll into the list: the stuck header names the group of the first thing below it.
   // (500 is the review's repro: Unassigned collapsed, scene 102's last row under the header.)
-  // Setting scrollTop only schedules the scroll event; the grid re-renders after it. Wait
-  // until the grid says it has laid out this offset (data-scroll-offset), then read the
-  // stuck header and the rows under it from that one settled layout.
+  // Setting scrollTop only schedules the scroll event; the grid re-renders after it, and
+  // may shift the offset as it measures rows (scrollGrid). Wait until the grid has laid out
+  // where it settled, then read the stuck header and the rows under it from that one
+  // settled layout.
   // A group header right under the stuck one labels itself: then the stuck header is the
   // previous group's, pushed up to end where that header begins. 0 and 15 are that case
   // with collapsed Unassigned on top (at 0 the next header used to stick over Unassigned's,
@@ -200,12 +202,8 @@ test("group headers collapse and expand, and stay stuck while scrolling", async 
     .filter({ hasText: "Unassigned" })
     .getAttribute("data-group-id");
   for (const y of [0, 15, 500, 1234, 3000]) {
-    const top = await scroller.evaluate((el, t) => {
-      el.scrollTop = t;
-      return Math.round(el.scrollTop);
-    }, y);
+    const top = await scrollGrid(scroller, y);
     if (y > 0) expect(top).toBeGreaterThan(0);
-    await expect(scroller).toHaveAttribute("data-scroll-offset", String(top));
     await expect(stuck).toHaveCount(1);
     const layout = await stuck.evaluate((el) => {
       const box = el.getBoundingClientRect();

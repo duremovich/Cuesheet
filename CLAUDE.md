@@ -320,10 +320,19 @@ for a second trace, but `failOnFlakyTests` still fails the run.
   CPU throttling makes render races show up: `(await page.context().newCDPSession(page))
   .send("Emulation.setCPUThrottlingRate", {rate: 6})`. Fix the app when the race is in
   the app.
-- **Known flake (open, 2026-11-09):** `e2e/row-height.spec.ts` "typing a long note inline
-  grows the row and keeps the caret in view" fails ~1 in 8 with `--repeat-each=30
-  --workers=6` (the row `ids[12]` isn't rendered yet at `toBeVisible`), already on
-  `536c0c1`, before multi-select. Not fixed yet; rerun, don't retry-annotate.
+- **CI runs on Linux, with other fonts.** The runner (ubuntu-24.04) renders `system-ui` as
+  DejaVu Sans, much wider than Windows' Segoe UI, so auto-height rows wrap differently and
+  come out taller: what sits at a given pixel or scroll offset differs from Windows. Never
+  assume it: find rows by geometry (fully in view, nearest the middle), scroll with
+  `scrollGrid` (`e2e/helpers.ts`; returns where the grid *settled*, since the virtualizer
+  shifts scrollTop as it measures rows, e.g. 3000 → 2982), and make ids with `recordId`
+  (monotonic: rows created in one mutate tie on `created_at` and sort by id).
+  **Reproduce on Linux** with Docker Desktop (start it first) and the matching image:
+  `docker run -d --name cuesheet-ci --ipc=host -e CI=1 mcr.microsoft.com/playwright:v1.56.1-noble
+  sleep infinity`, copy in a `git archive` of the branch, `corepack enable && pnpm install
+  --frozen-lockfile`, then **`apt-get install fonts-dejavu-core`** (the image alone renders
+  `system-ui` as WenQuanYi and passes what CI fails) and `pnpm exec playwright test`. In Git
+  Bash, prefix `docker` calls with `MSYS_NO_PATHCONV=1`.
 - **Rate limits are shared.** Failed logins and bad invite/reset/share tokens count toward
   per-IP limits (sign-in: 50 an hour per IP; tokens: 10 a minute), and every test's IP is
   the same locally. Keep deliberate
@@ -698,7 +707,8 @@ position is kept outside React.
 - **Within a tab.** Switching views goes to that view's remembered spot; a view with none,
   and a change of filters, sort, grouping, row height or grid ↔ gallery, keep the row that
   was at the top if it's still shown, else go to the top (`restoreFor`: the pixel fallback
-  only applies to the same `sig`). Column widths/order and collapsing a group don't count.
+  only applies to the same `sig`). The top row keeps its offset unless it shrank so much that
+  the offset would hide it (tall row → Compact): then the same fraction into it (`anchorTarget`). Column widths/order and collapsing a group don't count.
   Another script version goes to its own remembered spot (else stays put).
 - **Before paint.** Grid, gallery and both readers apply the position in a layout effect and
   write the virtualizer's `scrollOffset` in the same commit, so the first painted frame is

@@ -4,7 +4,14 @@
 // goes there.
 import { type Browser, expect, type Page, test } from "@playwright/test";
 import { PDFDocument, StandardFonts } from "pdf-lib";
-import { apiCreateShow, apiLogin, importExamples, trackErrors, uniqueName } from "./helpers";
+import {
+  apiCreateShow,
+  apiLogin,
+  importExamples,
+  scrollGrid,
+  trackErrors,
+  uniqueName,
+} from "./helpers";
 
 let errors: string[] = [];
 const pages: Page[] = [];
@@ -32,15 +39,6 @@ async function newPage(browser: Browser) {
 const grid = (page: Page) => page.getByTestId("grid-scroll");
 const tab = (page: Page, name: string) =>
   page.getByRole("navigation", { name: "Show" }).getByRole("link", { name, exact: true });
-
-/** Sets the grid's scrollTop and waits until it has laid out that offset. */
-async function scrollGrid(page: Page, top: number) {
-  const actual = await grid(page).evaluate((el, t) => {
-    el.scrollTop = t;
-    return Math.round(el.scrollTop);
-  }, top);
-  await expect(grid(page)).toHaveAttribute("data-scroll-offset", String(actual));
-}
 
 /**
  * Records the first animation frame (callbacks run just before a paint) in which the grid
@@ -104,20 +102,33 @@ test("cue grid: back from another tab, and after a reload, on the same rows and 
   await expect(page.getByRole("grid", { name: "Cue list" })).toBeVisible();
   await expect(page.locator("[data-row-id]").first()).toBeVisible();
 
-  await scrollGrid(page, 2400);
+  await scrollGrid(grid(page), 2400);
   const before = await rowAtTop(page);
   if (!before) throw new Error("no row at the top");
   // Make a cell in a visible row active (the click keeps the scroll: the row is in view).
+  // The row nearest the middle that's fully in view, under the column header and the stuck
+  // group header: what sits at a given pixel depends on the fonts (row heights are measured),
+  // so the middle line itself can fall on a group header.
   const rows = page.locator("[data-row-id]");
   const activeId = await grid(page).evaluate((el) => {
     const box = el.getBoundingClientRect();
-    const y = box.top + el.clientHeight / 2;
+    const top = box.top + 34 + 40;
+    const bottom = box.top + el.clientHeight;
+    const mid = (top + bottom) / 2;
+    let best = "";
+    let bestDistance = Number.POSITIVE_INFINITY;
     for (const r of Array.from(el.querySelectorAll<HTMLElement>("[data-row-id]"))) {
       const b = r.getBoundingClientRect();
-      if (b.top <= y && y < b.bottom) return r.dataset.rowId ?? "";
+      if (b.top < top || b.bottom > bottom) continue;
+      const distance = Math.abs((b.top + b.bottom) / 2 - mid);
+      if (distance < bestDistance) {
+        best = r.dataset.rowId ?? "";
+        bestDistance = distance;
+      }
     }
-    return "";
+    return best;
   });
+  if (!activeId) throw new Error("no row fully in view");
   await rows
     .and(page.locator(`[data-row-id="${activeId}"]`))
     .locator('[data-col="description"]')

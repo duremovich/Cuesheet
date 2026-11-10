@@ -83,6 +83,11 @@ export function captureAnchors(
  * Where the view's top goes to show `anchors` as they were: the first anchor `find` still
  * knows, at the same offset (`mode` "px") or the same fraction into it ("frac": pages whose
  * size scales with a zoom). Null when none is left.
+ *
+ * In "px" mode an item that shrank (a row height change, text measured shorter) would be
+ * scrolled clean out of view by its old offset: a 58 px row with its top 30 px above the
+ * view leaves nothing of itself when it becomes 30 px tall. Then it keeps the same fraction
+ * instead, so the item the view's top was in still is.
  */
 export function anchorTarget(
   anchors: readonly ScrollAnchor[],
@@ -92,7 +97,8 @@ export function anchorTarget(
   for (const a of anchors) {
     const it = find(a.key);
     if (!it) continue;
-    if (mode === "frac" && a.frac !== undefined) return Math.max(0, it.start + a.frac * it.size);
+    const byFrac = a.frac !== undefined && (mode === "frac" || -a.at >= it.size);
+    if (byFrac) return Math.max(0, it.start + (a.frac as number) * it.size);
     return Math.max(0, it.start - a.at);
   }
   return null;

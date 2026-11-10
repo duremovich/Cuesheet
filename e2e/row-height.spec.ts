@@ -7,6 +7,7 @@ import {
   apiCreateShow,
   apiLogin,
   recordId,
+  scrollGrid,
   trackErrors,
   uniqueName,
   waitForShowReady,
@@ -80,16 +81,6 @@ async function geometry(row: Locator) {
   });
 }
 
-/** Sets the grid's scrollTop and waits until the grid has laid out that offset. */
-async function scrollGrid(page: Page, top: number): Promise<number> {
-  const actual = await scroller(page).evaluate((el, t) => {
-    el.scrollTop = t;
-    return Math.round(el.scrollTop);
-  }, top);
-  await expect(scroller(page)).toHaveAttribute("data-scroll-offset", String(actual));
-  return actual;
-}
-
 test("fit to content is the default: a long note grows its row, short ones stay one line", async ({
   browser,
 }) => {
@@ -132,7 +123,7 @@ test("typing a long note inline grows the row and keeps the caret in view", asyn
     const box = el.getBoundingClientRect();
     return el.scrollTop + r.getBoundingClientRect().bottom - (box.top + el.clientHeight);
   }, id);
-  await scrollGrid(page, top);
+  await scrollGrid(scroller(page), top);
 
   await row.locator('[data-col="body"]').click();
   await page.keyboard.press("Enter");
@@ -267,7 +258,7 @@ test("tall rows: the stuck group header names the group under it, and jumps land
   const total = await scroller(page).evaluate((el) => el.scrollHeight - el.clientHeight);
   expect(total).toBeGreaterThan(2000);
   for (const y of [0, 15, 400, 1100, 1900, Math.round(total / 2), total - 50]) {
-    const top = await scrollGrid(page, y);
+    const top = await scrollGrid(scroller(page), y);
     await expect(stuck).toHaveCount(1);
     const layout = await stuck.evaluate((el) => {
       const box = el.getBoundingClientRect();
@@ -308,7 +299,7 @@ test("tall rows: the stuck group header names the group under it, and jumps land
     .toBe(true);
 
   // ↓ through tall rows keeps the active cell in view.
-  await scrollGrid(page, 0);
+  await scrollGrid(scroller(page), 0);
   await notesGrid(page).getByTestId("grid-row").first().locator('[data-col="body"]').click();
   for (let i = 0; i < 10; i++) await page.keyboard.press("ArrowDown");
   const active = notesGrid(page).locator('[data-cell][data-active="true"]');

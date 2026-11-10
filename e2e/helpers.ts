@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { type Browser, expect, type Page } from "@playwright/test";
+import { type Browser, expect, type Locator, type Page } from "@playwright/test";
+import { newId } from "../src/shared/ids";
 
 export const ADMIN = {
   email: process.env.E2E_ADMIN_EMAIL ?? "",
@@ -10,11 +11,14 @@ export const ADMIN = {
 /** The e2e server's origin (playwright.config.ts). */
 export const ORIGIN = process.env.E2E_ORIGIN ?? "http://localhost:4317";
 
-/** A record id the server accepts (lowercase UUIDv7), for ops sent through the API. */
+/**
+ * A record id the server accepts (lowercase UUIDv7), for ops sent through the API. The app's
+ * own generator: strictly increasing within a millisecond, so ids made in a row sort in that
+ * order. Rows created in one mutate share `created_at` and tie-break on id (notes sort by
+ * `created_at, id`), so `ids[12]` is the 13th row. (A random tail used to shuffle them.)
+ */
 export function recordId(): string {
-  const hex = Date.now().toString(16).padStart(12, "0") + crypto.randomUUID().replace(/-/g, "");
-  const variant = ((Number.parseInt(hex[16] ?? "0", 16) & 0x3) | 0x8).toString(16);
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-7${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+  return newId();
 }
 
 /** Unique per test run so tests can share one server without colliding. */
@@ -146,4 +150,30 @@ export function trackErrors(page: Page, into: string[] = []): string[] {
   });
   page.on("pageerror", (e) => into.push(e.message));
   return into;
+}
+
+/**
+ * Sets a grid's scrollTop (`scroller` is its `grid-scroll`) and waits until the grid has laid
+ * out where it settled; returns that offset. Not always `top`: auto-height rows rendered
+ * there for the first time get measured, and the virtualizer shifts scrollTop by however
+ * much the rows above came out shorter or taller than estimated, to keep the view still.
+ * Row heights depend on the fonts (wider on the Linux CI runner than on Windows), so
+ * never assume the offset you asked for. Settled = scrollTop and `data-scroll-offset` (what
+ * the grid last laid out) agree, read together.
+ */
+export async function scrollGrid(scroller: Locator, top: number): Promise<number> {
+  await scroller.evaluate((el, t) => {
+    el.scrollTop = t;
+  }, top);
+  let settled = -1;
+  await expect
+    .poll(async () => {
+      settled = await scroller.evaluate((el) => {
+        const at = Math.round(el.scrollTop);
+        return at === Number(el.dataset.scrollOffset) ? at : -1;
+      });
+      return settled;
+    })
+    .toBeGreaterThanOrEqual(0);
+  return settled;
 }
