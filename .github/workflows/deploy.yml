@@ -35,7 +35,7 @@ jobs:
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_branch == 'main')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # pinned: Playwright 1.56 has no chromium for ubuntu-latest (26.04)
     timeout-minutes: 20
     environment:
       name: production
