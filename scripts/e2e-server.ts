@@ -31,6 +31,8 @@ function run(script: string, args: string[], env: Record<string, string> = {}): 
   });
 }
 
+// stderr reaches the Playwright output (stdout is ignored): say where the state lives.
+process.stderr.write(`e2e server state: ${stateDir}\n`);
 rmSync(stateDir, { recursive: true, force: true });
 // VITE_DEV_PAGES=1 includes the /dev/* pages (e2e/grid.spec.ts) in this build only.
 await run(VITE, ["build"], { VITE_DEV_PAGES: "1" });
