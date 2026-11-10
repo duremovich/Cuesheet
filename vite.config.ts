@@ -1,6 +1,6 @@
+import { createWriteStream, mkdirSync } from "node:fs";
 import { cloudflare } from "@cloudflare/vite-plugin";
 import react from "@vitejs/plugin-react";
-import { createWriteStream, mkdirSync } from "node:fs";
 import { defineConfig, type Plugin } from "vite";
 
 // TEMPORARY (probe branch): log every request's wall-clock start/end in the preview server.
@@ -30,5 +30,9 @@ const persistPath = process.env.CUESHEET_PERSIST;
 
 // .sql imports (drizzle DO migrations) are bundled as Text modules by the Cloudflare plugin.
 export default defineConfig({
-  plugins: [requestLog(), react(), cloudflare(persistPath ? { persistState: { path: persistPath } } : {})],
+  plugins: [
+    requestLog(),
+    react(),
+    cloudflare(persistPath ? { persistState: { path: persistPath } } : {}),
+  ],
 });
