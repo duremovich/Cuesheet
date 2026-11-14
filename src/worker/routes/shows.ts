@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, exists, inArray, isNull, notExists, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import type { ImportMapping } from "../../shared/airtable-columns";
@@ -13,6 +13,7 @@ import {
   type ShowResponse,
   type ShowSummaryDTO,
   type ShowsResponse,
+  type TransferOwnershipRequest,
   type UpdateShowResponse,
 } from "../../shared/api";
 import type {
@@ -25,7 +26,7 @@ import { sha256Hex } from "../auth/bytes";
 import { requireAuth } from "../auth/middleware";
 import { normalizeEmail } from "../auth/session";
 import { requireAuthOrShare, shareResourceGuard } from "../auth/share-auth";
-import { schema } from "../db/d1/client";
+import { type D1Db, schema } from "../db/d1/client";
 import { RESERVED_KEYS } from "../do/ops-engine";
 import {
   INTERNAL_HEADER,
@@ -141,6 +142,58 @@ function hasReservedCustomKey(op: unknown): boolean {
   const custom = (fields as { custom?: unknown }).custom;
   if (!custom || typeof custom !== "object") return false;
   return Object.keys(custom).some((k) => RESERVED_KEYS.has(k));
+}
+
+/**
+ * Makes `to` the show's owner and `from` (the owner) an editor, in one D1 transaction that
+ * re-checks both sides, so the show always has exactly one owner: if `from` is no longer
+ * the owner (a concurrent transfer won) or `to` is no longer a member, nothing changes and
+ * this returns false. The old owner's open invites into the show expire with it.
+ */
+export async function transferOwnership(
+  db: D1Db,
+  showId: string,
+  from: string,
+  to: string,
+): Promise<boolean> {
+  const m = schema.memberships;
+  const holds = (userId: string, role: Role) =>
+    db
+      .select({ one: sql`1` })
+      .from(m)
+      .where(and(eq(m.showId, showId), eq(m.userId, userId), eq(m.role, role)));
+  const [promoted] = await db.batch([
+    db
+      .update(m)
+      .set({ role: "owner" })
+      .where(and(eq(m.showId, showId), eq(m.userId, to), exists(holds(from, "owner"))))
+      .returning({ userId: m.userId }),
+    // Only once `to` really is the owner (so never zero owners).
+    db
+      .update(m)
+      .set({ role: "editor" })
+      .where(
+        and(
+          eq(m.showId, showId),
+          eq(m.userId, from),
+          eq(m.role, "owner"),
+          exists(holds(to, "owner")),
+        ),
+      ),
+    db
+      .update(schema.invites)
+      .set({ expiresAt: Date.now() })
+      .where(
+        and(
+          eq(schema.invites.showId, showId),
+          eq(schema.invites.invitedBy, from),
+          isNull(schema.invites.acceptedAt),
+          exists(holds(to, "owner")),
+          notExists(holds(from, "owner")),
+        ),
+      ),
+  ]);
+  return promoted.length > 0;
 }
 
 function isGrantable(role: unknown): role is Role {
@@ -491,41 +544,38 @@ export const showRoutes = new Hono<ShowEnv>()
     return c.json({ ok: true });
   })
   // Hand the show to another member (owner only): they become the owner, you an editor.
+  // `{userId}` or `{email}` (scripts and agent accounts know emails).
   .post("/shows/:id/transfer", requireMembership, requireOwner, async (c) => {
-    const body = await readJsonObject(c);
-    const userId = str(body?.userId);
-    if (!userId || userId === c.var.user.id) {
-      return c.json({ error: "Pick another member to make the owner" }, 400);
+    const body = (await readJsonObject(c)) as Partial<TransferOwnershipRequest> | null;
+    const showId = c.var.show.id;
+    let userId = str(body?.userId);
+    const email = normalizeEmail(str(body?.email));
+    if (!userId && email) {
+      const byEmail = await c.var.db
+        .select({ id: schema.users.id })
+        .from(schema.users)
+        .where(eq(schema.users.email, email))
+        .get();
+      if (!byEmail)
+        return c.json({ error: "No account with that email is a member of this show" }, 404);
+      userId = byEmail.id;
     }
+    if (!userId) {
+      return c.json({ error: "Send the userId or email of the member to make the owner" }, 400);
+    }
+    if (userId === c.var.user.id) return c.json({ error: "You're already the owner" }, 400);
     const target = await c.var.db
       .select({ role: schema.memberships.role })
       .from(schema.memberships)
-      .where(
-        and(eq(schema.memberships.showId, c.var.show.id), eq(schema.memberships.userId, userId)),
-      )
+      .where(and(eq(schema.memberships.showId, showId), eq(schema.memberships.userId, userId)))
       .get();
-    if (!target) return c.json({ error: "Not a member of this show" }, 404);
-    const showId = c.var.show.id;
-    const setRole = (uid: string, role: Role) =>
-      c.var.db
-        .update(schema.memberships)
-        .set({ role })
-        .where(and(eq(schema.memberships.showId, showId), eq(schema.memberships.userId, uid)));
-    await c.var.db.batch([
-      setRole(userId, "owner"),
-      setRole(c.var.user.id, "editor"),
-      // The old owner's open invites into this show end with their ownership.
-      c.var.db
-        .update(schema.invites)
-        .set({ expiresAt: Date.now() })
-        .where(
-          and(
-            eq(schema.invites.showId, showId),
-            eq(schema.invites.invitedBy, c.var.user.id),
-            isNull(schema.invites.acceptedAt),
-          ),
-        ),
-    ]);
+    if (!target) {
+      return c.json({ error: "Not a member of this show; add them as a member first" }, 404);
+    }
+    if (!(await transferOwnership(c.var.db, showId, c.var.user.id, userId))) {
+      // Another request changed the members since this one checked (a second transfer, a removal).
+      return c.json({ error: "The show's members changed meanwhile; reload and try again" }, 409);
+    }
     const stub = showStub(c.env, showId);
     await stub.notifyRole(userId, "owner");
     await stub.notifyRole(c.var.user.id, "editor");

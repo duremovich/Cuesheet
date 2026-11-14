@@ -61,7 +61,9 @@ to try on the **Cues** tab:
   or run commands (Sort now, Go to…, Toggle theme, Import).
 - Open the show in a second browser (or a private window) to watch edits arrive live.
 - **Show settings** (⚙): Airtable import, members (the owner adds people who already have
-  an account; invite them from the shows page first).
+  an account; invite them from the shows page first). The owner can hand the show to
+  another member with **Make owner** (they become the owner, you an editor); scripts and
+  agent accounts do the same with `POST /api/shows/:id/transfer {"email": "..."}`.
 - **Row panel tabs**: edit any field in **Fields** (same pickers as the grid), see the
   cue's **Content** as cards, its **Notes**, and its **History** (who changed what,
   from → to).

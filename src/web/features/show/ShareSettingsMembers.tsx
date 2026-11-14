@@ -1,8 +1,8 @@
 // Show settings → Members (R23): what each role may do, the members (the owner changes
-// roles, removes people, hands the show over), leaving a show (anyone but the owner), and
-// adding people: an existing account directly, or an invite link that joins this show
-// with the chosen role when accepted.
-import { type FormEvent, useState } from "react";
+// roles, removes people, hands the show over after an in-row confirmation), leaving a
+// show (anyone but the owner), and adding people: an existing account directly, or an
+// invite link that joins this show with the chosen role when accepted.
+import { type FormEvent, useId, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import {
   type CreateInviteResponse,
@@ -37,6 +37,8 @@ export function MembersSection({
   const [error, setError] = useState<string | null>(null);
   const [invite, setInvite] = useState<{ email: string; role: Role } | null>(null);
   const [inviteLink, setInviteLink] = useState<CreateInviteResponse | null>(null);
+  /** The member whose "Make owner" is waiting for its in-row confirmation. */
+  const [confirmOwner, setConfirmOwner] = useState<string | null>(null);
   const isOwner = ws.role === "owner";
 
   const run = async (fn: () => Promise<unknown>) => {
@@ -136,15 +138,8 @@ export function MembersSection({
                   <button
                     type="button"
                     aria-label={`Make ${m.name} the owner`}
-                    onClick={() => {
-                      if (
-                        window.confirm(
-                          `Make ${m.name} the owner of ${ws.showName}? You'll become an editor and can't undo this yourself.`,
-                        )
-                      ) {
-                        void run(() => api.transferOwnership(ws.showId, m.userId));
-                      }
-                    }}
+                    aria-expanded={confirmOwner === m.userId}
+                    onClick={() => setConfirmOwner(m.userId)}
                   >
                     Make owner
                   </button>
@@ -165,6 +160,17 @@ export function MembersSection({
                   {m.role === "viewer" && <EyeIcon />}
                   {m.role}
                 </span>
+              )}
+              {isOwner && confirmOwner === m.userId && (
+                <ConfirmOwner
+                  name={m.name}
+                  showName={ws.showName}
+                  onCancel={() => setConfirmOwner(null)}
+                  onConfirm={() => {
+                    setConfirmOwner(null);
+                    void run(() => api.transferOwnership(ws.showId, m.userId));
+                  }}
+                />
               )}
             </li>
           ))}
@@ -210,5 +216,50 @@ export function MembersSection({
         </p>
       )}
     </section>
+  );
+}
+
+/**
+ * The in-row confirmation for handing the show over (no native dialog, like the grid's
+ * delete strip). Focus starts on Cancel; Escape cancels.
+ */
+function ConfirmOwner({
+  name,
+  showName,
+  onConfirm,
+  onCancel,
+}: {
+  name: string;
+  showName: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const textId = useId();
+  useLayoutEffect(() => cancelRef.current?.focus(), []);
+  return (
+    <div
+      role="alertdialog"
+      aria-modal="false"
+      aria-labelledby={textId}
+      className={styles.confirmOwner}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          onCancel();
+        }
+      }}
+    >
+      <span id={textId}>
+        Make {name} the owner of {showName}? You'll become an editor and can't undo this yourself.
+      </span>
+      <button type="button" className="primary" onClick={onConfirm}>
+        Make owner
+      </button>
+      <button type="button" ref={cancelRef} onClick={onCancel}>
+        Cancel
+      </button>
+    </div>
   );
 }

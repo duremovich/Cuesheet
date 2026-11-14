@@ -187,6 +187,27 @@ test("the owner manages members from Show settings", async ({ browser }) => {
       return members.find((m) => m.name === "Test viewer")?.role;
     })
     .toBe("editor");
+
+  // Hand the show over: confirmed in the row, never with a native dialog.
+  const dialogs: string[] = [];
+  admin.on("dialog", (d) => {
+    dialogs.push(d.message());
+    void d.dismiss();
+  });
+  await list.getByRole("button", { name: "Make Test viewer the owner" }).click();
+  const confirm = list.getByRole("alertdialog");
+  await expect(confirm).toContainText("You'll become an editor");
+  await confirm.getByRole("button", { name: "Make owner" }).click();
+  await expect(confirm).toHaveCount(0);
+  // The old owner's open tab follows: no more owner controls, and the list says who owns it.
+  await expect(list.getByRole("button", { name: /^Make .* the owner$/ })).toHaveCount(0);
+  await expect(list.getByRole("listitem").filter({ hasText: "Test viewer" })).toContainText(
+    "owner",
+  );
+  const res = await admin.request.get(`/api/shows/${showId}/members`);
+  const { members } = (await res.json()) as { members: { name: string; role: string }[] };
+  expect(members.filter((m) => m.role === "owner").map((m) => m.name)).toEqual(["Test viewer"]);
+  expect(dialogs).toEqual([]);
   await admin.context().close();
   await member.context().close();
 });

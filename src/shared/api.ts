@@ -31,6 +31,12 @@ export interface UpdateMemberRequest {
   role: Role;
 }
 
+/** POST /api/shows/:id/transfer (owner): name the member by id or by email. */
+export interface TransferOwnershipRequest {
+  userId?: string;
+  email?: string;
+}
+
 export interface UserDTO {
   id: string;
   email: string;

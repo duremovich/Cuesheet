@@ -229,15 +229,19 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   `ops-engine.ts`) from the role the Worker read on that request, so `/mutate` lets viewers
   through and the engine answers 403 for anything but their own views. Members: `GET/POST /api/shows/:id/members`,
   `PATCH/DELETE .../members/:userId` (owner only; the user must already have an account;
-  the owner can't be changed or removed), `POST .../transfer {userId}` (owner: that member
-  becomes the owner, you an editor; both get `{type:"role"}`), `POST .../leave` (anyone
+  the owner can't be changed or removed), `POST .../transfer {userId}` or `{email}` (owner:
+  that member becomes the owner, you an editor, so an agent account that created a show can
+  hand it to a person; both get `{type:"role"}`; 400 nobody named / yourself, 403
+  non-owner, 404 not a member, 409 when a concurrent change won. The swap is one D1 batch
+  in `transferOwnership()` that re-checks both sides, so a show always has exactly one
+  owner; it also expires the old owner's open invites into the show), `POST .../leave` (anyone
   but the owner; closes their sockets). **Presence** (R22): the DO keeps each socket's name
   (`X-Cuesheet-Name`, URI-encoded; share visitors "Guest (read-only)") and sends
   `hello`/`presence` with `{clients, readOnly, users: [{id, name, readOnly}]}` (one entry
   per user or share link; members by name, guests last). Share visitors get the counts
   without `users`. The pill keeps the count; hovering names people, clicking lists them
   (`presence-list`). Show settings → Members
-  (`show/ShareSettingsMembers.tsx`) has the role descriptions, "Make owner" (confirm),
+  (`show/ShareSettingsMembers.tsx`) has the role descriptions, "Make owner" (an in-row `alertdialog`, no native confirm),
   "Leave this show", and, when an added email has no account, "Create invite link" (an
   invite that joins this show with the chosen role). Presence counts read-only sockets
   (viewers and share links: `readOnly` in `hello`/`presence`, an eye in the indicator;

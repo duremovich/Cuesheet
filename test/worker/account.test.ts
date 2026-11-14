@@ -3,13 +3,21 @@
 // links, invites with a show and role, ownership transfer / leaving, health, the owner's
 // JSON export, the weekly D1 backup, and security headers.
 import { env } from "cloudflare:workers";
+import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { CreateResetLinkResponse } from "../../src/shared/account";
-import type { CreateInviteResponse, MembersResponse, ShowResponse } from "../../src/shared/api";
+import type {
+  CreateInviteResponse,
+  MembersResponse,
+  ShowResponse,
+  ShowsResponse,
+} from "../../src/shared/api";
 import type { ServerMessage } from "../../src/shared/ws";
 import { SESSION_TTL_MS } from "../../src/worker/auth/cookie";
 import { loginLimits, recordFailure, retryAfter } from "../../src/worker/auth/rate-limit";
+import { getDb, schema } from "../../src/worker/db/d1/client";
 import { BACKUP_PREFIX, backupD1, type ShowExport } from "../../src/worker/routes/backup";
+import { transferOwnership } from "../../src/worker/routes/shows";
 import {
   contentSecurityPolicy,
   inlineScriptHashes,
@@ -319,6 +327,116 @@ describe("invites and members", () => {
     expect((await post(`/api/shows/${show.id}/leave`, {}, viewer.cookie)).status).toBe(200);
     expect(await leaving.closedWith()).toBe(4003);
     expect((await api(`/api/shows/${show.id}`, { cookie: viewer.cookie })).status).toBe(404);
+  });
+
+  it("hands a show from the account that made it to another member, by email or id", async () => {
+    // An agent account creates the show and gives it to a person (by email: agents know emails).
+    const admin = await loginAdmin();
+    const agent = await newUser(admin, "Agent");
+    const person = await newUser(admin, "Person");
+    const outsider = await newUser(admin, "Outsider");
+    const show = await createShow(agent.cookie, "Agent made");
+    const transfer = (body: unknown, cookie: string) =>
+      post(`/api/shows/${show.id}/transfer`, body, cookie);
+    const errorOf = async (res: Response) => ((await res.json()) as { error: string }).error;
+
+    // Not a member yet (no such member, by id or email, or no account at all): 404.
+    let res = await transfer({ email: person.email }, agent.cookie);
+    expect(res.status).toBe(404);
+    expect(await errorOf(res)).toMatch(/not a member/i);
+    expect((await transfer({ userId: outsider.id }, agent.cookie)).status).toBe(404);
+    expect((await transfer({ email: "nobody@test.local" }, agent.cookie)).status).toBe(404);
+    // Nobody named, or yourself: 400.
+    expect((await transfer({}, agent.cookie)).status).toBe(400);
+    res = await transfer({ userId: agent.id }, agent.cookie);
+    expect(res.status).toBe(400);
+    expect(await errorOf(res)).toMatch(/already the owner/i);
+    expect((await transfer({ email: agent.email.toUpperCase() }, agent.cookie)).status).toBe(400);
+
+    await post(
+      `/api/shows/${show.id}/members`,
+      { email: person.email, role: "viewer" },
+      agent.cookie,
+    );
+    // A non-owner can't, even to themselves: 403.
+    res = await transfer({ userId: person.id }, person.cookie);
+    expect(res.status).toBe(403);
+
+    const agentSocket = await openSocket(show.id, agent.cookie);
+    const personSocket = await openSocket(show.id, person.cookie);
+    res = await transfer({ email: ` ${person.email.toUpperCase()} ` }, agent.cookie);
+    expect(res.status).toBe(200);
+    // Both sides' open tabs follow (the DO also drops the viewer's read-only flag).
+    expect(await personSocket.next(isType("role"))).toEqual({ type: "role", role: "owner" });
+    expect(await agentSocket.next(isType("role"))).toEqual({ type: "role", role: "editor" });
+    agentSocket.ws.close();
+    personSocket.ws.close();
+
+    // Exactly one owner; every place that reads the role agrees.
+    const members = (await (
+      await api(`/api/shows/${show.id}/members`, { cookie: person.cookie })
+    ).json()) as MembersResponse;
+    expect(members.members.filter((m) => m.role === "owner").map((m) => m.userId)).toEqual([
+      person.id,
+    ]);
+    expect(members.members.find((m) => m.userId === agent.id)?.role).toBe("editor");
+    const roleIn = async (cookie: string) =>
+      ((await (await api(`/api/shows/${show.id}`, { cookie })).json()) as ShowResponse).role;
+    expect(await roleIn(person.cookie)).toBe("owner");
+    expect(await roleIn(agent.cookie)).toBe("editor");
+    const listed = (await (
+      await api("/api/shows", { cookie: agent.cookie })
+    ).json()) as ShowsResponse;
+    expect(listed.shows.find((s) => s.id === show.id)?.role).toBe("editor");
+
+    // The old owner lost the owner-only routes; the new owner has them.
+    expect((await transfer({ userId: person.id }, agent.cookie)).status).toBe(403);
+    expect(
+      (
+        await post(
+          `/api/shows/${show.id}/members`,
+          { email: outsider.email, role: "viewer" },
+          agent.cookie,
+        )
+      ).status,
+    ).toBe(403);
+    expect((await api(`/api/shows/${show.id}/export.json`, { cookie: person.cookie })).status).toBe(
+      200,
+    );
+    // …and can hand it back (by id).
+    expect((await transfer({ userId: agent.id }, person.cookie)).status).toBe(200);
+    expect(await roleIn(agent.cookie)).toBe("owner");
+    expect(await roleIn(person.cookie)).toBe("editor");
+  });
+
+  it("a transfer from a stale owner, or to someone just removed, changes nothing", async () => {
+    // Two requests from the same owner can both pass the role check before either writes;
+    // the swap itself re-checks, so the loser is a no-op (the route answers 409).
+    const admin = await loginAdmin();
+    const show = await createShow(admin, "Race");
+    const a = await newUser(admin, "Race A");
+    const b = await newUser(admin, "Race B");
+    for (const u of [a, b]) {
+      await post(`/api/shows/${show.id}/members`, { email: u.email, role: "editor" }, admin);
+    }
+    const me = (
+      (await (await api("/api/me", { cookie: admin })).json()) as { user: { id: string } }
+    ).user.id;
+    const db = getDb(env);
+    const owners = async () =>
+      (
+        await db
+          .select({ userId: schema.memberships.userId, role: schema.memberships.role })
+          .from(schema.memberships)
+          .where(eq(schema.memberships.showId, show.id))
+      )
+        .filter((m) => m.role === "owner")
+        .map((m) => m.userId);
+    expect(await transferOwnership(db, show.id, me, a.id)).toBe(true);
+    expect(await transferOwnership(db, show.id, me, b.id)).toBe(false);
+    expect(await owners()).toEqual([a.id]);
+    expect(await transferOwnership(db, show.id, a.id, "gone")).toBe(false);
+    expect(await owners()).toEqual([a.id]);
   });
 
   it("presence: names who's here, viewers and share visitors read-only; guests get no names", async () => {
