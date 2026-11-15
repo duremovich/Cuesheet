@@ -17,6 +17,8 @@ import {
 } from ".";
 import { isCharacterCue, isHeading, pageLabelOf } from "./classify";
 import { decodeXml } from "./docx";
+import { chooseLabels, compareLabels, labelRange, labelShape } from "./labels";
+import { pdfPageSummaries, readPdfItems } from "./pdf";
 
 const nodePdfjs = () =>
   import("pdfjs-dist/legacy/build/pdf.mjs") as unknown as Promise<typeof import("pdfjs-dist")>;
@@ -197,6 +199,106 @@ describe("PDF", () => {
       (e: unknown) => e,
     );
     expect((bad as ScriptExtractError).code).toBe("unreadable");
+  });
+});
+
+/**
+ * A rehearsal-hall PDF like WG's: each page's top line is "WG <revision date>" on the left
+ * and the label on the right, on one baseline; one page lost its "WG", so its date alone
+ * reads like a dotted page label ("11.1.26").
+ */
+async function revisionDatedPdf(
+  pages: { date: string; label: string; body: string[] }[],
+): Promise<Uint8Array> {
+  const doc = await PDFDocument.create();
+  const roman = await doc.embedFont(StandardFonts.TimesRoman);
+  for (const p of pages) {
+    const page = doc.addPage([612, 792]);
+    page.drawText(p.date, { x: 72, y: 746, size: 12, font: roman });
+    page.drawText(p.label, { x: 540, y: 746, size: 12, font: roman });
+    let y = 690;
+    for (const line of p.body) {
+      page.drawText(line, { x: line === line.toUpperCase() ? 280 : 150, y, size: 12, font: roman });
+      y -= 14;
+    }
+  }
+  return doc.save();
+}
+
+describe("PDF page labels among other margin numbers", () => {
+  it("a revision date beside the label loses to the label that fits the sequence (WG p. 34)", async () => {
+    const bytes = await revisionDatedPdf([
+      { date: "WG 11.1.26", label: "33", body: ["RAMONA", "I'll call you back."] },
+      { date: "11.1.26", label: "34", body: ["DEL", "She never calls back."] },
+      { date: "WG 11.9.26", label: "35", body: ["RAMONA", "I heard that."] },
+      { date: "WG 11.9.26", label: "35a", body: ["DEL", "You were meant to."] },
+    ]);
+    const text = await extractPdf(bytes, await nodePdfjs());
+    expect(text.pages.map((p) => p.label)).toEqual(["33", "34", "35", "35a"]);
+    // The losing date is header matter, not a line of the script.
+    expect(text.blocks.map((b) => b.text)).not.toContain("11.1.26");
+    expect(summary(text).filter((s) => s.startsWith("2 "))).toEqual([
+      "2 character: DEL",
+      "2 dialogue: She never calls back.",
+    ]);
+  });
+
+  it("dotted act-scene-page labels still win when they are the labels", () => {
+    const it = (str: string, x: number, y: number) => ({
+      str,
+      x,
+      y,
+      w: str.length * 7.2,
+      size: 12,
+      italic: false,
+    });
+    const labels = ["I-3-14", "I-3-15", "I-3-16", "I-4-1"];
+    const pages = labels.map((label, p) => {
+      // A draft number on the left of every page (read first: it's leftmost).
+      const items = [it("2", 72, 752), it(label, 520, 752)];
+      let y = 700;
+      for (const s of ["JOE", "How many do we need?", "JERRY", `Then count them, ${p}.`]) {
+        items.push(it(s, s === s.toUpperCase() ? 260 : 150, y));
+        y -= 14;
+      }
+      return { width: 612, height: 792, items };
+    });
+    const t = layoutPdf(pages);
+    expect(t.pages.map((p) => p.label)).toEqual(labels);
+    expect(t.blocks.map((b) => b.text)).not.toContain("2");
+  });
+
+  it("label helpers: natural order, forms, ranges, choosing", () => {
+    const sorted = ["140", "139b", "13a", "139", "68-69", "139a", "68", "2", "13"].sort(
+      compareLabels,
+    );
+    expect(sorted).toEqual(["2", "13", "13a", "68", "68-69", "139", "139a", "139b", "140"]);
+    expect(compareLabels("13A", "13a")).toBe(0);
+    expect(compareLabels("I-3-14", "I-3-15")).toBeLessThan(0);
+    expect(compareLabels("I-3-15", "II-1-1")).toBeLessThan(0);
+    expect(labelShape("14a")).toBe("#");
+    expect(labelShape("11.1.26")).toBe("#.#.#");
+    expect(labelShape("I-3-14")).toBe("r-#-#");
+    expect(labelRange("68-69")).toEqual([68, 69]);
+    expect(labelRange("117-118")).toEqual([117, 118]);
+    expect(labelRange("69-68")).toBeNull();
+    expect(labelRange("I-3")).toBeNull();
+    expect(labelRange("14")).toBeNull();
+    // Page 2 has a date first; its neighbours and the document's form pick "34".
+    expect(chooseLabels([["33"], ["11.1.26", "34"], ["35"]])).toEqual([0, 1, 0]);
+    // A page on its own: the form of the labels it'll sit among decides.
+    expect(chooseLabels([["11.12.26", "138"]], "#")).toEqual([1]);
+    expect(chooseLabels([[], ["5"]])).toEqual([-1, 0]);
+  });
+
+  it("pdfPageSummaries: a single replacement page's label and first body line", async () => {
+    const bytes = await revisionDatedPdf([
+      { date: "WG 11.12.26", label: "138", body: ["RAMONA", "Hello? Yes. No. Goodbye."] },
+    ]);
+    const pages = await readPdfItems(bytes, await nodePdfjs());
+    expect(pdfPageSummaries(pages, "#")).toEqual([
+      { label: "138", firstLine: "RAMONA · Hello? Yes. No. Goodbye." },
+    ]);
   });
 });
 

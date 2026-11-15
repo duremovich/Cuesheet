@@ -23,6 +23,7 @@ import {
   type RawBlock,
 } from "./classify";
 import { ScriptExtractError } from "./errors";
+import { chooseLabels } from "./labels";
 
 export interface PdfItem {
   str: string;
@@ -155,6 +156,95 @@ const median = (xs: number[]) => {
   return s[Math.floor(s.length / 2)] as number;
 };
 
+const inMargin = (l: Line, p: PdfPageItems) =>
+  l.y > p.height * (1 - MARGIN) || l.y < p.height * MARGIN;
+
+/**
+ * Margins: each page's printed label, and running headers/footers repeated across pages.
+ * Every margin line that reads as a page number is a candidate; `chooseLabels` picks the
+ * real one (the form the labels share, fitting between its neighbours': "34" over a date
+ * "11.1.26" beside it). A losing candidate on the label's own baseline is header matter and
+ * dropped; others stay text ("I", "3" as dialogue near the bottom). → labels by physical
+ * page (1-based) and each page's remaining lines.
+ */
+function margins(
+  pages: PdfPageItems[],
+  lines: Line[][],
+  preferShape?: string | null,
+): { labels: Map<number, string>; body: Line[][] } {
+  const repeated = new Map<string, number>();
+  lines.forEach((ls, i) => {
+    const seen = new Set<string>();
+    for (const l of ls) {
+      if (!inMargin(l, pages[i] as PdfPageItems)) continue;
+      const key = l.text.replace(/\d+/g, "#").toLowerCase();
+      if (!seen.has(key)) repeated.set(key, (repeated.get(key) ?? 0) + 1);
+      seen.add(key);
+    }
+  });
+  const runningHeader = (l: Line) => {
+    const n = repeated.get(l.text.replace(/\d+/g, "#").toLowerCase()) ?? 0;
+    return pages.length >= 3 && n >= pages.length / 2;
+  };
+  const candidates = lines.map((ls, i) =>
+    ls.flatMap((line) => {
+      if (!inMargin(line, pages[i] as PdfPageItems)) return [];
+      const label = pageLabelOf(line.text);
+      return label !== null && label.length <= 12 ? [{ line, label }] : [];
+    }),
+  );
+  const pick = chooseLabels(
+    candidates.map((cs) => cs.map((c) => c.label)),
+    preferShape,
+  );
+  const labels = new Map<number, string>();
+  const body = lines.map((ls, i) => {
+    const cs = candidates[i] ?? [];
+    const won = cs[pick[i] ?? -1];
+    if (won) labels.set(i + 1, won.label);
+    const losers = new Set(cs.map((c) => c.line));
+    const sameBaseline = (l: Line, w: Line) =>
+      Math.abs(l.y - w.y) <= 0.35 * Math.max(l.size, w.size, 1);
+    return ls.filter((l) => {
+      if (won && l === won.line) return false;
+      if (won && losers.has(l) && sameBaseline(l, won.line)) return false;
+      return !inMargin(l, pages[i] as PdfPageItems) || !runningHeader(l);
+    });
+  });
+  return { labels, body };
+}
+
+/** What "Add pages" needs to know about an incoming page. */
+export interface PdfPageSummary {
+  /** Its printed label, or null when its margins have none. */
+  label: string | null;
+  /**
+   * The first line of text outside the margins, with the next one when it's short (a
+   * character name: "JOE · We take the midnight bus…"), to tell pages apart; "" if none.
+   */
+  firstLine: string;
+}
+
+/**
+ * Each page's printed label and first body line, by the extractor's own label logic.
+ * `preferShape`: the form of the labels these pages will sit among (`labelShape` of the
+ * current version's labels), since a page or two on their own have no sequence to go by.
+ */
+export function pdfPageSummaries(
+  pages: PdfPageItems[],
+  preferShape?: string | null,
+): PdfPageSummary[] {
+  const lines = pages.map(toLines);
+  const { labels } = margins(pages, lines, preferShape);
+  return pages.map((page, i) => {
+    const body = (lines[i] ?? []).filter((l) => !inMargin(l, page) && l.text !== "");
+    const [first, second] = body;
+    let firstLine = first?.text ?? "";
+    if (second && firstLine.length < 24) firstLine = `${firstLine} · ${second.text}`;
+    return { label: labels.get(i + 1) ?? null, firstLine };
+  });
+}
+
 /** Pages of positioned text → ScriptText (pure; `extractPdf` feeds it from pdfjs). */
 export function layoutPdf(pages: PdfPageItems[]): ScriptText {
   return layout(pages, false).text;
@@ -194,38 +284,7 @@ function layout(pages: PdfPageItems[], trace: boolean): { text: ScriptText; trac
     );
   }
 
-  // Margins: page labels, and running headers/footers repeated across pages.
-  const inMargin = (l: Line, p: PdfPageItems) =>
-    l.y > p.height * (1 - MARGIN) || l.y < p.height * MARGIN;
-  const repeated = new Map<string, number>();
-  lines.forEach((ls, i) => {
-    const seen = new Set<string>();
-    for (const l of ls) {
-      if (!inMargin(l, pages[i] as PdfPageItems)) continue;
-      const key = l.text.replace(/\d+/g, "#").toLowerCase();
-      if (!seen.has(key)) repeated.set(key, (repeated.get(key) ?? 0) + 1);
-      seen.add(key);
-    }
-  });
-  const runningHeader = (l: Line) => {
-    const n = repeated.get(l.text.replace(/\d+/g, "#").toLowerCase()) ?? 0;
-    return pages.length >= 3 && n >= pages.length / 2;
-  };
-  const labels = new Map<number, string>();
-  const body: Line[][] = lines.map((ls, i) => {
-    const page = pages[i] as PdfPageItems;
-    return ls.filter((l) => {
-      if (!inMargin(l, page)) return true;
-      const label = pageLabelOf(l.text);
-      // The first page-number-looking margin line is the label; later ones on the same page
-      // are text ("I", "3" as dialogue near the bottom).
-      if (label !== null && label.length <= 12 && !labels.has(i + 1)) {
-        labels.set(i + 1, label);
-        return false;
-      }
-      return !runningHeader(l);
-    });
-  });
+  const { labels, body } = margins(pages, lines);
 
   // The usual distance between lines (baseline to baseline) across the document.
   const gaps: number[] = [];
@@ -368,6 +427,24 @@ export async function extractPdf(
   data: ArrayBuffer | Uint8Array,
   pdfjs: Pdfjs,
 ): Promise<ScriptText> {
+  return layoutPdf(await readPdfItems(data, pdfjs));
+}
+
+/** A pdf.js page, as `readPdfItems` hands it to `onPage`. */
+export type PdfjsPage = Awaited<
+  ReturnType<Awaited<ReturnType<Pdfjs["getDocument"]>["promise"]>["getPage"]>
+>;
+
+/**
+ * Every page's text items through pdfjs (fonts loaded for italics). Throws
+ * ScriptExtractError "unreadable" for a damaged or password-protected file. `onPage` sees
+ * each page while it's open ("Add pages" draws thumbnails with it).
+ */
+export async function readPdfItems(
+  data: ArrayBuffer | Uint8Array,
+  pdfjs: Pdfjs,
+  opts: { onPage?: (page: PdfjsPage, n: number) => Promise<void> } = {},
+): Promise<PdfPageItems[]> {
   // pdfjs takes ownership of (detaches) the buffer it's given: pass a copy.
   const bytes = new Uint8Array(data instanceof Uint8Array ? data : new Uint8Array(data)).slice();
   const task = pdfjs.getDocument({
@@ -411,10 +488,11 @@ export async function extractPdf(
       }
       const items = pdfItemsOf(content.items, { x0, y0 }, (f) => italic.get(f) ?? false);
       pages.push({ width: x1 - x0, height: y1 - y0, items });
+      if (opts.onPage) await opts.onPage(page, n);
       page.cleanup();
     }
   } finally {
     await task.destroy();
   }
-  return layoutPdf(pages);
+  return pages;
 }
