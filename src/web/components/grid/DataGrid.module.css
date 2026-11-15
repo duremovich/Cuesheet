@@ -492,6 +492,44 @@
   outline-offset: -2px;
 }
 
+/* The same value left in its cell (README "Drafts that can't be stored"): same red outline,
+   the typed text, and a small tag saying why ("Not a number"); the full message on hover. */
+.cell[data-invalid] {
+  gap: var(--space-1);
+  box-shadow: inset 0 0 0 2px var(--color-danger);
+}
+
+/* Active: the red shows inside the active cell's border. */
+.cell[data-invalid][data-active] {
+  box-shadow: inset 0 0 0 4px var(--color-danger);
+}
+
+/* In a narrow cell the tag gives way first (down to a stub), so the text stays readable;
+   long text takes at most 60% and ends in an ellipsis. */
+.keptDraft {
+  flex: 0 0 auto;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.invalidMark {
+  flex: 0 1 auto;
+  min-width: 3em;
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--color-danger-subtle);
+  color: var(--color-danger);
+  font-size: 0.8em;
+  line-height: 1.5;
+  cursor: help;
+}
+
 .editorArea {
   min-width: max(100%, 280px);
   min-height: 100%;

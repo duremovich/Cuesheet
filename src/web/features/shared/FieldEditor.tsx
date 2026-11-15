@@ -1,7 +1,8 @@
 // One field in the row panel's Fields tab (R18), edited in place with the same value shapes
 // and pickers as the grid: text/number inputs, long text, checkbox, and select / multiselect
 // / link / multilink through `RecordPicker`. Commits go to `onCommit(value)` (the table's
-// edit ops); a draft being typed survives remote changes to the same field.
+// edit ops); a draft being typed survives remote changes to the same field, and a refused
+// one stays with its record (`recordId`) when the panel moves to another row.
 import { type ReactNode, useMemo, useRef, useState } from "react";
 import { Chip, type CloseReason, type PickerItem, RecordPicker } from "../../components/grid";
 import { optionColor } from "../../components/grid/Chip";
@@ -15,11 +16,17 @@ import styles from "./RowPanel.module.css";
 export function FieldEditor<Row>({
   col,
   row,
+  recordId = "",
   canEdit,
   onCommit,
 }: {
   col: Column<Row>;
   row: Row;
+  /**
+   * The record shown. The row panel follows the active row without remounting its fields, so
+   * drafts are kept per record: one refused on a row stays with that row.
+   */
+  recordId?: string;
   /** False: show the value only (no permission, or no edit handler). */
   canEdit: boolean;
   onCommit: (value: unknown) => void;
@@ -31,7 +38,15 @@ export function FieldEditor<Row>({
     if (v !== undefined) onCommit(v);
   };
   if (col.masked) {
-    return <MaskedField col={col} value={value} editable={editable} onCommit={commit} />;
+    return (
+      <MaskedField
+        col={col}
+        value={value}
+        recordId={recordId}
+        editable={editable}
+        onCommit={commit}
+      />
+    );
   }
 
   if (!editable) return <ReadValue col={col} value={value} />;
@@ -41,7 +56,7 @@ export function FieldEditor<Row>({
     case "longtext":
     case "measurement":
     case "pixelsize":
-      return <TextField col={col} value={value} onCommit={commit} />;
+      return <TextField col={col} value={value} recordId={recordId} onCommit={commit} />;
     case "checkbox":
       return (
         <input
@@ -69,11 +84,13 @@ export function FieldEditor<Row>({
 function MaskedField<Row>({
   col,
   value,
+  recordId,
   editable,
   onCommit,
 }: {
   col: Column<Row>;
   value: unknown;
+  recordId: string;
   editable: boolean;
   onCommit: (v: unknown) => void;
 }) {
@@ -84,7 +101,7 @@ function MaskedField<Row>({
     <span className={styles.pickerField} data-testid="masked-field">
       {shown ? (
         editable ? (
-          <TextField col={plain} value={value} onCommit={onCommit} />
+          <TextField col={plain} value={value} recordId={recordId} onCommit={onCommit} />
         ) : (
           <span className={styles.value}>{text || "—"}</span>
         )
@@ -162,18 +179,35 @@ function chipsOf<Row>(col: Column<Row>, value: unknown, onRemove?: (v: unknown) 
   return null;
 }
 
-/** Text, number and long text: a draft while focused; Enter or blur commits, Escape reverts. */
+/**
+ * Text, number and long text: a draft while focused; Enter or blur commits, Escape reverts.
+ * A draft that can't be stored stays (blur doesn't drop it), with why, until fixed or
+ * reverted; drafts are kept per record, so one never moves to another row.
+ */
 function TextField<Row>({
   col,
   value,
+  recordId,
   onCommit,
 }: {
   col: Column<Row>;
   value: unknown;
+  recordId: string;
   onCommit: (v: unknown) => void;
 }) {
-  const [draft, setDraft] = useState<string | null>(null);
-  const [invalid, setInvalid] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<
+    ReadonlyMap<string, { draft: string; invalid: string | null }>
+  >(() => new Map());
+  const draft = drafts.get(recordId)?.draft ?? null;
+  const invalid = drafts.get(recordId)?.invalid ?? null;
+  /** Sets (or with null, drops) this record's draft. */
+  const put = (next: { draft: string; invalid: string | null } | null) =>
+    setDrafts((m) => {
+      const out = new Map(m);
+      if (next) out.set(recordId, next);
+      else out.delete(recordId);
+      return out;
+    });
   const ref = useRef<HTMLInputElement & HTMLTextAreaElement>(null);
   const multiline = col.type === "longtext";
   // Lengths show rounded in the unit until focused, then precisely (so an unchanged commit is a no-op).
@@ -194,11 +228,10 @@ function TextField<Row>({
     if (draft === null) return;
     const v = valueFromText(col, draft);
     if (v === NOT_PARSED) {
-      setInvalid(parseError(col, draft) ?? `Not a valid ${col.title}`);
+      put({ draft, invalid: parseError(col, draft) ?? `Not a valid ${col.title}` });
       return;
     }
-    setInvalid(null);
-    setDraft(null);
+    put(null);
     onCommit(v);
   };
   const common = {
@@ -210,10 +243,10 @@ function TextField<Row>({
     onFocus: () => {
       reverted.current = false;
       // A draft still here was refused on blur (an invalid number…): keep it to fix it.
-      setDraft((d) => d ?? editorText(col, value));
+      if (draft === null) put({ draft: editorText(col, value), invalid: null });
     },
     onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-      setDraft(e.target.value),
+      put({ draft: e.target.value, invalid }),
     onBlur: finish,
     onKeyDown: (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
       if (e.nativeEvent.isComposing || e.keyCode === 229) return;
@@ -225,8 +258,7 @@ function TextField<Row>({
         e.preventDefault();
         e.stopPropagation();
         reverted.current = true;
-        setDraft(null);
-        setInvalid(null);
+        put(null);
         e.currentTarget.closest<HTMLElement>("[data-testid='row-panel']")?.focus();
       }
     },

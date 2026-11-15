@@ -65,6 +65,7 @@ import {
   parseError,
   parseText,
   parseTsv,
+  shortParseError,
   toTsv,
   UndoStack,
   valuesEqual,
@@ -105,6 +106,19 @@ interface CellRef {
 type Editing =
   | { kind: "text"; rowId: string; key: string; draft: string; invalid?: string }
   | { kind: "picker"; rowId: string; key: string; query: string; value: unknown };
+
+/**
+ * A text draft that can't be stored, kept in its cell after the editor left it (README
+ * "Drafts that can't be stored"): `why` is the short mark, `detail` the full message.
+ */
+interface Kept {
+  draft: string;
+  why: string;
+  detail: string;
+}
+/** Kept drafts of one row, by column key. */
+type KeptRow = Readonly<Record<string, Kept>>;
+const NO_KEPT: ReadonlyMap<string, KeptRow> = new Map();
 
 interface ColLayout<Row> {
   col: Column<Row>;
@@ -192,6 +206,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
   // --- State ---
   const [active, setActive] = useState<CellRef | null>(null);
   const [editing, setEditing] = useState<Editing | null>(null);
+  const [kept, setKeptMap] = useState<ReadonlyMap<string, KeptRow>>(NO_KEPT);
   const [range, setRange] = useState<{ anchor: CellRef; focus: CellRef } | null>(null);
   const [internalSelection, setInternalSelection] = useState<string[]>([]);
   const [internalCollapsed, setInternalCollapsed] = useState<string[]>([]);
@@ -452,6 +467,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     colIndex,
     active,
     editing,
+    kept,
     range,
     selected,
     hold,
@@ -715,10 +731,29 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     }
   };
 
+  /** Keeps (or with null, drops) a draft that can't be stored in its cell. */
+  const setKept = (rowId: string, key: string, k: Kept | null) => {
+    const cur = ref.current.kept;
+    const forRow = cur.get(rowId);
+    if (!k && !forRow?.[key]) return;
+    const nextRow: Record<string, Kept> = { ...forRow };
+    if (k) nextRow[key] = k;
+    else delete nextRow[key];
+    const next = new Map(cur);
+    if (Object.keys(nextRow).length) next.set(rowId, nextRow);
+    else next.delete(rowId);
+    setKeptMap(next);
+    ref.current = { ...ref.current, kept: next };
+  };
+  const keptAt = (rowId: string, key: string): Kept | undefined =>
+    ref.current.kept.get(rowId)?.[key];
+
   // --- Edits + undo ---
   const applyEdits = (edits: Edit[], record = true) => {
     const batch: EditRecord[] = [];
     for (const e of edits) {
+      // A value written to the cell (typed over, cleared, pasted...) replaces a kept draft.
+      setKept(e.rowId, e.key, null);
       const col = colOf(e.key);
       const entry = ref.current.allRows.get(e.rowId);
       const before = col && entry ? col.getValue(entry.row) : undefined;
@@ -772,6 +807,22 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
   };
 
   // --- Editing ---
+  /**
+   * A text edit of a cell. A draft kept there (one that couldn't be stored) comes back, still
+   * marked, unless a typed character starts the edit (typing over a cell replaces it).
+   */
+  const textEditing = (
+    id: string,
+    key: string,
+    stored: string,
+    initial: string | undefined,
+  ): Editing => {
+    const k = initial === undefined ? keptAt(id, key) : undefined;
+    return k
+      ? { kind: "text", rowId: id, key, draft: k.draft, invalid: k.detail }
+      : { kind: "text", rowId: id, key, draft: stored };
+  };
+
   const startEdit = (id: string, key: string, initial?: string) => {
     const it = rowItem(id);
     if (!it) return;
@@ -807,12 +858,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
           query: initial ?? "",
           value: col.getValue(it.row),
         }
-      : {
-          kind: "text",
-          rowId: id,
-          key: editKey,
-          draft: initial ?? editText(col, col.getValue(it.row)),
-        };
+      : textEditing(id, editKey, initial ?? editText(col, col.getValue(it.row)), initial);
     setEditing(next);
     ref.current = { ...ref.current, editing: next };
   };
@@ -896,41 +942,81 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     activate(target, { scroll: true });
   };
 
-  const commitText = (then?: "down" | "right" | "left", draftOverride?: string) => {
-    const e = ref.current.editing;
-    if (e?.kind !== "text") return;
+  /**
+   * Closes the text editor and saves `text`, unless it can't be stored (a non-number, a
+   * negative or out-of-range length…): then nothing changes and this returns why.
+   */
+  const saveText = (
+    e: Extract<Editing, { kind: "text" }>,
+    text: string,
+  ): { refused: string } | null => {
     const col = colOf(e.key);
     const entry = ref.current.allRows.get(e.rowId);
-    const text = draftOverride ?? e.draft;
     const value = col ? parseText(col, text) : NOT_PARSED;
-    if (col && entry && value === NOT_PARSED) {
-      // Refused (a non-number, a negative or out-of-range length…): say why, keep editing.
-      const why = parseError(col, text) ?? `Not a valid ${col.title}`;
-      const next: Editing = { ...e, draft: text, invalid: why };
-      setEditing(next);
-      ref.current = { ...ref.current, editing: next };
-      showHint(why);
-      return;
-    }
+    if (col && entry && value === NOT_PARSED)
+      return { refused: parseError(col, text) ?? `Not a valid ${col.title}` };
     setEditing(null);
     ref.current = { ...ref.current, editing: null };
-    focusPending.current = true;
+    setKept(e.rowId, e.key, null);
     if (col && entry && !valuesEqual(value, col.getValue(entry.row), col.type)) {
       applyEdits([{ rowId: e.rowId, key: e.key, value }]);
     }
+    return null;
+  };
+
+  /** Enter / Tab: commit; a draft that can't be stored is refused and the editor stays. */
+  const commitText = (then?: "down" | "right" | "left", draftOverride?: string) => {
+    const e = ref.current.editing;
+    if (e?.kind !== "text") return;
+    const text = draftOverride ?? e.draft;
+    const r = saveText(e, text);
+    if (r) {
+      const next: Editing = { ...e, draft: text, invalid: r.refused };
+      setEditing(next);
+      ref.current = { ...ref.current, editing: next };
+      showHint(r.refused);
+      return;
+    }
+    focusPending.current = true;
     if (then === "down") move("down");
     else if (then === "right") move("right", { wrap: true });
     else if (then === "left") move("left", { wrap: true });
   };
 
+  /**
+   * The editor is left for somewhere else (a click on another cell, a menu, focus leaving the
+   * grid): commit, or keep a draft that can't be stored in its cell, marked with why, so the
+   * typing isn't lost and the rest of the grid stays editable (README "Drafts that can't be
+   * stored"). `focus`: put focus back on the active cell (not when focus left the grid).
+   */
+  const leaveText = (focus: boolean) => {
+    const e = ref.current.editing;
+    if (e?.kind !== "text") return;
+    const r = saveText(e, e.draft);
+    if (r) {
+      setEditing(null);
+      ref.current = { ...ref.current, editing: null };
+      setKept(e.rowId, e.key, {
+        draft: e.draft,
+        why: shortParseError(r.refused),
+        detail: r.refused,
+      });
+      showHint(r.refused);
+    }
+    if (focus) focusPending.current = true;
+  };
+
+  /** Escape: back to the stored value (a kept draft of this cell goes too). */
   const cancelEdit = () => {
+    const e = ref.current.editing;
+    if (e?.kind === "text") setKept(e.rowId, e.key, null);
     setEditing(null);
     ref.current = { ...ref.current, editing: null };
     focusPending.current = true;
   };
 
   const commitAny = () => {
-    if (ref.current.editing?.kind === "text") commitText();
+    if (ref.current.editing?.kind === "text") leaveText(true);
     else if (ref.current.editing) cancelEdit();
   };
 
@@ -1615,6 +1701,11 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
         if (a && !a.group) cur.props.onOpenRow?.(a.rowId);
         return;
       case "Escape": {
+        // A kept draft on this cell: drop it, back to the stored value.
+        if (a && !a.group && keptAt(a.rowId, a.key)) {
+          setKept(a.rowId, a.key, null);
+          return;
+        }
         // Nothing to cancel (no range, no row selection, no held row that would move):
         // let the page handle it (e.g. close a detail panel).
         const idle = !cur.range && cur.selected.length === 0 && !holdWouldMove();
@@ -1643,6 +1734,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
         for (const { item, col } of rangeCells()) {
           if (item.section && col.key !== cur.labelKey) continue;
           if (!isEditable(col, item.row)) continue;
+          setKept(item.id, col.key, null);
           const empty = emptyValue(col.type);
           if (!valuesEqual(col.getValue(item.row), empty))
             edits.push({ rowId: item.id, key: col.key, value: empty });
@@ -1747,7 +1839,9 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
         if (!col || raw === undefined || !PASTE_TYPES.has(col.type) || !isEditable(col, item.row))
           continue;
         const value = parseText(col, raw);
-        if (value === NOT_PARSED || valuesEqual(value, col.getValue(item.row), col.type)) continue;
+        if (value === NOT_PARSED) continue;
+        setKept(item.id, col.key, null);
+        if (valuesEqual(value, col.getValue(item.row), col.type)) continue;
         edits.push({ rowId: item.id, key: col.key, value });
       }
     };
@@ -1836,21 +1930,8 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       const el = document.activeElement;
       if (!root) return;
       if (el && (root.contains(el) || el.closest(`[data-grid-portal="${gridId}"]`))) return;
-      if (ref.current.editing?.kind === "text") {
-        const e = ref.current.editing;
-        const col = colOf(e.key);
-        const entry = ref.current.allRows.get(e.rowId);
-        setEditing(null);
-        ref.current = { ...ref.current, editing: null };
-        if (col && entry) {
-          const value = parseText(col, e.draft);
-          if (value === NOT_PARSED) {
-            showHint(`Not saved: ${parseError(col, e.draft) ?? `not a valid ${col.title}`}`);
-          } else if (!valuesEqual(value, col.getValue(entry.row), col.type)) {
-            applyEdits([{ rowId: e.rowId, key: e.key, value }]);
-          }
-        }
-      }
+      // A draft that can't be stored stays in its cell, marked (it used to be dropped).
+      leaveText(false);
       releaseHold();
     }, 0);
   };
@@ -2530,6 +2611,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
         activeKey={isActive ? (active?.key ?? null) : null}
         tabbableKey={!active && index === firstIndex ? (cols[0]?.key ?? null) : null}
         editing={editing && editing.rowId === item.id ? editing : null}
+        kept={kept.get(item.id)}
         selected={selectedSet.has(item.id)}
         rangeCols={rangeCols}
         moved={moved.has(item.id)}
@@ -2915,6 +2997,8 @@ interface GridRowProps<Row> {
   activeKey: string | null;
   tabbableKey: string | null;
   editing: Editing | null;
+  /** Drafts kept in this row's cells because they can't be stored (stable when unchanged). */
+  kept: KeptRow | undefined;
   selected: boolean;
   rangeCols: [number, number] | null;
   moved: boolean;
@@ -3063,6 +3147,7 @@ function GridRowImpl<Row>(p: GridRowProps<Row>) {
       const editable = isEditable(c.col, row);
       const isEditingText = editing?.kind === "text" && editing.key === c.key;
       const isEditingPicker = editing?.kind === "picker" && editing.key === c.key;
+      const keptDraft = isEditingText ? undefined : p.kept?.[c.key];
       const deco = p.decorate?.(row, c.key);
       const ghost =
         deco?.ghost && GHOST_TYPES.has(c.col.type) && isEmptyValue(value) ? deco.ghost : undefined;
@@ -3088,10 +3173,21 @@ function GridRowImpl<Row>(p: GridRowProps<Row>) {
           data-warning={
             deco?.warning ? (deco.warningStyle === "dashed" ? "dashed" : true) : undefined
           }
-          title={deco?.warning}
+          data-invalid={keptDraft ? true : undefined}
+          aria-invalid={keptDraft ? true : undefined}
+          title={keptDraft?.detail ?? deco?.warning}
           style={style}
         >
-          {isEditingText ? (
+          {keptDraft ? (
+            // A draft that can't be stored, kept until fixed or cancelled (README "Drafts
+            // that can't be stored"): the typed text, and why it can't be stored.
+            <>
+              <span className={styles.keptDraft}>{keptDraft.draft}</span>
+              <span className={styles.invalidMark} data-testid="invalid-mark">
+                {keptDraft.why}
+              </span>
+            </>
+          ) : isEditingText ? (
             <>
               {p.fit && (
                 // Gives the cell (so the row) the height of the wrapped draft; the editor

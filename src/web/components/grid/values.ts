@@ -142,6 +142,22 @@ export function parseError<Row>(col: Column<Row>, text: string): string | null {
   }
 }
 
+/**
+ * A parse error cut down to the mark on a cell that keeps a draft it can't store: why, in the
+ * column's terms ("Not a number", "Not a timecode", "Lengths can't be negative"), without the
+ * echoed text or the example (the full message stays in the cell's tooltip). Never "Not
+ * saved": everything autosaves, so that reads as if saving were manual.
+ */
+export function shortParseError(error: string): string {
+  const use = /^Use an? (.+?) like\b/.exec(error);
+  if (use) return `Not a ${use[1]}`;
+  const short = error
+    .replace(/\s*\([^)]*\)\s*$/, "")
+    .replace(/:?\s*"[^"]*"\s*$/, "")
+    .trim();
+  return short || error;
+}
+
 /** Clipboard text for a cell: lengths at full precision (with their unit), else as shown. */
 export function copyText<Row>(col: Column<Row>, v: unknown): string {
   return col.type === "measurement" ? editTextOf(col, v) : formatValue(col, v);

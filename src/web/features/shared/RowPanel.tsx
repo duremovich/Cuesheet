@@ -320,6 +320,7 @@ export function RowPanel<Row>({
                       <FieldEditor
                         col={c}
                         row={row}
+                        recordId={recordId}
                         canEdit={!!onEdit}
                         onCommit={(v) => {
                           const p = onEdit?.(c.key, v);

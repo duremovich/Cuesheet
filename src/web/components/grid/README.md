@@ -141,9 +141,9 @@ Link values carry labels so the grid can render and undo without lookups. The co
 | Shift+↑ / ↓ with a row selection | Extend the row selection from its anchor (no selection: a cell range, below) | |
 | ← / → | Move (on an empty cell with a ghost, → accepts it) | Move the caret (→ on an empty editor with a ghost fills it in) |
 | Shift+arrows | Extend a cell range | |
-| Enter | Start editing (checkbox: toggle) | Commit, move down |
+| Enter | Start editing (checkbox: toggle; a kept draft comes back) | Commit, move down (a draft that can't be stored is refused: the editor stays, outlined red, why in the status line) |
 | Tab / Shift+Tab | Move right / left (wraps rows; leaves the grid at the ends). Tab accepts a ghost | Commit, move right / left (Tab on an empty editor commits the ghost) |
-| Escape | Clear range + selection; end the row hold (the row settles, grid scrolls to it). If there was nothing to cancel: `onEscape` | Cancel |
+| Escape | On a cell keeping a draft that can't be stored: drop it (back to the stored value). Else clear range + selection; end the row hold (the row settles, grid scrolls to it). If there was nothing to cancel: `onEscape` | Cancel (a kept draft of this cell goes too) |
 | F2, double-click | Start editing | |
 | Any character | Start editing with it (select/link: open the picker with it as the query) | |
 | Space | `onOpenRow` | |
@@ -183,6 +183,31 @@ made through this grid instance only (not inserts, moves or deletes). **Remote c
 win:** each undo/redo step only touches a cell that still holds the value this grid left
 there; cells someone else changed since are skipped, with an inline "Skipped N cells
 changed by someone else" message. The step is still consumed.
+
+## Drafts that can't be stored
+
+Text a cell's type can't hold ("12 apples" in a number cell, a negative length, "soon" in a
+timecode field) is never dropped and never saved as something else:
+
+- **Enter / Tab** refuse it: the editor stays open, outlined red, the reason in the status line.
+- **Leaving the editor any other way** (clicking another cell, a menu, inserting, focus leaving
+  the grid) keeps the draft **in its cell**: the typed text, a red outline and a small tag
+  saying why in the column's terms (`shortParseError`: "Not a number", "Not a length", "Not a
+  timecode", "Lengths can't be negative"); the full message is the cell's tooltip
+  (`data-invalid`, `aria-invalid`, `data-testid="invalid-mark"`). Never "Not saved": the app
+  autosaves everywhere, so that reads as if saving were manual.
+- The rest of the grid stays editable: any number of cells can keep a draft (grid state
+  `kept`, per row and column; not in the row data, not in undo).
+- **Fix it:** Enter / F2 / double-click on the cell brings the draft back into the editor, still
+  marked; a value that parses saves normally and clears the mark. Typing a character replaces
+  it (as on any cell), and so does anything that writes the cell (paste, Delete / Backspace
+  clear, a checkbox or picker edit).
+- **Cancel it:** Escape, on the cell or in its editor, goes back to the stored value.
+- Someone else's change to that cell doesn't clear it (the kept draft stays on top until you
+  fix or cancel it), and neither does undo. Kept drafts live as long as the grid instance: a
+  tab switch or reload drops them.
+- Tests: `DataGrid.test.tsx` "DataGrid drafts that can't be stored", e2e
+  `surfaces.spec.ts` "a length that can't be stored stays in its cell".
 
 ## Mouse
 

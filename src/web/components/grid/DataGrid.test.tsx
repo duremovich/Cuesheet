@@ -1400,3 +1400,136 @@ describe("DataGrid multi-select (cells, keys, select-all, targets)", () => {
     );
   });
 });
+
+// Dylan, 2026-11-14: a draft that can't be stored ("12 apples" in a number cell) used to be
+// dropped when focus left the grid, with only a passing "Not saved" hint. It stays in the
+// cell instead, marked with why it can't be stored, until fixed or cancelled (Escape).
+describe("DataGrid drafts that can't be stored", () => {
+  const mark = (rowId: string, key: string) =>
+    cell(rowId, key).querySelector<HTMLElement>("[data-testid=invalid-mark]");
+  const focusOutside = () => {
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    act(() => outside.focus());
+    return outside;
+  };
+  /** Types `text` into r1's Qty and leaves it there (editor still open). */
+  const typeQty = (text: string) => {
+    pointerDown(cell("r1", "qty"));
+    press("F2");
+    setInputValue(editor() as HTMLInputElement, text);
+  };
+
+  it("focus leaving the grid keeps the text in the cell, marked with why", async () => {
+    const s = spies();
+    render(<Harness initial={THREE} s={s} />);
+    typeQty("12 apples");
+    const outside = focusOutside();
+    await wait();
+    expect(editor()).toBeNull();
+    expect(s.onEdit).not.toHaveBeenCalled();
+    const c = cell("r1", "qty");
+    expect(c.dataset.invalid).toBe("true");
+    expect(c.textContent).toContain("12 apples");
+    expect(mark("r1", "qty")?.textContent).toBe("Not a number");
+    expect(c.getAttribute("title")).toBe('Not a number: "12 apples"');
+    // The passing hint says why too; never "Not saved" (everything autosaves).
+    expect(document.body.textContent).not.toContain("Not saved");
+    outside.remove();
+  });
+
+  it("fixing the kept draft saves it and clears the mark", async () => {
+    const s = spies();
+    render(<Harness initial={THREE} s={s} />);
+    typeQty("12 apples");
+    const outside = focusOutside();
+    await wait();
+    outside.remove();
+    // Back to the cell: Enter (or F2, double-click) resumes the draft, still marked.
+    pointerDown(cell("r1", "qty"));
+    press("Enter");
+    expect(editor()?.value).toBe("12 apples");
+    expect(editor()?.getAttribute("aria-invalid")).toBe("true");
+    setInputValue(editor() as HTMLInputElement, "12");
+    press("Enter");
+    expect(s.onEdit).toHaveBeenCalledWith("r1", "qty", 12);
+    expect(cell("r1", "qty").dataset.invalid).toBeUndefined();
+    expect(mark("r1", "qty")).toBeNull();
+    expect(cell("r1", "qty").textContent).toBe("12");
+    // Double-click resumes it too.
+    typeQty("lots");
+    pointerDown(cell("r2", "name"));
+    expect(mark("r1", "qty")?.textContent).toBe("Not a number");
+    dblClick(cell("r1", "qty"));
+    expect(editor()?.value).toBe("lots");
+  });
+
+  it("Escape restores the stored value, on the cell or in its editor", async () => {
+    const s = spies();
+    render(<Harness initial={THREE} s={s} />);
+    typeQty("12 apples");
+    const outside = focusOutside();
+    await wait();
+    outside.remove();
+    pointerDown(cell("r1", "qty"));
+    press("Escape");
+    expect(cell("r1", "qty").dataset.invalid).toBeUndefined();
+    expect(cell("r1", "qty").textContent).toBe("1");
+    // Resumed, then cancelled in the editor: also back to the stored value.
+    typeQty("x");
+    pointerDown(cell("r2", "qty"));
+    expect(cell("r1", "qty").textContent).toContain("x");
+    pointerDown(cell("r1", "qty"));
+    press("Enter");
+    expect(editor()?.value).toBe("x");
+    press("Escape");
+    expect(editor()).toBeNull();
+    expect(cell("r1", "qty").dataset.invalid).toBeUndefined();
+    expect(cell("r1", "qty").textContent).toBe("1");
+    expect(s.onEdit).not.toHaveBeenCalled();
+  });
+
+  it("editing another cell keeps the draft marked, and doesn't block that edit", () => {
+    const s = spies();
+    render(<Harness initial={THREE} s={s} />);
+    typeQty("12 apples");
+    // Enter still refuses and stays in the editor.
+    press("Enter");
+    expect(editor()?.value).toBe("12 apples");
+    // Clicking another cell leaves the draft in its cell.
+    pointerDown(cell("r2", "name"));
+    expect(editor()).toBeNull();
+    expect(mark("r1", "qty")?.textContent).toBe("Not a number");
+    press("z");
+    expect(editor()?.value).toBe("z");
+    press("Enter");
+    expect(s.onEdit).toHaveBeenCalledWith("r2", "name", "z");
+    expect(s.onEdit).toHaveBeenCalledTimes(1);
+    expect(cell("r1", "qty").textContent).toContain("12 apples");
+    // A double-click straight onto another cell while resuming it: the draft stays too.
+    pointerDown(cell("r1", "qty"));
+    press("Enter");
+    dblClick(cell("r3", "name"));
+    expect(editor()?.value).toBe("three");
+    expect(mark("r1", "qty")?.textContent).toBe("Not a number");
+  });
+
+  it("clearing the cell (Delete) or typing over it drops the draft", () => {
+    const s = spies();
+    render(<Harness initial={THREE} s={s} />);
+    typeQty("12 apples");
+    pointerDown(cell("r2", "name"));
+    pointerDown(cell("r1", "qty"));
+    press("Delete");
+    expect(s.onEdit).toHaveBeenCalledWith("r1", "qty", null);
+    expect(mark("r1", "qty")).toBeNull();
+    typeQty("abc");
+    pointerDown(cell("r2", "name"));
+    pointerDown(cell("r1", "qty"));
+    press("7");
+    expect(editor()?.value).toBe("7");
+    press("Enter");
+    expect(s.onEdit).toHaveBeenLastCalledWith("r1", "qty", 7);
+    expect(mark("r1", "qty")).toBeNull();
+  });
+});

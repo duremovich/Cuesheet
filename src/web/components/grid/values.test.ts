@@ -1,14 +1,31 @@
 import { describe, expect, it } from "vitest";
+import { parseTimecode } from "../../../shared/custom-values";
 import type { Column } from "./types";
 import {
   formatValue,
   NOT_PARSED,
+  parseError,
   parseText,
   parseTsv,
+  shortParseError,
   toTsv,
   UndoStack,
   valuesEqual,
 } from "./values";
+
+describe("shortParseError (the mark on a cell keeping a draft it can't store)", () => {
+  const short = (c: Column<unknown>, text: string) => shortParseError(parseError(c, text) ?? "");
+  it("says why in the column's terms, without the echoed text or the example", () => {
+    expect(short(col("number"), "12 apples")).toBe("Not a number");
+    expect(short(col("measurement"), "abc")).toBe("Not a length");
+    expect(short(col("measurement"), "-3")).toBe("Lengths can't be negative");
+    expect(short(col("measurement"), "12 apples")).toBe("Unknown unit");
+    expect(short(col("pixelsize"), "big")).toBe("Not a pixel size");
+    expect(short(col("select", { title: "Kind", options: [] }), "zzz")).toBe("Not a valid Kind");
+    const tc = col("text", { parse: (t) => parseTimecode(t) ?? { value: "" } });
+    expect(short(tc, "soon")).toBe("Not a timecode");
+  });
+});
 
 const col = (
   type: Column<unknown>["type"],

@@ -373,12 +373,17 @@ normal / tall are fixed. Never compute row positions from a constant height: rea
 `offsets` (the virtualizer's measurements). README "Row heights".
 **Editing model:** the open editor's draft lives in the grid's `editing` state (one cell
 at a time), not in the row. It's committed by Enter / Tab / clicking another cell / focus
-leaving the grid, cancelled only by Escape (or the row vanishing; an unparsable draft left by focus leaving
-the grid is dropped with a "Not saved" hint). Nothing is in undo
+leaving the grid, cancelled only by Escape (or the row vanishing). A draft the column can't
+parse is refused by Enter / Tab (editor stays) and **kept in its cell** by every other way out
+(grid state `kept`, marked with why in the column's terms, e.g. "Not a number"; never "Not
+saved", the app autosaves) until fixed or Escaped; other cells stay editable. README "Drafts
+that can't be stored". Nothing is in undo
 until it's committed, so any path that re-seeds or drops a draft loses typing for good:
 `startEdit` on the cell already being edited keeps the draft (a double-click inside the
 editor used to re-seed it from the stored value). Same rule in the row panel's
-`TextField`: focus seeds the draft only when there isn't one (a refused one stays).
+`TextField`: focus seeds the draft only when there isn't one (a refused one stays, through
+blur too), and drafts are kept per record (`FieldEditor`'s `recordId`): the panel follows
+the active row without remounting, and a refused draft used to show on the next row.
 **onActiveRowChange** is reported after paint, except that `flushActive()` reports it at
 once before `onInsert` (a keypress right after a click otherwise reached the view's filter
 hold before the click's report, which then released the new row unseen).

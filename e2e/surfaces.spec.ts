@@ -153,6 +153,58 @@ test("import → 15 surfaces in meters; ft-in toggle; typing 4'6\" stores meters
   await expect(cellOf(lpro, "width")).toHaveText(`14' 9 1/8"`);
 });
 
+// Dylan, 2026-11-14: a length that can't be stored used to vanish when focus left the grid
+// (with a passing "Not saved" hint). It stays in its cell, marked with why, until fixed or
+// cancelled, and the rest of the grid stays editable.
+test("a length that can't be stored stays in its cell, marked, until fixed or Escape", async ({
+  browser,
+}) => {
+  const { page, showId } = await surfaceShow(browser);
+  const truss = rowByName(page, "L TRUSS WALL");
+  const height = cellOf(truss, "height");
+  const editor = grid(page).locator('[data-editor="true"]');
+  const stored = async () =>
+    (await surfaces(page, showId)).find((s) => s.name === "L TRUSS WALL")?.height;
+  await expect(height).toHaveText("1.50 m");
+
+  // Typed, then focus leaves the grid: the text stays in the cell, marked with why.
+  await height.click();
+  await page.keyboard.type("abc");
+  await expect(editor).toHaveValue("abc");
+  await page.getByTestId("row-count").click();
+  await expect(editor).toHaveCount(0);
+  await expect(height).toHaveAttribute("data-invalid", "true");
+  await expect(height).toContainText("abc");
+  await expect(height.getByTestId("invalid-mark")).toHaveText("Not a length");
+  await expect(page.getByText("Not saved")).toHaveCount(0);
+
+  // Another cell still edits, and the kept draft stays.
+  await typeInto(page, cellOf(truss, "width"), "2 m");
+  await expect(cellOf(truss, "width")).toHaveText("2.00 m");
+  await expect(height.getByTestId("invalid-mark")).toHaveText("Not a length");
+
+  // Fixed: Enter on the cell resumes the draft; a valid length saves and clears the mark.
+  await height.click();
+  await page.keyboard.press("Enter");
+  await expect(editor).toHaveValue("abc");
+  await editor.fill("2.5 m");
+  await page.keyboard.press("Enter");
+  await expect(height).toHaveText("2.50 m");
+  await expect(height).not.toHaveAttribute("data-invalid");
+  await expect.poll(stored).toBeCloseTo(2.5, 6);
+
+  // Cancelled: left by clicking another cell, then Escape on it puts back the stored value.
+  await height.click();
+  await page.keyboard.type("-3");
+  await cellOf(truss, "name").click();
+  await expect(height.getByTestId("invalid-mark")).toHaveText("Lengths can't be negative");
+  await height.click();
+  await page.keyboard.press("Escape");
+  await expect(height).toHaveText("2.50 m");
+  await expect(height).not.toHaveAttribute("data-invalid");
+  expect(await stored()).toBeCloseTo(2.5, 6);
+});
+
 test("pixel size → PPI, calculator with a PPI lock, regions", async ({ browser }) => {
   const { page, showId } = await surfaceShow(browser);
   const lpro = rowByName(page, "L PRO");
