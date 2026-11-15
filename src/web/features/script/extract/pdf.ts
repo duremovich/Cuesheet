@@ -182,9 +182,32 @@ function margins(
       seen.add(key);
     }
   });
-  const runningHeader = (l: Line) => {
-    const n = repeated.get(l.text.replace(/\d+/g, "#").toLowerCase()) ?? 0;
-    return pages.length >= 3 && n >= pages.length / 2;
+  const keyOf = (l: Line) => l.text.replace(/\d+/g, "#").toLowerCase();
+  const isRunning = (key: string) =>
+    pages.length >= 3 && (repeated.get(key) ?? 0) >= pages.length / 2;
+  // Variants of a running header ("WG 10.21.26 (ALH new page)", "WG 11.6.26 pm" beside the
+  // usual "WG 11.9.26"): a margin line in the same band (top / bottom) that starts with a
+  // running header and a space. Only headers with letters and ≥ 4 characters count, so a
+  // bare repeated number never swallows a line of dialogue near the bottom.
+  const bandOf = (l: Line, p: PdfPageItems) => (l.y > p.height / 2 ? "top" : "bottom");
+  const headerBands = new Map<string, Set<string>>();
+  lines.forEach((ls, i) => {
+    const page = pages[i] as PdfPageItems;
+    for (const l of ls) {
+      const key = keyOf(l);
+      if (!inMargin(l, page) || !isRunning(key) || key.length < 4 || !/\p{L}/u.test(key)) continue;
+      const bands = headerBands.get(key) ?? new Set<string>();
+      bands.add(bandOf(l, page));
+      headerBands.set(key, bands);
+    }
+  });
+  const runningHeader = (l: Line, p: PdfPageItems) => {
+    const key = keyOf(l);
+    if (isRunning(key)) return true;
+    for (const [h, bands] of headerBands) {
+      if (key.startsWith(`${h} `) && bands.has(bandOf(l, p))) return true;
+    }
+    return false;
   };
   const candidates = lines.map((ls, i) =>
     ls.flatMap((line) => {
@@ -208,7 +231,8 @@ function margins(
     return ls.filter((l) => {
       if (won && l === won.line) return false;
       if (won && losers.has(l) && sameBaseline(l, won.line)) return false;
-      return !inMargin(l, pages[i] as PdfPageItems) || !runningHeader(l);
+      const page = pages[i] as PdfPageItems;
+      return !inMargin(l, page) || !runningHeader(l, page);
     });
   });
   return { labels, body };

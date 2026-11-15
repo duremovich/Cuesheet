@@ -1077,9 +1077,10 @@ position is kept outside React.
   labels (`compareLabels`, natural order); so WG's p. 34 header "11.1.26   34" (a revision
   date with no "WG") labels as 34. A losing candidate on the label's baseline is dropped
   (header matter), others stay text ("3" as dialogue near the bottom). Margin lines
-  repeated on half the pages (≥ 3 pages) are dropped as running headers. Known gap: header
-  variants that don't share the running header's digit pattern ("WG 10.21.26 (ALH new
-  page)") stay as text blocks → blocks (new block on a gap > 1.45 × median line spacing, an indent
+  repeated on half the pages (≥ 3 pages; digits → "#") are dropped as running headers, and
+  so are their variants: a margin line in the same band (top / bottom) that starts with a
+  running header (≥ 4 chars, with letters) and a space ("WG 10.21.26 (ALH new page)",
+  "WG 11.6.26 pm" beside "WG 11.9.26") → blocks (new block on a gap > 1.45 × median line spacing, an indent
   change, and around headings, character names and parentheticals) → kinds
   (`classifyBlocks`: heading = the whole line ("ACT ONE", "SCENE 3: THE TRAIN", "No. 4 -
   VAMP"; no lowercase words after the keyword); character = a short caps name followed by

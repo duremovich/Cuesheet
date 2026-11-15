@@ -243,6 +243,23 @@ describe("PDF page labels among other margin numbers", () => {
     ]);
   });
 
+  it("running-header variants (a note after the date) are dropped like the header; body text isn't", async () => {
+    const bytes = await revisionDatedPdf([
+      { date: "WG 11.9.26", label: "40", body: ["RAMONA", "Morning."] },
+      { date: "WG 10.21.26 (ALH new page)", label: "41", body: ["DEL", "Afternoon."] },
+      { date: "WG 11.1.26", label: "42", body: ["RAMONA", "Evening."] },
+      { date: "WG 11.6.26 pm", label: "43", body: ["DEL", "Later."] },
+      { date: "WG 11.9.26", label: "44", body: ["RAMONA", "Night."] },
+      { date: "WG 11.3.26 11am", label: "45", body: ["DEL", "WG 11.3.26 was a Tuesday."] },
+      { date: "WG 11.9.26", label: "46", body: ["RAMONA", "Dawn."] },
+    ]);
+    const text = await extractPdf(bytes, await nodePdfjs());
+    expect(text.pages.map((p) => p.label)).toEqual(["40", "41", "42", "43", "44", "45", "46"]);
+    expect(text.blocks.filter((b) => b.text.startsWith("WG")).map((b) => b.text)).toEqual([
+      "WG 11.3.26 was a Tuesday.",
+    ]);
+  });
+
   it("dotted act-scene-page labels still win when they are the labels", () => {
     const it = (str: string, x: number, y: number) => ({
       str,
