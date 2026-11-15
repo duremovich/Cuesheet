@@ -776,6 +776,11 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     const it = rowItem(id);
     if (!it) return;
     const editKey = it.section ? ref.current.labelKey : key;
+    // Already editing this cell (a double-click inside the editor to select a word, or on
+    // the cell around it): keep the draft. Re-seeding it from the stored value threw away
+    // everything typed so far, with nothing committed for undo to bring back.
+    const cur = ref.current.editing;
+    if (cur && cur.rowId === id && cur.key === editKey) return;
     const col = colOf(editKey);
     if (col?.type === "attachment") {
       if (initial === undefined) col.onOpen?.(it.row);

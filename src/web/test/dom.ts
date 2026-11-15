@@ -92,6 +92,17 @@ export function click(el: Element, opts: { shift?: boolean; mod?: boolean } = {}
   });
 }
 
+/** A double-click as a browser sends it: pointerdown/click twice, then dblclick. */
+export function dblClick(el: Element) {
+  pointerDown(el);
+  click(el);
+  pointerDown(el);
+  click(el);
+  act(() => {
+    el.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, button: 0 }));
+  });
+}
+
 /** Lets timers (debounces, deferred blur checks) and promises settle. */
 export async function wait(ms = 0) {
   await act(async () => {

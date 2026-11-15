@@ -209,7 +209,8 @@ function TextField<Row>({
     value: shown,
     onFocus: () => {
       reverted.current = false;
-      setDraft(editorText(col, value));
+      // A draft still here was refused on blur (an invalid number…): keep it to fix it.
+      setDraft((d) => d ?? editorText(col, value));
     },
     onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
       setDraft(e.target.value),

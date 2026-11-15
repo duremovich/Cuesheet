@@ -186,7 +186,11 @@ changed by someone else" message. The step is still consumed.
 
 ## Mouse
 
-- Click selects a cell (and clears a row selection); double-click edits.
+- Click selects a cell (and clears a row selection); double-click edits. A cell already
+  being edited keeps its draft: clicks and double-clicks in it belong to the editor (select
+  a word, place the caret). `startEdit` on the cell being edited is a no-op; never re-seed
+  a draft from the stored value while it's open (that emptied half-typed notes, with
+  nothing committed for undo; test "double-clicking inside a cell being edited").
 - **Rows by clicking cells**: ⌘/Ctrl+click toggles that row in the row selection. With
   nothing selected yet, the rows you were on count as selected first (a multi-row range,
   else the active row), so click A, ⌘-click B selects A and B. Shift+click extends a row

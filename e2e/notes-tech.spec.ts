@@ -405,6 +405,44 @@ test("row panel: edit a field, see it in the grid and in History", async ({ brow
   await expect(panel2).toHaveCount(0);
 });
 
+// Dylan, 2026-11-14: double-clicking inside a note being typed in the Notes tab emptied the
+// field, with nothing committed for undo to bring back.
+test("Notes tab: double-clicking inside a note being typed keeps it, and it still saves", async ({
+  browser,
+}) => {
+  const page = await newPage(browser);
+  const showId = await apiCreateShow(page, uniqueName("Draft dblclick"));
+  await page.goto(`/shows/${showId}/notes`);
+  const grid = page.getByRole("grid", { name: "Notes" });
+  await page.getByRole("button", { name: "+ Add note" }).click();
+  const text = `Downstage ${uniqueName("spill flickers")}`;
+  await page.keyboard.type(text);
+  const editor = grid.locator("textarea[data-editor]");
+  await expect(editor).toHaveValue(text);
+
+  // On the first word: a normal double-click selects it, and the draft stays.
+  const box = await editor.boundingBox();
+  if (!box) throw new Error("no editor box");
+  await editor.dblclick({ position: { x: 14, y: Math.min(12, box.height / 2) } });
+  await expect(editor).toHaveValue(text);
+  await expect(editor).toBeFocused();
+  const selected = await editor.evaluate((el) => {
+    const ta = el as HTMLTextAreaElement;
+    return ta.value.slice(ta.selectionStart, ta.selectionEnd).trim();
+  });
+  expect(selected).toBe("Downstage");
+  // Again, a moment later (a second double-click on the same cell).
+  await editor.dblclick({ position: { x: box.width / 2, y: Math.min(12, box.height / 2) } });
+  await expect(editor).toHaveValue(text);
+
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await expect(editor).toHaveCount(0);
+  await expect(grid.getByTestId("grid-row").filter({ hasText: text })).toBeVisible();
+  const saved = await noteByBody(page, showId, text);
+  expect(saved.body).toBe(text);
+});
+
 test("quick-add at 390px: pick a cue, save, the cue stays picked", async ({ browser }) => {
   const admin = await newPage(browser);
   const showId = await apiCreateShow(admin, uniqueName("Quick"));

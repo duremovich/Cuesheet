@@ -371,6 +371,14 @@ container" for the stuck-header rule and its tests.
 rendered row and wraps text (12 lines max a cell, an inline editor grows to 20); compact /
 normal / tall are fixed. Never compute row positions from a constant height: read
 `offsets` (the virtualizer's measurements). README "Row heights".
+**Editing model:** the open editor's draft lives in the grid's `editing` state (one cell
+at a time), not in the row. It's committed by Enter / Tab / clicking another cell / focus
+leaving the grid, cancelled only by Escape (or the row vanishing; an unparsable draft left by focus leaving
+the grid is dropped with a "Not saved" hint). Nothing is in undo
+until it's committed, so any path that re-seeds or drops a draft loses typing for good:
+`startEdit` on the cell already being edited keeps the draft (a double-click inside the
+editor used to re-seed it from the stored value). Same rule in the row panel's
+`TextField`: focus seeds the draft only when there isn't one (a refused one stays).
 **onActiveRowChange** is reported after paint, except that `flushActive()` reports it at
 once before `onInsert` (a keypress right after a click otherwise reached the view's filter
 hold before the click's report, which then released the new row unseen).

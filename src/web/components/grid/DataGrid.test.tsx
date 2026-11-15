@@ -3,6 +3,7 @@ import { describe, expect, it, type Mock, vi } from "vitest";
 import {
   click,
   clipboardEvent,
+  dblClick,
   pointerDown,
   press,
   render,
@@ -324,6 +325,49 @@ describe("DataGrid long text, insert affordance and column resize", () => {
     setInputValue(area, "line 1\nline 2");
     press("Enter", {}, area);
     expect(s.onEdit).toHaveBeenCalledWith("r1", "note", "line 1\nline 2");
+  });
+
+  // Dylan, 2026-11-14: double-clicking inside a note being typed (to select a word) emptied
+  // it, and nothing had been committed for undo to bring back.
+  it("double-clicking inside a cell being edited keeps the draft", async () => {
+    const s = spies();
+    render(<Harness initial={THREE} s={s} />);
+    pointerDown(cell("r1", "note"));
+    press("Enter");
+    const area = editor() as unknown as HTMLTextAreaElement;
+    setInputValue(area, "a note I am still typing");
+    dblClick(area);
+    expect(editor()).toBe(area);
+    expect(area.value).toBe("a note I am still typing");
+    // On the cell around the editor too, and on a text cell with a stored value.
+    dblClick(cell("r1", "note"));
+    expect((editor() as unknown as HTMLTextAreaElement).value).toBe("a note I am still typing");
+    press("Enter", {}, editor());
+    expect(s.onEdit).toHaveBeenCalledWith("r1", "note", "a note I am still typing");
+
+    pointerDown(cell("r2", "name"));
+    press("x");
+    setInputValue(editor() as HTMLInputElement, "xyz");
+    dblClick(editor() as HTMLInputElement);
+    dblClick(cell("r2", "name"));
+    expect(editor()?.value).toBe("xyz");
+    press("Enter", {}, editor());
+    expect(s.onEdit).toHaveBeenLastCalledWith("r2", "name", "xyz");
+    await wait();
+  });
+
+  it("double-clicking a section label being edited keeps the draft", () => {
+    const s = spies();
+    const rows = [row("a", "one"), row("sec", "INTERMISSION", { section: true }), row("b", "two")];
+    render(<Harness initial={rows} s={s} />);
+    const sec = document.querySelector('[data-row-id="sec"] [data-cell]') as HTMLElement;
+    dblClick(sec);
+    const input = editor() as HTMLInputElement;
+    expect(input.value).toBe("INTERMISSION");
+    setInputValue(input, "ACT TWO");
+    dblClick(input);
+    dblClick(sec);
+    expect(editor()?.value).toBe("ACT TWO");
   });
 
   it("the + between rows inserts below", async () => {
