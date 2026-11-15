@@ -26,6 +26,7 @@ export default function PdfCallingScript({
   cues,
   fieldOptions,
   labelOf,
+  revisedOf,
 }: {
   pdfUrl: string;
   text: ScriptText;
@@ -34,6 +35,8 @@ export default function PdfCallingScript({
   cues: ReadonlyMap<string, CueRow>;
   fieldOptions: FieldOptions;
   labelOf: (page: number) => string;
+  /** "Revised · <label>" for a page changed since the version before. */
+  revisedOf?: (page: number) => string | undefined;
 }) {
   const { pdf, error } = usePdf(pdfUrl);
   const [images, setImages] = useState<string[]>([]);
@@ -114,6 +117,20 @@ export default function PdfCallingScript({
               <rect width={W + MARGIN} height={H} fill="var(--paper-bg)" />
               {images[idx] && <image href={images[idx]} width={W} height={H} />}
               <line x1={W} x2={W} y1={0} y2={H} stroke="var(--paper-rule)" strokeWidth={0.75} />
+              {revisedOf?.(p.page) && (
+                <text
+                  x={W + MARGIN - 6}
+                  y={14}
+                  textAnchor="end"
+                  fontSize={9}
+                  fontWeight={600}
+                  fill="var(--paper-yellow-ink)"
+                  fontFamily="system-ui, sans-serif"
+                  data-testid="print-revised"
+                >
+                  {revisedOf(p.page)}
+                </text>
+              )}
               {list.map((m) => {
                 const l = layout.get(m.anchor.id);
                 if (!l) return null;

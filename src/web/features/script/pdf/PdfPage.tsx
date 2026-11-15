@@ -56,6 +56,8 @@ export interface PdfPageProps {
   /** A click in the margin at height `y` (points): a positional cue at that line. */
   onMarginClick: (page: number, y: number, clientX: number, clientY: number) => void;
   onDropAnchor: (anchorId: string, page: number, y: number) => void;
+  /** The page changed since the version before: that version's label. */
+  revisedIn?: string;
 }
 
 /** The ink of a cue color on paper (CSS variables; neutral without a color). */
@@ -215,7 +217,8 @@ export const PdfPage = memo(function PdfPage(p: PdfPageProps) {
       data-testid="pdf-page"
       data-page={n}
       data-rendered={rendered || undefined}
-      aria-label={`Page ${p.label}`}
+      aria-label={`Page ${p.label}${p.revisedIn !== undefined ? `, revised in ${p.revisedIn}` : ""}`}
+      data-revised={p.revisedIn !== undefined || undefined}
       onDragOver={dragOver}
       onDrop={(e) => {
         const id = e.dataTransfer.getData(ANCHOR_DRAG_TYPE);
@@ -247,6 +250,16 @@ export const PdfPage = memo(function PdfPage(p: PdfPageProps) {
         <canvas ref={canvasRef} className={styles.canvas} style={{ width: W, height: H }} />
         <div ref={layerRef} className={`textLayer ${styles.textLayer}`} data-testid="pdf-text" />
       </div>
+      {p.revisedIn !== undefined && (
+        <span
+          className={styles.revisedTag}
+          style={{ left: W / 2 }}
+          data-testid="revised-tag"
+          title={`Changed in ${p.revisedIn}`}
+        >
+          Revised{p.revisedIn ? ` · ${p.revisedIn}` : ""}
+        </span>
+      )}
       <svg
         className={styles.overlay}
         width={W + M}

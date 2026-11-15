@@ -10,7 +10,7 @@ import { lazy, Suspense, useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
 import { attachmentUrl } from "../../../shared/attachments";
 import { type ShowState, useShowStore } from "../../lib/show-store";
-import { useScriptText, useVersionAnchors } from "../script/data";
+import { useRevisedPages, useScriptText, useVersionAnchors } from "../script/data";
 import { filterFromParam, isFiltered, markerColor, matchesMarker } from "../script/filters";
 import { scriptUrl } from "../script/links";
 import { markerStyle } from "../script/Marker";
@@ -43,6 +43,15 @@ export function CallingScriptPrint() {
   const versionId = vParam && versions.some((v) => v.id === vParam) ? vParam : currentId;
   const version = versions.find((v) => v.id === versionId);
   const { text, error } = useScriptText(versionId);
+  const vIndex = versions.findIndex((v) => v.id === versionId);
+  const revised = useRevisedPages(
+    text,
+    vIndex > 0 ? (versions[vIndex - 1]?.id ?? null) : null,
+    version?.label || `Version ${vIndex + 1}`,
+  );
+  /** "Revised · <version label>" for a page changed since the version before. */
+  const revisedOf = (page: number) =>
+    revised?.pages.has(page) ? `Revised · ${revised.label}` : undefined;
   const anchors = useVersionAnchors(versionId, state.tables.cues);
   const filterParam = params.get("filter");
   const filter = useMemo(() => filterFromParam(filterParam), [filterParam]);
@@ -177,6 +186,7 @@ export function CallingScriptPrint() {
             cues={state.tables.cues}
             fieldOptions={state.fieldOptions}
             labelOf={labelOf}
+            revisedOf={revisedOf}
           />
         </Suspense>
       )}
@@ -195,7 +205,10 @@ export function CallingScriptPrint() {
                 <td className={styles.running} data-testid="print-running-header">
                   <span>{ws.showName}</span>
                   <span>{version?.label ?? ""}</span>
-                  <span>Page {p.label}</span>
+                  <span>
+                    Page {p.label}
+                    {revisedOf(p.page) ? ` · ${revisedOf(p.page)}` : ""}
+                  </span>
                   <span>{date}</span>
                 </td>
               </tr>
@@ -210,7 +223,14 @@ export function CallingScriptPrint() {
             <tbody>
               <tr>
                 <td className={styles.scriptPage}>
-                  <div className={styles.pageLabel}>Page {p.label}</div>
+                  <div className={styles.pageLabel}>
+                    {revisedOf(p.page) && (
+                      <span className={styles.revised} data-testid="print-revised">
+                        {revisedOf(p.page)}
+                      </span>
+                    )}
+                    Page {p.label}
+                  </div>
                   {p.blocks.map((b) => {
                     const list = byBlock.get(b.i) ?? [];
                     return (

@@ -445,6 +445,7 @@ function LoadedReader(props: PdfReaderProps & { pdf: LoadedPdf }) {
         pages={navPages}
         current={pageIdx}
         open={navOpen}
+        revised={props.revised}
         onHeading={(b) => {
           scrollToBlock(b);
           setNavOpen(false);
@@ -514,6 +515,11 @@ function LoadedReader(props: PdfReaderProps & { pdf: LoadedPdf }) {
                 {" "}
                 · {pageIdx + 1} of {pdf.pages.length}
               </span>
+              {props.revised?.pages.has(pageIdx + 1) && (
+                <span className={scriptStyles.revisedNow} data-testid="header-revised">
+                  Revised · {props.revised.label}
+                </span>
+              )}
             </span>
             <span className={styles.zoom}>
               <button type="button" aria-label="Zoom out" onClick={() => stepZoom(-1)}>
@@ -573,6 +579,9 @@ function LoadedReader(props: PdfReaderProps & { pdf: LoadedPdf }) {
                     onSelect={onSelect}
                     onMarginClick={onMarginClick}
                     onDropAnchor={onDropAnchor}
+                    revisedIn={
+                      props.revised?.pages.has(data.page) ? props.revised.label : undefined
+                    }
                   />
                 </div>
               );

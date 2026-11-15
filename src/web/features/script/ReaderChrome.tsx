@@ -3,6 +3,7 @@
 // PageUp previous, "/" find, "g" go to a page label; ignored in inputs and dialogs).
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import type { ScriptText } from "./contract";
+import type { RevisedPages } from "./data";
 import { findBlocks } from "./markers";
 import styles from "./Script.module.css";
 
@@ -13,6 +14,7 @@ export function ScriptNavigator({
   open,
   onHeading,
   onPage,
+  revised,
   children,
 }: {
   headings: readonly { block: number; label: string; text: string }[];
@@ -21,6 +23,8 @@ export function ScriptNavigator({
   open: boolean;
   onHeading: (block: number) => void;
   onPage: (index: number) => void;
+  /** Pages changed or new since the version before (keys are `pages[].key`): listed, marked. */
+  revised?: RevisedPages | null;
   /** More sections (the PDF view's cues not on any page). */
   children?: ReactNode;
 }) {
@@ -45,6 +49,29 @@ export function ScriptNavigator({
           </ul>
         </>
       )}
+      {revised && revised.pages.size > 0 && (
+        <>
+          <h3 title={`Pages changed or new in ${revised.label} since the version before`}>
+            Changed pages ({revised.pages.size})
+          </h3>
+          <div className={styles.pageGrid} data-testid="nav-changed-pages">
+            {pages.map((p, i) =>
+              revised.pages.has(p.key) ? (
+                <button
+                  key={p.key}
+                  type="button"
+                  aria-current={i === current ? "page" : undefined}
+                  aria-label={`Changed page ${p.label}`}
+                  data-revised={revised.pages.get(p.key)}
+                  onClick={() => onPage(i)}
+                >
+                  {p.label}
+                </button>
+              ) : null,
+            )}
+          </div>
+        </>
+      )}
       <h3>Pages</h3>
       <div className={styles.pageGrid}>
         {pages.map((p, i) => (
@@ -53,6 +80,7 @@ export function ScriptNavigator({
             type="button"
             aria-current={i === current ? "page" : undefined}
             aria-label={`Page ${p.label}`}
+            data-revised={revised?.pages.get(p.key)}
             onClick={() => onPage(i)}
           >
             {p.label}

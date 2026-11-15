@@ -139,6 +139,47 @@
   border-color: var(--color-border);
 }
 
+.pageGrid button[data-revised] {
+  border-color: var(--color-warning);
+  box-shadow: inset 0 -2px 0 var(--color-warning);
+}
+
+/* The current page changed since the version before (the sticky page header). */
+.revisedNow {
+  margin-left: var(--space-2);
+  padding: 0 var(--space-1);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-sm);
+  background: var(--color-warning-subtle);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* A page changed or new since the version before (text view: in the gutter). */
+.revisedTag {
+  display: block;
+  margin-top: var(--space-1);
+  padding: 0 3px;
+  border-radius: var(--radius-sm, 3px);
+  background: var(--color-warning-subtle);
+  border: 1px solid var(--color-warning);
+  color: var(--color-text);
+  font-size: 10px;
+  line-height: 1.4;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.revisedTag small {
+  display: block;
+  font-size: 9px;
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .pageGrid button[aria-current="page"] {
   background: var(--color-accent-subtle);
   border-color: var(--color-accent);
@@ -978,4 +1019,78 @@
   .select {
     max-width: 150px;
   }
+}
+
+/* --- add pages --- */
+
+.addPagesTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.addPagesTable th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.addPagesTable td {
+  vertical-align: top;
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.addPagesTable td p {
+  margin: var(--space-1) 0 0;
+  font-size: 12px;
+}
+
+.addPagesTable tr[data-error] td {
+  background: var(--color-warning-subtle);
+}
+
+.addPagesPage {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.addPagesPage img,
+.addPagesThumb {
+  flex: none;
+  width: 32px;
+  border: 1px solid var(--color-border);
+  background: #fff;
+}
+
+.addPagesThumb {
+  height: 41px;
+}
+
+.addPagesPage > span {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.addPagesLine {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 36ch;
+}
+
+.addPagesAction {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.addPagesWarn {
+  color: var(--color-warning);
 }

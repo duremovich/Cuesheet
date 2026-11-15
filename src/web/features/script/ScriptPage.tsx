@@ -5,6 +5,8 @@
 // `?version=<id>` reads an older version (read-only); `?filter=` is the marker filter;
 // `?resolve=<versionId>` is the Resolve screen for that version (pinned: if someone
 // imports a newer one meanwhile, the screen says so and offers to switch; "1" = current). Editors place and resolve; everyone else reads.
+// "Add pages…" (addPages/) makes a new version from the current PDF plus replacement pages;
+// pages changed since the version before carry "Revised" tags (`useRevisedPages`).
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useNavigationType, useSearchParams } from "react-router";
 import { attachmentUrl } from "../../../shared/attachments";
@@ -25,7 +27,13 @@ import type { FocusState } from "../shared/useTableChrome";
 import { rowUrl } from "../show/tabs";
 import { useWorkspace } from "../show/workspace";
 import type { Anchor, ImportVersionResponse } from "./contract";
-import { loadResults, saveResults, useScriptText, useVersionAnchors } from "./data";
+import {
+  loadResults,
+  saveResults,
+  useRevisedPages,
+  useScriptText,
+  useVersionAnchors,
+} from "./data";
 import {
   COLOR_BY,
   type ColorBy,
@@ -67,6 +75,7 @@ type ScriptViewMode = "pdf" | "text";
 const isViewMode = (v: unknown): v is ScriptViewMode => v === "pdf" || v === "text";
 export const CUT = "Cut";
 const PdfReader = lazy(() => import("./pdf/PdfReader"));
+const AddPagesPanel = lazy(() => import("./addPages/AddPagesPanel"));
 
 export function ScriptPage() {
   const ws = useWorkspace();
@@ -122,6 +131,8 @@ export function ScriptPage() {
       { preventScrollReset: true },
     );
   const { text, error: textError } = useScriptText(viewId);
+  // Pages changed or new since the version before (the "Revised" tags).
+  const revised = useRevisedPages(text, prevId, version?.label || `Version ${vIndex + 1}`);
   const anchors = useVersionAnchors(viewId, tables.cues);
   const prevAnchors = useVersionAnchors(prevId, tables.cues);
   const anchorsRef = useRef(anchors);
@@ -148,6 +159,7 @@ export function ScriptPage() {
 
   // --- import / report ---
   const [importOpen, setImportOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   const [report, setReport] = useState<{
     versionId: string;
     counts: ReportCounts | null;
@@ -167,6 +179,7 @@ export function ScriptPage() {
       flagged: counts ? counts.changed + counts.missing : 0,
     });
     setImportOpen(false);
+    setAddOpen(false);
     setParam("version", null);
     setOriginalError(origError ? { versionId: res.versionId, message: origError } : null);
   };
@@ -193,6 +206,10 @@ export function ScriptPage() {
   );
 
   const original = version?.attachment_id ? tables.attachments.get(version.attachment_id) : null;
+  const currentVersion = versions.find((v) => v.id === currentId) ?? null;
+  const currentOriginal = currentVersion?.attachment_id
+    ? (tables.attachments.get(currentVersion.attachment_id) ?? null)
+    : null;
   const pdfUrl =
     original?.content_type === "application/pdf" ? attachmentUrl(ws.showId, original.id) : null;
   const showPdf = !!pdfUrl && viewMode === "pdf";
@@ -587,7 +604,25 @@ export function ScriptPage() {
         </ToolbarButton>
       )}
       {ws.canEdit && (
-        <ToolbarButton onClick={() => setImportOpen(true)}>Import new version</ToolbarButton>
+        <ToolbarButton
+          onClick={() => {
+            setAddOpen(false);
+            setImportOpen(true);
+          }}
+        >
+          Import new version
+        </ToolbarButton>
+      )}
+      {ws.canEdit && currentVersion && (
+        <ToolbarButton
+          onClick={() => {
+            setImportOpen(false);
+            setAddOpen(true);
+          }}
+          title="Replacement or inserted pages for the current version (PDF)"
+        >
+          Add pages…
+        </ToolbarButton>
       )}
       <Link
         className={frameStyles.toolButton}
@@ -626,6 +661,24 @@ export function ScriptPage() {
           onDone={onImported}
           onCancel={() => setImportOpen(false)}
         />
+      )}
+      {addOpen && currentVersion && (
+        <Suspense fallback={<p className="muted">Loading…</p>}>
+          <AddPagesPanel
+            // A newer version imported meanwhile: start over on it (the plan's pages are its).
+            key={currentVersion.id}
+            source={source}
+            showId={ws.showId}
+            version={currentVersion}
+            original={currentOriginal}
+            onDone={onImported}
+            onCancel={() => setAddOpen(false)}
+            onImportFull={() => {
+              setAddOpen(false);
+              setImportOpen(true);
+            }}
+          />
+        </Suspense>
       )}
       {report && report.versionId === viewId && (
         <div className={styles.banner} data-kind="info" role="status" data-testid="import-report">
@@ -831,6 +884,7 @@ export function ScriptPage() {
             placement={placement}
             restore={scroll.restore}
             onScrollPositionChange={scroll.onScrollPositionChange}
+            revised={revised}
           />
         </Suspense>
       ) : (
@@ -853,6 +907,7 @@ export function ScriptPage() {
           placement={placement}
           restore={scroll.restore}
           onScrollPositionChange={scroll.onScrollPositionChange}
+          revised={revised}
         />
       )}
     </TableFrame>

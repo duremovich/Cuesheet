@@ -1069,10 +1069,17 @@ position is kept outside React.
   `empty`, and a message for the user. **PDF** (`pdf.ts`; pdf.js's **legacy build**
   `pdfjs-dist/legacy/build/pdf.mjs` and its worker are lazy chunks, `?url` for the worker;
   unit tests pass the same build under Node): items → lines (same baseline, split at gaps
-  over 4 font sizes) → the first margin line (top/bottom 8%) on a page that reads as a page
-  number becomes its label (`pageLabelOf`: "14", "14a", "- 14 -", "Page 14", "I-3-14",
-  roman; later ones stay text), margin lines repeated on half the pages are dropped as
-  running headers → blocks (new block on a gap > 1.45 × median line spacing, an indent
+  over 4 font sizes) → page labels: every margin line (top/bottom 8%) that reads as a page
+  number is a candidate (`pageLabelOf`: "14", "14a", "- 14 -", "Page 14", "I-3-14", "68-69",
+  roman); `chooseLabels` (`extract/labels.ts`) picks per page the candidate of the form the
+  labels share (`labelShape`: "#", "r-#-#"…; the form on most pages, weighted by how often
+  it increases page to page), and among several the one that fits between its neighbours'
+  labels (`compareLabels`, natural order); so WG's p. 34 header "11.1.26   34" (a revision
+  date with no "WG") labels as 34. A losing candidate on the label's baseline is dropped
+  (header matter), others stay text ("3" as dialogue near the bottom). Margin lines
+  repeated on half the pages (≥ 3 pages) are dropped as running headers. Known gap: header
+  variants that don't share the running header's digit pattern ("WG 10.21.26 (ALH new
+  page)") stay as text blocks → blocks (new block on a gap > 1.45 × median line spacing, an indent
   change, and around headings, character names and parentheticals) → kinds
   (`classifyBlocks`: heading = the whole line ("ACT ONE", "SCENE 3: THE TRAIN", "No. 4 -
   VAMP"; no lowercase words after the keyword); character = a short caps name followed by
@@ -1088,6 +1095,9 @@ position is kept outside React.
   character name on a paragraph's first line splits off, `--- page 14 ---` markers (label
   after "page") or form feeds, else 40 a page with a warning; Markdown `#` headings and
   `*italic*` lines (directions). Fixtures are generated in `extract.test.ts` (pdf-lib, JSZip).
+- **Add pages** (`src/web/features/script/addPages/`): see "Script view". `diffPages` treats
+  a new page whose blocks are exactly an old page's as "same" (repeated character names at
+  page tops otherwise pair elsewhere and mark untouched neighbours "changed").
 - **Tests**: `src/shared/script-anchor/reanchor.test.ts` (engine; synthetic scripts in
   `testing.ts`) and `scenarios.test.ts` (review regressions),
   `src/web/features/script/extract/extract.test.ts`,
@@ -1187,6 +1197,44 @@ position is kept outside React.
   flight from this screen don't count). **A newer version** imported meanwhile: the
   screen is keyed by its version and stays on it, with "A new version (v3) was imported
   by …; your list is for v2", actions hidden, and **Switch to v3**.
+- **Add pages** (`addPages/`, lazy chunk with pdf-lib): the header's **Add pages…**
+  (editors; always shown, the panel explains and offers "Import new version…" when the
+  current version's original isn't a PDF). Replacement / inserted pages for the **current**
+  version, PDF only. `read.ts`: each dropped PDF → pages with label + first line(s)
+  (`pdfPageSummaries`: the extractor's own label logic, `preferShape` = the current labels'
+  form, since one page has no sequence; margins skipped for the first line) and a pdf.js
+  thumbnail; pdf-lib opens it first and refuses encrypted files (`MergeError`). `plan.ts`
+  (pure): base pages = the current text's `pages` (physical index, label; text-less PDF
+  pages aren't targetable and stay put). Proposal per incoming page (`proposeAction`):
+  same label → Replace; combined incoming "45-46" → replaces 45 and 46 (`labelRange`: two
+  numbers, second ≤ 4 more); a number a combined base page covers ("68" vs "68-69") →
+  replaces it (warning when the new pages don't cover its whole range); else Insert after
+  the greatest label below it (`compareLabels`); no label / nothing below → "choose".
+  `checkPlan` blocks Apply on rows to choose, two active rows with the same label, a page
+  replaced and removed, nothing to do. `mergeOrder`: base pages in order, replacements at
+  their first target, inserts after their page (-1 = first), rows sharing a place in label
+  order, removals dropped. Version label default `Pages 138, 139a, 140 (removed 45)`
+  (`defaultVersionLabel`, editable). **Preview** fetches the current original
+  (`attachmentUrl`), merges with pdf-lib `copyPages` (`merge.ts`, `mergePdf`), and runs the
+  normal `extractPdf` over the **whole merged PDF** (so running headers / labels come out as
+  for a full import; a single replacement page's own header only strips this way), with
+  ImportPanel's `textTooBig` / `originalTooBig` / low-confidence checks and the revised
+  labels (`diffPages` vs the current text). **Import** = ImportPanel's path:
+  `source.importVersion({…, baseVersionId: current})`, upload the merged PDF as the
+  version's `source_file` ("<original stem> (<label>).pdf") and set `attachment_id`, then
+  `onImported` (report, Resolve). No server change. The panel is keyed by the current
+  version (a newer import meanwhile resets it). Tests: `addPages/plan.test.ts`,
+  `merge.test.ts` (pdf-lib base + packets through the real extractor),
+  `e2e/script-add-pages.spec.ts`.
+- **Revised marks**: `useRevisedPages(text, prevVersionId, label)` (`data.ts`): pages
+  changed or new vs the version before **by position** (the base a version was re-anchored
+  from isn't stored), `diffPages` once per pair of texts (WeakMap cache). Text view: a
+  "Revised" tag with the version's label in the gutter; PDF view: a tag at the top centre
+  of the sheet (`revised-tag`); both: the sticky header says "Revised · <label>" for the
+  current page (`header-revised`; a jump puts the page top under the header) and the
+  navigator lists **Changed pages** (`nav-changed-pages`) and marks them in the page grid
+  (`data-revised`). Calling-script print: the page label / running header (text layout)
+  and the top of the margin (PDF layout), `print-revised`.
 - **PDF page view** (`pdf/`, decision 0008): the default for a version whose original
   (`attachment_id`) is `application/pdf`; a toolbar toggle **PDF pages | Text** (pref
   `cuesheet.scriptView.<user>.<show>`, zoom in `cuesheet.scriptZoom.…`: `"fit"` or a

@@ -18,6 +18,7 @@ import {
 import { useMediaQuery } from "../shared/useMediaQuery";
 import type { Anchor, CueAnchorRow, ScriptBlock, ScriptText } from "./contract";
 import { makeAnchor, makePositionAnchor } from "./contract";
+import type { RevisedPages } from "./data";
 import { type ColorBy, type MarkerFilter, markerColor, matchesMarker } from "./filters";
 import {
   ANCHOR_DRAG_TYPE,
@@ -94,6 +95,8 @@ export interface ReaderProps {
   restore?: ScrollRestore;
   /** The reading position changed (each scroll). */
   onScrollPositionChange?: (position: ScrollPosition) => void;
+  /** Pages changed or new since the version before: tagged "Revised", listed in the navigator. */
+  revised?: RevisedPages | null;
 }
 
 const FLASH_MS = 2400;
@@ -428,6 +431,7 @@ export function Reader(props: ReaderProps) {
         pages={navPages}
         current={pageIdx}
         open={navOpen}
+        revised={props.revised}
         onHeading={(b) => {
           scrollToBlock(b);
           setNavOpen(false);
@@ -471,6 +475,11 @@ export function Reader(props: ReaderProps) {
                 {" "}
                 · {pageIdx + 1} of {pages.length}
               </span>
+              {current && props.revised?.pages.has(current.page) && (
+                <span className={styles.revisedNow} data-testid="header-revised">
+                  Revised · {props.revised.label}
+                </span>
+              )}
             </span>
             <span className={styles.keysHint}>j/k pages · / find · g go to page</span>
           </div>
@@ -505,6 +514,7 @@ export function Reader(props: ReaderProps) {
                     actions={actions}
                     onMarginClick={onMarginClick}
                     onDropAnchor={onDropAnchor}
+                    revisedIn={props.revised?.pages.has(p.page) ? props.revised.label : undefined}
                   />
                 </div>
               );
@@ -549,6 +559,8 @@ interface PageProps {
   actions: MarkerActions;
   onMarginClick: (block: number, x: number, y: number) => void;
   onDropAnchor: (anchorId: string, block: number) => void;
+  /** The page changed since the version before: that version's label. */
+  revisedIn?: string;
 }
 
 type Measured = ReadonlyMap<number, { top: number; height: number }>;
@@ -628,10 +640,21 @@ const Page = memo(function Page(p: PageProps) {
       className={styles.page}
       data-testid="script-page"
       data-page={p.page.page}
-      aria-label={`Page ${p.page.label}`}
+      data-revised={p.revisedIn !== undefined || undefined}
+      aria-label={`Page ${p.page.label}${p.revisedIn !== undefined ? `, revised in ${p.revisedIn}` : ""}`}
     >
       <div className={styles.gutter} aria-hidden="true">
         {p.page.label}
+        {p.revisedIn !== undefined && (
+          <span
+            className={styles.revisedTag}
+            data-testid="revised-tag"
+            title={`Changed in ${p.revisedIn}`}
+          >
+            Revised
+            {p.revisedIn && <small>{p.revisedIn}</small>}
+          </span>
+        )}
       </div>
       {/* biome-ignore lint/a11y/noStaticElementInteractions: drop target for dragged markers */}
       <div

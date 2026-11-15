@@ -202,6 +202,18 @@
   margin-bottom: var(--space-2);
 }
 
+/* A page changed since the version before. */
+.revised {
+  float: left;
+  font-family: var(--font-sans);
+  font-size: 0.85em;
+  font-weight: 600;
+  padding: 0 0.4em;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  color: var(--paper-yellow-ink);
+}
+
 .scriptRow {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 34%;

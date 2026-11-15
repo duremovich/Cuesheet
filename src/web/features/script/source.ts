@@ -45,6 +45,8 @@ export interface ImportVersionRequest {
   versionId: string;
   label: string;
   text: ScriptText;
+  /** Re-anchor from this version (default: the current one). */
+  baseVersionId?: string;
 }
 
 export interface ScriptSource {

@@ -102,7 +102,18 @@ export interface PageDiff {
   blocksDeleted: number;
 }
 
-/** A page-level summary of what changed between two versions (the import report). */
+/** Each page's block texts as one key (pages in order). */
+function pageKeys(text: ScriptText): Map<number, string> {
+  const out = new Map<number, string[]>();
+  for (const b of text.blocks) out.set(b.page, [...(out.get(b.page) ?? []), b.text]);
+  return new Map([...out].map(([page, texts]) => [page, texts.join("\u0000")]));
+}
+
+/**
+ * A page-level summary of what changed between two versions (the import report, the
+ * reader's "Revised" marks). A page whose blocks are exactly an old page's is "same" even
+ * when the diff paired a repeated block ("RAMONA" at the top of every page) elsewhere.
+ */
 export function diffPages(oldText: ScriptText, newText: ScriptText): PageDiff {
   const map = mapBlocks(oldText, newText);
   const kept = new Uint8Array(newText.blocks.length);
@@ -114,17 +125,31 @@ export function diffPages(oldText: ScriptText, newText: ScriptText): PageDiff {
     e.kept += kept[b.i] ?? 0;
     byPage.set(b.page, e);
   }
+  const oldKeys = pageKeys(oldText);
+  const newKeys = pageKeys(newText);
+  const oldSet = new Set(oldKeys.values());
+  const newSet = new Set(newKeys.values());
   const labels = new Map(newText.pages.map((p) => [p.page, p.label]));
   const pages: PageDiff["pages"] = [];
   const counts = { same: 0, changed: 0, new: 0 };
   for (const [page, e] of [...byPage].sort((x, y) => x[0] - y[0])) {
-    const status: PageStatus = e.kept === e.total ? "same" : e.kept === 0 ? "new" : "changed";
+    const status: PageStatus =
+      e.kept === e.total || oldSet.has(newKeys.get(page) ?? "")
+        ? "same"
+        : e.kept === 0
+          ? "new"
+          : "changed";
     counts[status]++;
     pages.push({ page, label: labels.get(page) ?? String(page), status });
   }
   const oldPages = new Map<number, boolean>();
   oldText.blocks.forEach((b, i) => {
-    oldPages.set(b.page, (oldPages.get(b.page) ?? false) || (map[i] as number) >= 0);
+    oldPages.set(
+      b.page,
+      (oldPages.get(b.page) ?? false) ||
+        (map[i] as number) >= 0 ||
+        newSet.has(oldKeys.get(b.page) ?? ""),
+    );
   });
   let removed = 0;
   for (const survives of oldPages.values()) if (!survives) removed++;

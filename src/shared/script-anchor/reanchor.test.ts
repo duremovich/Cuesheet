@@ -164,6 +164,20 @@ describe("mapBlocks / diffPages", () => {
     expect(rewritten.pages.at(-1)?.status).toBe("new");
     expect(rewritten.removed).toBe(1);
   });
+
+  it("a page identical to an old one is the same, even when its repeated name paired elsewhere", () => {
+    // Every page starts "RAMONA"; a page inserted before page 3 takes the diff's pairing of
+    // page 3's "RAMONA", which must not make page 3 look changed.
+    const page = (n: string) => ["RAMONA", `What happens on page ${n}.`];
+    const before = script([...page("1"), ...page("2"), ...page("3")], 2);
+    const after = script([...page("1"), ...page("2"), "RAMONA", "A new page.", ...page("3")], 2);
+    expect(diffPages(before, after).pages.map((p) => p.status)).toEqual([
+      "same",
+      "same",
+      "changed",
+      "same",
+    ]);
+  });
 });
 
 describe("reanchor", () => {
