@@ -7,7 +7,9 @@ import {
   findBlocks,
   findPage,
   headingsOf,
+  markerBadge,
   markerText,
+  markerTitle,
   pageLabelOf,
   pagesOf,
   segmentText,
@@ -31,12 +33,51 @@ describe("triggerBadge / markerText", () => {
     expect(c({ id: "a" })).toBe("");
   });
 
-  it("shows a Line cue's text quoted, a Visual's description of the visual, else the description", () => {
-    expect(markerText(cueRow({ id: "a", trigger_type: "Line", trigger_value: "Hi" }))).toBe("“Hi”");
+  it("badges a marker only with a reference the indicator can't show", () => {
+    const c = (p: Parameters<typeof cueRow>[0]) => markerBadge(cueRow(p));
+    expect(c({ id: "a", trigger_type: "LX", lx_cue: "117" })).toBe("LX 117");
+    expect(c({ id: "a", trigger_type: "SQ", sq_cue: "12" })).toBe("SQ 12");
+    expect(c({ id: "a", trigger_type: "Timecode", timecode: "1:00:00" })).toBe("TC 1:00:00");
+    for (const t of ["Line", "Visual", "Follow", "Manual", "Other"])
+      expect(c({ id: "a", trigger_type: t })).toBe("");
+    expect(c({ id: "a" })).toBe("");
+  });
+
+  it("calls out the SM call first, then the trigger text, then the description", () => {
+    const t = (p: Parameters<typeof cueRow>[0]) => markerText(cueRow(p));
+    const long =
+      "Transition DAY to LATE FRIDAY NIGHT as the band packs up and the last light leaves the ridge";
+    expect(t({ id: "a", trigger_type: "Visual", sm_call: long, description: "Night falls" })).toBe(
+      long,
+    );
+    expect(t({ id: "a", trigger_type: "Visual", sm_call: "[Top of Show Sequence]" })).toBe(
+      "Top of Show Sequence",
+    );
+    expect(t({ id: "a", trigger_type: "Line", trigger_value: "Hi", sm_call: "MICAH: Hi" })).toBe(
+      "MICAH: Hi",
+    );
+    expect(t({ id: "a", trigger_type: "Line", trigger_value: "Hi" })).toBe("“Hi”");
+    expect(t({ id: "a", trigger_type: "Visual", trigger_value: "dance break" })).toBe(
+      "dance break",
+    );
+    expect(t({ id: "a", trigger_type: "Visual", description: "Night falls" })).toBe("Night falls");
+    // LX / SQ / timecode keep their trigger value in the badge.
+    expect(t({ id: "a", trigger_type: "LX", trigger_value: "117", description: "Wash" })).toBe(
+      "Wash",
+    );
+    expect(t({ id: "a", sm_call: "  ", description: "Wash" })).toBe("Wash");
+  });
+
+  it("keeps the description in the hover text when the callout is something else", () => {
     expect(
-      markerText(cueRow({ id: "a", trigger_type: "Visual", trigger_value: "dance break" })),
-    ).toBe("dance break");
-    expect(markerText(cueRow({ id: "a", trigger_type: "LX", description: "Wash" }))).toBe("Wash");
+      markerTitle(cueRow({ id: "a", trigger_type: "Visual", sm_call: "GO", description: "Snow" })),
+    ).toBe("GO\nSnow");
+    expect(markerTitle(cueRow({ id: "a", trigger_type: "Visual", description: "Snow" }))).toBe(
+      "Snow",
+    );
+  });
+
+  it("labels a cue by number", () => {
     expect(cueLabel(cueRow({ id: "a", number: "14.2" }))).toBe("Q 14.2");
     expect(cueLabel(cueRow({ id: "a" }))).toBe("Q –");
   });

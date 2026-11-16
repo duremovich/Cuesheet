@@ -12,7 +12,7 @@ import {
   type ScriptText,
 } from "./contract";
 
-/** Height of one marker in the margin, px (fixed, so layout is arithmetic). */
+/** Minimum height of one marker in the margin, px (a long callout wraps and grows it). */
 export const MARKER_HEIGHT = 44;
 /** Height of a faint other-department marker (LX / SQ), px. */
 export const FAINT_HEIGHT = 20;
@@ -20,8 +20,9 @@ export const FAINT_HEIGHT = 20;
 export const MARKER_GAP = 4;
 
 /**
- * The trigger badge: `LINE`, `LX 117`, `SQ 12`, `TC 1:00:00`, `VISUAL`, `FOLLOW`,
- * `MANUAL`; empty when the cue has no trigger type.
+ * The trigger type as a word or reference: `LINE`, `LX 117`, `SQ 12`, `TC 1:00:00`,
+ * `VISUAL`, `FOLLOW`, `MANUAL`; empty when the cue has no trigger type. For tables (the SM
+ * cue sheet); the script's markers show only `markerBadge`.
  */
 export function triggerBadge(cue: CueRow): string {
   const v = (s: string | null | undefined) => s?.trim() ?? "";
@@ -45,16 +46,49 @@ export function triggerBadge(cue: CueRow): string {
   }
 }
 
+/** Trigger types whose badge carries a reference (a number or a time), not just the type. */
+const REFERENCE_TRIGGERS: ReadonlySet<string> = new Set(["LX", "SQ", "Timecode"]);
+
 /**
- * The marker's text: a Line cue's trigger text, a Visual cue's description of the visual,
- * else the cue's description.
+ * The badge on a script marker: only a reference the tick / underline can't show
+ * (`LX 117`, `SQ 12`, `TC 1:00:00`); the bare type (LINE, VISUAL, FOLLOW…) is left to the
+ * indicator. Empty otherwise.
+ */
+export function markerBadge(cue: CueRow): string {
+  return cue.trigger_type && REFERENCE_TRIGGERS.has(cue.trigger_type) ? triggerBadge(cue) : "";
+}
+
+/** The SM call as written, without the brackets some imports wrap it in ("[GO 12]"). */
+export function smCallText(cue: CueRow): string {
+  const t = (cue.sm_call ?? "").replace(/\s+/g, " ").trim();
+  const inner = /^\[(.*)\]$/.exec(t)?.[1];
+  return (inner ?? t).trim();
+}
+
+/**
+ * The marker's callout: what the SM calls the cue on. The SM call when there is one; else
+ * the trigger text (a Line cue's quoted, a Visual or other cue's as written; LX / SQ /
+ * timecode keep theirs in the badge); else the cue's description. Shown in full.
  */
 export function markerText(cue: CueRow): string {
-  const tv = cue.trigger_value?.trim();
+  const call = smCallText(cue);
+  if (call) return call;
+  const tv = cue.trigger_value?.trim() ?? "";
   const desc = cue.description?.trim() ?? "";
   if (cue.trigger_type === "Line") return tv ? `“${tv}”` : desc;
-  if (cue.trigger_type === "Visual") return tv || desc;
-  return desc;
+  if (cue.trigger_type && REFERENCE_TRIGGERS.has(cue.trigger_type)) return desc;
+  return tv || desc;
+}
+
+/**
+ * The marker's hover text: the callout, plus the description when the callout is
+ * something else (an SM call or trigger text), so nothing is hidden by preferring the call.
+ */
+export function markerTitle(cue: CueRow): string {
+  const text = markerText(cue);
+  const desc = cue.description?.trim() ?? "";
+  if (!desc || desc === text) return text;
+  return text ? `${text}\n${desc}` : desc;
 }
 
 /**

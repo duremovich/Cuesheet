@@ -301,7 +301,7 @@ describe("buildMarks / layoutMarks", () => {
     const [stale, , positional] = page2;
     expect(stale?.warn).toBe(true);
     expect(positional?.positional).toBe(true);
-    expect(positional?.label).toBe("VISUAL · SHIFT");
+    expect(positional?.label).toBe("SHIFT: lights");
     expect(positional?.geom.segs).toEqual(expect.any(Array));
     // Missing anchors are never drawn.
     expect([...full.byPage.values()].flat().some((m) => m.anchor.id === "a4")).toBe(false);

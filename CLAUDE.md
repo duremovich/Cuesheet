@@ -1143,10 +1143,15 @@ position is kept outside React.
   with a viewport of padding (`paddingEnd`) so any page, the last included, scrolls to the
   top. The navigator lists headings and pages (a "Pages" toggle below 900 px). At ≤ 600 px: one column, markers become badges in the text that
   expand on tap (Open / Show in list).
-- **Markers** (`Marker.tsx`, `markers.ts`): `Q 14.22` + trigger badge (`triggerBadge`:
-  LINE, LX 117, SQ 12, TC 1:00:00, VISUAL, FOLLOW, MANUAL) + text (`markerText`), fixed
-  height (`MARKER_HEIGHT`), positioned at their block's measured top and pushed down when
-  they'd overlap (`stackMarkers`); markers on one block stack by offset, ties in show
+- **Markers** (`Marker.tsx`, `markers.ts`): `Q 14.22` + a reference badge only
+  (`markerBadge`: LX 117, SQ 12, TC 1:00:00; never the bare type LINE / VISUAL / FOLLOW…,
+  which the tick / underline shows; `triggerBadge` keeps every type, for the SM cue sheet)
+  + the **callout** (`markerText`: the SM call, brackets dropped (`smCallText`), else the
+  trigger text (a Line cue's quoted; LX/SQ/TC's is in the badge), else the description),
+  shown in full: it wraps and the marker grows (min height `MARKER_HEIGHT`); the hover
+  title / aria-label add the description (`markerTitle`). Positioned at their block's
+  measured top and pushed down when they'd overlap (`stackMarkers`, with each marker's
+  **measured** rendered height: `Page` measures the margin's markers too); markers on one block stack by offset, ties in show
   order (`anchorsByBlock(anchors, orderOf)`: the cue's `order_key`), in the reader and
   the print. Color: status by default, or trigger type / none
   (per user and show, localStorage). Open-notes dot, ⚠ for `changed` / `missing`. Line
@@ -1257,10 +1262,12 @@ position is kept outside React.
   item: `canvasMeasure` (the text layer's own canvas measurement). **Marks**
   (`pdfMarks.ts`): Line cues (and cues with no trigger type) underline their quote; the
   others (`isPositionalCue`) get a tick and a dashed GO line just above their line plus a
-  **label on the leader**: `leaderLabel` = `triggerBadge` + `shortText` of trigger value
-  (not for LX/SQ/Timecode, whose badge has it) → description → SM call → (no badge) the
-  quote; `shortText` takes the lead-in before ": " ("PRESHOW: Title card…" → "PRESHOW") or
-  the first clause, ≤ 28 chars. Margin entries stack without overlaps
+  **label on the leader**: `leaderLabel` = `markerBadge` + `markerText` (the same callout
+  as the text view, in full), wrapped in code (`wrapLines` with `labelMeasure`, the label
+  font on a canvas; `entryLines`) so heights are arithmetic: a label of n lines grows its
+  entry **upward** by n−1 × `LABEL_LINE`, its last line on the leader at the trigger's
+  height, the number box beside that line (`MarkLayout.extra`). The print does the same
+  in points (SVG `<tspan>` per line). Margin entries stack without overlaps
   (`layoutMargin`: pushed down, then pulled back up from the page bottom). Number = link
   to the cue list (`actions.onShowInList`), label → the cue panel, ⋯ → Open cue / Show in
   list / Remove from script; entries drag onto a line (`placement.move(id, block,
@@ -1276,7 +1283,8 @@ position is kept outside React.
 - **Tests**: `pdf/pdfMap.test.ts` (a pdf-lib PDF through pdf.js's Node build: every block
   character maps to its glyph, alignment fallback, multi-line / positional / missing /
   stale anchors, selections, lines, `buildMarks`), `pdf/pdfMargin.test.ts` (stacking,
-  labels), `e2e/script-pdf.spec.ts` (import a PDF, place by selecting PDF text, underline
+  labels, `wrapLines`), `e2e/script-callout.spec.ts` (a long SM call in full, no type
+  badge, no overlaps: text view, PDF view and both prints), `e2e/script-pdf.spec.ts` (import a PDF, place by selecting PDF text, underline
   position, number → list → "Show in script", positional label, remove, print);
   `markers`, `placement`, `resolve` (unit), `Reader`, `rangeToSpan`,
   `ResolveScreen` (dom), `e2e/script.spec.ts` against the real engine (TXT fixtures

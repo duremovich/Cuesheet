@@ -9,7 +9,8 @@ import type { CueAnchorRow, ScriptText } from "../script/contract";
 import { markerColor } from "../script/filters";
 import { otherDeptLabels } from "../script/Marker";
 import { ELBOW, inkStyle, MarkShapes, NUMBER_W } from "../script/pdf/PdfPage";
-import { canvasMeasure, glyphMapOf, usePdf } from "../script/pdf/pdfDocument";
+import { canvasMeasure, glyphMapOf, labelMeasure, usePdf } from "../script/pdf/pdfDocument";
+import { wrapLines } from "../script/pdf/pdfMargin";
 import { buildMarks, ENTRY_HEIGHT, layoutMarks, type PageMark } from "../script/pdf/pdfMarks";
 import styles from "./Print.module.css";
 
@@ -17,6 +18,16 @@ import styles from "./Print.module.css";
 const MARGIN = 150;
 /** Page image resolution (× 72 dpi). */
 const PRINT_SCALE = 2.5;
+/** Margin labels: type and line height, points; the room beside the number box. */
+const LABEL = { size: 8, weight: 600, family: "system-ui, sans-serif", line: 9.5 };
+const LABEL_ROOM = MARGIN - NUMBER_W - ELBOW - 10;
+
+/** A positional mark's label, in full, wrapped to the printed margin. */
+function printLines(m: PageMark): string[] {
+  if (!m.positional) return [];
+  const text = [m.label, ...otherDeptLabels(m.cue)].filter(Boolean).join("  ");
+  return wrapLines(text, LABEL_ROOM, labelMeasure(LABEL.weight, LABEL.size, LABEL.family));
+}
 
 /** Lazily loaded by the calling-script print (only for `?layout=pdf`). */
 export default function PdfCallingScript({
@@ -102,7 +113,11 @@ export default function PdfCallingScript({
         const W = p.width;
         const H = p.height;
         const list = marks.get(p.page) ?? [];
-        const layout = layoutMarks(list, 1, H);
+        const lines = new Map(list.map((m) => [m.anchor.id, printLines(m)]));
+        const layout = layoutMarks(list, 1, H, {
+          linesOf: (m) => lines.get(m.anchor.id)?.length || 1,
+          lineHeight: LABEL.line,
+        });
         const lineEnd = W + MARGIN - NUMBER_W - 6;
         return (
           <section
@@ -135,9 +150,8 @@ export default function PdfCallingScript({
                 const l = layout.get(m.anchor.id);
                 if (!l) return null;
                 const color = markerColor(m.cue, "status", fieldOptions);
-                const label = [m.label, ...otherDeptLabels(m.cue)].filter(Boolean).join("  ");
-                const room = MARGIN - NUMBER_W - ELBOW - 10;
-                const max = Math.floor(room / (8 * 0.56));
+                const label = lines.get(m.anchor.id) ?? [];
+                const rowTop = l.top + l.extra;
                 return (
                   <g key={m.anchor.id} data-testid="print-pdf-marker" style={inkStyle(color)}>
                     <MarkShapes
@@ -149,21 +163,29 @@ export default function PdfCallingScript({
                       color={color}
                       hot={false}
                     />
-                    {m.positional && label && (
+                    {label.length > 0 && (
                       <text
-                        x={W + ELBOW + 3}
-                        y={l.lineY - 2.5}
-                        fontSize={8}
-                        fontWeight={600}
+                        fontSize={LABEL.size}
+                        fontWeight={LABEL.weight}
                         fill="var(--mark-ink)"
-                        fontFamily="system-ui, sans-serif"
+                        fontFamily={LABEL.family}
+                        data-testid="print-pdf-label"
                       >
-                        {label.length > max ? `${label.slice(0, max - 1)}…` : label}
+                        {label.map((line, k) => (
+                          <tspan
+                            // biome-ignore lint/suspicious/noArrayIndexKey: the lines of one label, in order
+                            key={k}
+                            x={W + ELBOW + 3}
+                            y={l.lineY - 2.5 - (label.length - 1 - k) * LABEL.line}
+                          >
+                            {line}
+                          </tspan>
+                        ))}
                       </text>
                     )}
                     <rect
                       x={lineEnd}
-                      y={l.top + 1}
+                      y={rowTop + 1}
                       width={NUMBER_W}
                       height={ENTRY_HEIGHT - 2}
                       rx={3}
@@ -173,7 +195,7 @@ export default function PdfCallingScript({
                     />
                     <text
                       x={lineEnd + NUMBER_W / 2}
-                      y={l.top + ENTRY_HEIGHT - 6}
+                      y={rowTop + ENTRY_HEIGHT - 6}
                       textAnchor="middle"
                       fontSize={11}
                       fontWeight={700}

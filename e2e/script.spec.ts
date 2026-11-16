@@ -202,7 +202,9 @@ test("script: import, place and attach cues, grid ↔ script, new version, resol
   // --- Attach 14.20 and 14.25 to their lines ---
   await attachBySelection(page, "Sweet Sue needs a sax and a bass", "14.20");
   await expect(marker(page, ids.c1420)).toContainText("Q 14.20");
-  await expect(marker(page, ids.c1420)).toContainText("LINE");
+  // The callout is the quoted line; no bare "LINE" badge (the underline shows the type).
+  await expect(marker(page, ids.c1420)).toContainText("“Sweet Sue needs a sax and a bass”");
+  await expect(marker(page, ids.c1420)).not.toContainText("LINE");
   await attachBySelection(page, "Try not to wake the drummer", "14.25");
   await expect(marker(page, ids.c1425)).toBeVisible();
 
@@ -216,7 +218,6 @@ test("script: import, place and attach cues, grid ↔ script, new version, resol
   await pop.getByRole("button", { name: "Create cue" }).click();
   await expect(pop).toBeHidden();
   const m1422 = page.locator('[data-testid="script-marker"]', { hasText: "Q 14.22" });
-  await expect(m1422).toContainText("LINE");
   await expect(m1422).toContainText("Josephine, tenor sax");
   await expect(page.locator("[data-quote]", { hasText: "Josephine, tenor sax" })).toBeVisible();
 
@@ -403,7 +404,9 @@ test("script: viewers read without placing; phones get badges", async ({ browser
   const badge = marker(phone, ids.c1420);
   await expect(badge).toHaveText(/Q 14\.20/);
   await badge.click();
-  await expect(phone.getByTestId("marker-card")).toContainText("LINE");
+  await expect(phone.getByTestId("marker-card")).toContainText(
+    "Q 14.20 “Sweet Sue needs a sax and a bass”",
+  );
   const overflow = await phone.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   );

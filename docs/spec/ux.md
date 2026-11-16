@@ -193,19 +193,28 @@ A layout for taking notes fast during tech and previews, from a laptop at the te
   - a thin **leader line** runs from the number to the trigger. A text trigger (a Line
     cue) is **underlined** in the cue's color where its words are, over as many lines as
     the quote runs; a positional trigger (LX, timecode, visual: blocking, a song's start,
-    a rehearsal mark) gets a tick at its line and a dashed line just above it, with a
-    short **label** written along the leader ("VISUAL · PRESHOW", "LX 117 · Steam wash");
+    a rehearsal mark) gets a tick at its line and a dashed line just above it, with its
+    **callout** (below) written along the leader, in full: a long one wraps upward from
+    the leader, its last line on it ("Transition DAY to LATE FRIDAY NIGHT",
+    "LX 117 · Steam wash");
   - zoom (fit width, −/+), the same page navigation and keys as the text view.
   A "PDF pages | Text" toggle switches to the extracted text, reflowed (the only view for
   DOCX/TXT/MD scripts).
 - The text view renders pages of extracted text in a readable column, with a wide right
   margin for cue markers. Page labels follow the printed page numbers. A page/scene
   navigator sits on the left.
-- A **cue marker** in the margin shows the cue number, a trigger badge and the trigger text:
-  - `Q 14.2 · LINE` "Sweet Sue needs a sax and a bass…" — the quoted text is also
-    underlined in the body.
+- A **cue marker** in the margin shows the cue number and its **callout**: what the SM
+  calls the cue on. The SM call when the cue has one, else the trigger text, else the
+  description; always in full (a long callout wraps and the marker grows; the markers
+  below make room). Hovering shows the description too. The trigger type itself is not
+  written out (no LINE / VISUAL / FOLLOW): the indicator shows it, an underline for a
+  line, a tick for a position. A badge appears only for a reference the indicator can't
+  show:
+  - `Q 14.2` "Sweet Sue needs a sax and a bass" — the quoted text is also underlined in
+    the body.
   - `Q 5 · LX 117` placed at a position, drawn with a horizontal tick into the text.
-  - `Q 2 · TC 1:00:00`, `Q 3.4 · VISUAL dance break`, `Q 8.2 · FOLLOW`.
+  - `Q 2 · TC 1:00:00`; `Q 3.4` "Transition DAY to LATE FRIDAY NIGHT" (a visual cue's SM
+    call, with a tick).
 - Markers are colored by a per-view rule (default: by status) and show an open-notes dot.
 - Clicking a marker opens the cue's detail panel; in the grid, a "Show in script" action
   scrolls the script to the marker, and the script view has a "Show in list" action.
@@ -257,8 +266,8 @@ Cues with `changed`/`missing` anchors get a warning icon in the grid until resol
   - **Notes by person** and **Notes by cue** for a session: what's open and who owns it.
   - **Content list** with thumbnail, version, status, cues.
   - **Surface sheet** with image, dimensions in both units, pixel size, PPI.
-  - **Calling script**: the script with markers in the margin, optionally only the cues
-    matching a filter; for a PDF script, the original pages with the cue margin (as in
+  - **Calling script**: the script with markers in the margin (each with its full
+    callout, as on screen), optionally only the cues matching a filter; for a PDF script, the original pages with the cue margin (as in
     the PDF view) or the extracted text.
 - Output is a PDF download or the browser print dialog.
 

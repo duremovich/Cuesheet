@@ -14,7 +14,7 @@ export interface PageMark {
   /** LX / timecode / visual…: a tick at the line and a label on the leader, no underline. */
   positional: boolean;
   geom: AnchorGeom;
-  /** The positional cue's leader label ("" for quoted text). */
+  /** The positional cue's leader label, in full ("" for quoted text). */
   label: string;
   /** Other departments' numbers (the LX/SQ toggle). */
   others: string[];
@@ -52,7 +52,7 @@ export function buildMarks(opts: {
       cue,
       positional,
       geom,
-      label: positional ? leaderLabel(cue, a.quote) : "",
+      label: positional ? leaderLabel(cue) : "",
       others: opts.showOthers ? otherDeptLabels(cue) : [],
       warn: NEEDS_LOOK.includes(a.state) || geom.stale,
     };
@@ -71,20 +71,24 @@ export function buildMarks(opts: {
   return { byPage, unlocated };
 }
 
-/** Margin entry metrics, px. */
+/** Margin entry metrics, px: one row (the number box, the label's last line on the leader). */
 export const ENTRY_HEIGHT = 20;
 /** The leader's height inside an entry (the label sits on it). */
 export const ENTRY_LINE = 15;
 export const ENTRY_GAP = 2;
+/** Line height of a wrapped label in the margin, px (`.entryLabel`'s line-height). */
+export const LABEL_LINE = 14;
 
 export interface MarkLayout {
   key: string;
-  /** Entry top in the margin, px from the page top. */
+  /** Entry top in the margin, px from the page top (the label's first line). */
   top: number;
+  /** Height above the entry's row taken by a wrapped label's earlier lines, px. */
+  extra: number;
   /** Where the leader leaves the page: x, y in px (the underline's end, or the GO line). */
   fromX: number;
   fromY: number;
-  /** The leader's height in the margin (`top + ENTRY_LINE`). */
+  /** The leader's height in the margin (`top + extra + ENTRY_LINE`). */
   lineY: number;
 }
 
@@ -97,31 +101,40 @@ export function leaderStart(m: PageMark): { x: number; y: number } {
   return { x: Math.max(0, s.x - 3), y: Math.max(1, s.y - s.size * 0.95) };
 }
 
-/** Entries beside a page at `scale` (px per point), stacked without overlaps. */
+/**
+ * Entries beside a page at `scale` (px per point), stacked without overlaps. A label
+ * wrapped to `linesOf(m)` lines grows its entry upward by `lineHeight` per extra line, so
+ * its last line still sits on the leader at the trigger's height and the text runs above.
+ */
 export function layoutMarks(
   marks: readonly PageMark[],
   scale: number,
   pageHeight: number,
+  opts: { linesOf?: (m: PageMark) => number; lineHeight?: number } = {},
 ): Map<string, MarkLayout> {
   const starts = marks.map((m) => leaderStart(m));
+  const lh = opts.lineHeight ?? LABEL_LINE;
+  const extras = marks.map((m) => Math.max(0, (opts.linesOf?.(m) ?? 1) - 1) * lh);
   const tops = layoutMargin(
     marks.map((m, i) => ({
       key: m.anchor.id,
-      want: (starts[i]?.y ?? 0) * scale - ENTRY_LINE,
-      height: ENTRY_HEIGHT,
+      want: (starts[i]?.y ?? 0) * scale - ENTRY_LINE - (extras[i] ?? 0),
+      height: ENTRY_HEIGHT + (extras[i] ?? 0),
     })),
     { gap: ENTRY_GAP, min: 0, max: pageHeight * scale },
   );
   const out = new Map<string, MarkLayout>();
   marks.forEach((m, i) => {
     const top = tops.get(m.anchor.id) ?? 0;
+    const extra = extras[i] ?? 0;
     const s = starts[i] ?? { x: 0, y: 0 };
     out.set(m.anchor.id, {
       key: m.anchor.id,
       top,
+      extra,
       fromX: s.x * scale,
       fromY: s.y * scale,
-      lineY: top + ENTRY_LINE,
+      lineY: top + extra + ENTRY_LINE,
     });
   });
   return out;

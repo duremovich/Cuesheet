@@ -1,5 +1,5 @@
-// A cue marker in the script margin: "Q 14.22 · LINE" + the trigger text, colored by the
-// view's rule, with an open-notes dot and a warning icon for changed/missing anchors.
+// A cue marker in the script margin: "Q 14.22" (+ "LX 117" / "TC …" references) and the
+// callout (the SM call, else the trigger text) in full, wrapping, colored by the view's rule, with an open-notes dot and a warning icon for changed/missing anchors.
 // Click opens the cue's panel; ⋯ has "Show in list"; editors drag it to another block.
 import type { CueRow } from "../../../shared/tables";
 import { optionColor } from "../../components/grid/Chip";
@@ -9,7 +9,9 @@ import {
   cueLabel,
   isPositionalCue,
   MARKER_HEIGHT,
+  markerBadge,
   markerText,
+  markerTitle,
   NEEDS_LOOK,
   triggerBadge,
 } from "./markers";
@@ -61,8 +63,9 @@ export function Marker({
   actions: MarkerActions;
 }) {
   const label = cueLabel(cue);
-  const badge = triggerBadge(cue);
+  const badge = markerBadge(cue);
   const text = markerText(cue);
+  const title = markerTitle(cue);
   const warn = NEEDS_LOOK.includes(anchor.state);
   const items: MenuEntry[] = [
     { label: "Open cue", onSelect: () => actions.onOpen(cue.id) },
@@ -84,7 +87,7 @@ export function Marker({
       data-positional={isPositionalCue(cue) || undefined}
       data-flash={flash || undefined}
       data-active={active || undefined}
-      style={{ top, height: MARKER_HEIGHT, ...markerStyle(color) }}
+      style={{ top, minHeight: MARKER_HEIGHT, ...markerStyle(color) }}
       draggable={draggable}
       onDragStart={(e) => {
         e.dataTransfer.setData(ANCHOR_DRAG_TYPE, anchor.id);
@@ -97,7 +100,8 @@ export function Marker({
         type="button"
         className={styles.markerMain}
         onClick={() => actions.onOpen(cue.id)}
-        aria-label={`${label}${badge ? ` · ${badge}` : ""}${text ? `: ${text}` : ""}${warn ? ` (${anchor.state})` : ""}`}
+        title={title || undefined}
+        aria-label={`${label}${badge ? ` · ${badge}` : ""}${title ? `: ${title.replace("\n", ". ")}` : ""}${warn ? ` (${anchor.state})` : ""}`}
       >
         <span className={styles.markerHead}>
           <strong>{label}</strong>
@@ -119,7 +123,11 @@ export function Marker({
             </span>
           )}
         </span>
-        <span className={styles.markerText}>{text}</span>
+        {text && (
+          <span className={styles.markerText} data-testid="marker-text">
+            {text}
+          </span>
+        )}
       </button>
       <div className={styles.markerMenu}>
         <MenuButton label={`More actions for ${label}`} items={items}>

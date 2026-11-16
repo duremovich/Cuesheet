@@ -1,7 +1,7 @@
 // The PDF page view's cue margin (pure): where each cue number sits beside the page, and
-// what a positional cue's leader line says.
+// what a positional cue's leader line says (in full, wrapped to the margin).
 import type { CueRow } from "../../../../shared/tables";
-import { triggerBadge } from "../markers";
+import { markerBadge, markerText } from "../markers";
 
 export interface MarginItem {
   key: string;
@@ -53,34 +53,42 @@ export function layoutMargin(
 }
 
 /**
- * A short form of a cue's text for the leader line: the lead-in before a colon when
- * there is one ("PRESHOW: Title card…" → "PRESHOW"), else the first clause, cut at a word
- * boundary to `max` characters with an ellipsis.
+ * What a positional cue's leader line says, in full: a reference badge when the cue has
+ * one ("LX 117", "TC 1:00:00"; the bare type is the tick's job) and the callout
+ * (`markerText`: the SM call, else the trigger text, else the description).
+ * "LX 117 · Steam wash", "Transition DAY to LATE FRIDAY NIGHT".
  */
-export function shortText(s: string | null | undefined, max = 28): string {
-  const t = (s ?? "").replace(/\s+/g, " ").trim();
-  if (!t) return "";
-  const colon = t.indexOf(": ");
-  if (colon > 0 && colon <= max) return t.slice(0, colon);
-  const clause = /^(.+?)[.;!?](?:\s|$)/.exec(t)?.[1] ?? t;
-  if (clause.length <= max) return clause;
-  const cut = clause.lastIndexOf(" ", max - 1);
-  return `${clause.slice(0, cut > max / 2 ? cut : max - 1).trimEnd()}…`;
+export function leaderLabel(cue: CueRow): string {
+  return [markerBadge(cue), markerText(cue)].filter(Boolean).join(" · ");
 }
 
 /**
- * What a positional cue's leader line says: the trigger badge ("VISUAL", "LX 117",
- * "TC 1:00:00") and a short form of what triggers it: the trigger value (a Visual cue's
- * "what we see"), else the description, else the SM call. "VISUAL · PRESHOW". Falls back
- * to the anchor's quote (the words at the line) when the cue says nothing.
+ * Greedy word wrap: `text` in lines no wider than `width` by `measure`; a word wider than
+ * a line on its own is broken by characters. Whitespace runs collapse; empty text → [].
  */
-export function leaderLabel(cue: CueRow, quote = ""): string {
-  const badge = triggerBadge(cue);
-  const tv = cue.trigger_type === "LX" || cue.trigger_type === "SQ" ? "" : cue.trigger_value;
-  const what =
-    shortText(cue.trigger_type === "Timecode" ? "" : tv) ||
-    shortText(cue.description) ||
-    shortText(cue.sm_call?.replace(/^\[|\]$/g, "")) ||
-    (badge ? "" : shortText(quote));
-  return [badge, what].filter(Boolean).join(" · ");
+export function wrapLines(text: string, width: number, measure: (s: string) => number): string[] {
+  const words = text.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+  const lines: string[] = [];
+  let line = "";
+  const breakWord = (w: string) => {
+    let rest = w;
+    while (rest && measure(rest) > width) {
+      let n = 1;
+      while (n < rest.length && measure(rest.slice(0, n + 1)) <= width) n++;
+      lines.push(rest.slice(0, n));
+      rest = rest.slice(n);
+    }
+    return rest;
+  };
+  for (const w of words) {
+    const next = line ? `${line} ${w}` : w;
+    if (measure(next) <= width) {
+      line = next;
+      continue;
+    }
+    if (line) lines.push(line);
+    line = breakWord(w);
+  }
+  if (line) lines.push(line);
+  return lines;
 }

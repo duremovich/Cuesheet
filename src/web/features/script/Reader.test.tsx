@@ -69,15 +69,35 @@ function selectIn(container: HTMLElement, block: number, start: number, end: num
 }
 
 describe("Reader markers", () => {
-  it("stacks markers that share a block, one below the other", () => {
+  it("stacks markers that share a block, one below the other, by their measured height", () => {
+    // jsdom has no layout: blocks measure at the top (0); a marker's height is what it
+    // renders at (a long callout wraps and grows it), here c1's is 90 px, the others' 44.
+    const base = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+      configurable: true,
+      get(this: HTMLElement) {
+        if (this.dataset.testid === "script-marker") return this.dataset.cue === "c1" ? 90 : 44;
+        return base?.get?.call(this) ?? 0;
+      },
+    });
+    try {
+      const { container } = setup();
+      const m = markers(container);
+      expect(m.map((x) => x.dataset.cue)).toEqual(["c1", "c2", "c3"]);
+      const tops = m.map((x) => Number.parseFloat(x.style.top));
+      expect(tops).toEqual([0, 90 + MARKER_GAP, 90 + MARKER_HEIGHT + 2 * MARKER_GAP]);
+    } finally {
+      if (base) Object.defineProperty(HTMLElement.prototype, "offsetHeight", base);
+    }
+  });
+
+  it("shows the cue number, a reference badge and the callout", () => {
     const { container } = setup();
     const m = markers(container);
-    expect(m.map((x) => x.dataset.cue)).toEqual(["c1", "c2", "c3"]);
-    const tops = m.map((x) => Number.parseFloat(x.style.top));
-    // jsdom has no layout: every block measures at 0, so the stack starts at 0.
-    expect(tops).toEqual([0, MARKER_HEIGHT + MARKER_GAP, 2 * (MARKER_HEIGHT + MARKER_GAP)]);
     expect(m[0]?.textContent).toContain("Q 14.20");
-    expect(m[0]?.textContent).toContain("LINE");
+    // The bare trigger type is the underline's / tick's job; a reference (LX 117) stays.
+    expect(m[0]?.textContent).not.toContain("LINE");
+    expect(m[0]?.textContent).toContain("“Sweet Sue”");
     expect(m[1]?.textContent).toContain("LX 117");
     expect(m[1]?.dataset.positional).toBe("true");
     expect(m[0]?.querySelector('[data-testid="marker-notes"]')).not.toBeNull();

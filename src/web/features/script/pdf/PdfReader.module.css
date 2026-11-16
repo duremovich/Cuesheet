@@ -268,11 +268,15 @@
   line-height: 14px;
   font-weight: 600;
   letter-spacing: 0.02em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   text-align: left;
   cursor: pointer;
+}
+
+/* One line of a label, wrapped in code (pdfMargin `wrapLines`) so the entry's height is
+   known for the stacking: the last line sits on the leader. */
+.labelLine {
+  display: block;
+  white-space: nowrap;
 }
 
 .entryLabel:hover {

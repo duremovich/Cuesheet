@@ -366,10 +366,10 @@
   white-space: nowrap;
 }
 
+/* The callout in full: it wraps and the marker grows (the stacking measures it). */
 .markerText {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
   color: var(--color-text-muted);
 }
 

@@ -37,6 +37,8 @@ import {
   isPlaced,
   isPositionalCue,
   MARKER_HEIGHT,
+  markerBadge,
+  markerText,
   type PageBlocks,
   pageIndexOfBlock,
   pagesOf,
@@ -44,7 +46,6 @@ import {
   quoteRanges,
   type StackItem,
   stackMarkers,
-  triggerBadge,
 } from "./markers";
 import { PlacePopover, type PlaceRequest } from "./PlacePopover";
 import type { NewCueInput } from "./placement";
@@ -565,6 +566,12 @@ interface PageProps {
 
 type Measured = ReadonlyMap<number, { top: number; height: number }>;
 
+function sameHeights(a: ReadonlyMap<string, number>, b: ReadonlyMap<string, number>): boolean {
+  if (a.size !== b.size) return false;
+  for (const [k, v] of a) if (b.get(k) !== v) return false;
+  return true;
+}
+
 function sameMeasure(a: Measured, b: Measured): boolean {
   if (a.size !== b.size) return false;
   for (const [k, v] of a) {
@@ -590,7 +597,10 @@ export function blockAtY(
 
 const Page = memo(function Page(p: PageProps) {
   const textRef = useRef<HTMLDivElement>(null);
+  const marginRef = useRef<HTMLDivElement>(null);
   const [measured, setMeasured] = useState<Measured>(new Map());
+  // Each margin marker's rendered height (a long callout wraps and grows it), by anchor id.
+  const [heights, setHeights] = useState<ReadonlyMap<string, number>>(new Map());
   const measure = useCallback(() => {
     const root = textRef.current;
     if (!root) return;
@@ -599,14 +609,22 @@ const Page = memo(function Page(p: PageProps) {
       next.set(Number(el.dataset.block), { top: el.offsetTop || 0, height: el.offsetHeight || 0 });
     }
     setMeasured((prev) => (sameMeasure(prev, next) ? prev : next));
+    const hs = new Map<string, number>();
+    for (const el of marginRef.current?.querySelectorAll<HTMLElement>(
+      "[data-testid=script-marker][data-anchor]",
+    ) ?? []) {
+      if (el.offsetHeight > 0) hs.set(el.dataset.anchor ?? "", el.offsetHeight);
+    }
+    setHeights((prev) => (sameHeights(prev, hs) ? prev : hs));
   }, []);
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-measure when the content changes
-  useLayoutEffect(measure, [measure, p.page, p.byBlock, p.narrow]);
+  useLayoutEffect(measure, [measure, p.page, p.byBlock, p.narrow, p.cues, p.showOthers]);
   useEffect(() => {
     const root = textRef.current;
     if (!root || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => measure());
     ro.observe(root);
+    if (marginRef.current) ro.observe(marginRef.current);
     return () => ro.disconnect();
   }, [measure]);
 
@@ -615,7 +633,7 @@ const Page = memo(function Page(p: PageProps) {
   const items: StackItem[] = [];
   for (const a of blockAnchors) {
     const top = measured.get(a.block)?.top ?? 0;
-    items.push({ key: a.id, top, height: MARKER_HEIGHT });
+    items.push({ key: a.id, top, height: Math.max(MARKER_HEIGHT, heights.get(a.id) ?? 0) });
     const cue = p.cues.get(a.cue_id);
     if (p.showOthers && cue) {
       otherDeptLabels(cue).forEach((label, k) => {
@@ -716,9 +734,10 @@ const Page = memo(function Page(p: PageProps) {
                   return (
                     <span key={`x${a.id}`} className={styles.badgeCard} data-testid="marker-card">
                       <strong>
-                        {cueLabel(cue)} · {triggerBadge(cue)}
+                        {cueLabel(cue)}
+                        {markerBadge(cue) ? ` · ${markerBadge(cue)}` : ""}
                       </strong>{" "}
-                      {cue.trigger_type === "Line" ? cue.trigger_value : cue.description}
+                      {markerText(cue)}
                       <span className={styles.badgeActions}>
                         <button type="button" onClick={() => p.actions.onOpen(cue.id)}>
                           Open
@@ -738,6 +757,7 @@ const Page = memo(function Page(p: PageProps) {
         // biome-ignore lint/a11y/useKeyWithClickEvents: placing by keyboard is via text selection
         // biome-ignore lint/a11y/noStaticElementInteractions: the margin is a click target
         <div
+          ref={marginRef}
           className={styles.margin}
           data-testid="script-margin"
           data-can-place={p.canPlace || undefined}

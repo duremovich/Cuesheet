@@ -9,10 +9,11 @@ import { optionColor } from "../../../components/grid/Chip";
 import { MenuButton, type MenuEntry } from "../../shared/MenuButton";
 import { type ColorBy, markerColor } from "../filters";
 import { ANCHOR_DRAG_TYPE, type MarkerActions } from "../Marker";
-import { cueLabel, triggerBadge } from "../markers";
+import { cueLabel, markerBadge, markerTitle } from "../markers";
 import styles from "./PdfReader.module.css";
-import type { LoadedPdf } from "./pdfDocument";
+import { type LoadedPdf, labelMeasure } from "./pdfDocument";
 import { lineAt, type PdfLine, type Seg } from "./pdfMap";
+import { wrapLines } from "./pdfMargin";
 import { ENTRY_HEIGHT, layoutMarks, type MarkLayout, type PageMark } from "./pdfMarks";
 import type { PdfPageData } from "./pdfPages";
 
@@ -26,6 +27,26 @@ export interface GlyphPoint {
 export const NUMBER_W = 50;
 /** The leader's bend from the page edge into the margin, px. */
 export const ELBOW = 14;
+/** The margin label's type (`.entryLabel`): weight, size and letter-spacing, px. */
+const LABEL_FONT = { weight: 600, size: 11, spacing: 0.22 };
+/** Room kept free at the end of a label line (canvas vs. layout rounding), px. */
+const LABEL_SLACK = 4;
+
+/** A margin entry's label text (the leader label and other departments' numbers). */
+export function entryText(m: PageMark): string {
+  return [m.label, ...m.others].filter(Boolean).join("  ");
+}
+
+/** A margin entry's label wrapped to `width` px in the screen label font. */
+export function entryLines(m: PageMark, width: number): string[] {
+  const text = entryText(m);
+  if (!text) return [];
+  const family =
+    typeof document === "undefined" ? "sans-serif" : getComputedStyle(document.body).fontFamily;
+  const measure = labelMeasure(LABEL_FONT.weight, LABEL_FONT.size, family, LABEL_FONT.spacing);
+  return wrapLines(text, Math.max(20, width - LABEL_SLACK), measure);
+}
+
 /** Canvas backing store limit (px per side). */
 const MAX_CANVAS = 8192;
 
@@ -172,9 +193,19 @@ export const PdfPage = memo(function PdfPage(p: PdfPageProps) {
     };
   }, [proxy, p.pdf, p.data, p.scale]);
 
+  // Labels in full, wrapped to the margin; an entry grows upward by its extra lines.
+  const labelWidth = Math.max(0, M - NUMBER_W - ELBOW - 12);
+  const lines = useMemo(() => {
+    const out = new Map<string, string[]>();
+    if (!p.compact) for (const m of p.marks) out.set(m.anchor.id, entryLines(m, labelWidth));
+    return out;
+  }, [p.marks, p.compact, labelWidth]);
   const layout = useMemo(
-    () => layoutMarks(p.marks, p.scale, p.data.height),
-    [p.marks, p.scale, p.data.height],
+    () =>
+      layoutMarks(p.marks, p.scale, p.data.height, {
+        linesOf: (m) => lines.get(m.anchor.id)?.length ?? 1,
+      }),
+    [p.marks, p.scale, p.data.height, lines],
   );
 
   // Placing: a guide at the line under the pointer in the margin.
@@ -328,7 +359,8 @@ export const PdfPage = memo(function PdfPage(p: PdfPageProps) {
             <MarginEntry
               key={m.anchor.id}
               mark={m}
-              top={l.top}
+              layout={l}
+              lines={lines.get(m.anchor.id) ?? []}
               compact={p.compact}
               color={markerColor(m.cue, p.colorBy, p.fieldOptions)}
               openNotes={p.openNotes.get(m.cue.id) ?? 0}
@@ -337,7 +369,7 @@ export const PdfPage = memo(function PdfPage(p: PdfPageProps) {
               draggable={p.canPlace}
               actions={p.actions}
               href={p.listHref(m.cue.id)}
-              labelWidth={Math.max(0, M - NUMBER_W - ELBOW - 12)}
+              labelWidth={labelWidth}
             />
           );
         })}
@@ -435,7 +467,8 @@ const STATE_LABEL: Record<string, string> = {
 
 function MarginEntry({
   mark,
-  top,
+  layout,
+  lines,
   compact,
   color,
   openNotes,
@@ -447,7 +480,9 @@ function MarginEntry({
   labelWidth,
 }: {
   mark: PageMark;
-  top: number;
+  layout: MarkLayout;
+  /** The label's lines (wrapped to `labelWidth`); none when compact. */
+  lines: readonly string[];
   compact: boolean;
   color: string | undefined;
   openNotes: number;
@@ -460,7 +495,7 @@ function MarginEntry({
 }) {
   const { cue, anchor } = mark;
   const label = cueLabel(cue);
-  const badge = triggerBadge(cue);
+  const badge = markerBadge(cue);
   const items: MenuEntry[] = [
     { label: "Open cue", onSelect: () => actions.onOpen(cue.id) },
     { label: "Show in list", onSelect: () => actions.onShowInList(cue.id) },
@@ -469,13 +504,12 @@ function MarginEntry({
     const remove = actions.onRemove;
     items.push({ label: "Remove from script", onSelect: () => remove(anchor.id) });
   }
-  const text = [mark.label, ...mark.others].filter(Boolean).join("  ");
   const warnText = anchor.state === "changed" ? STATE_LABEL.changed : STATE_LABEL.stale;
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: hover only highlights the trigger
     <div
       className={styles.entry}
-      style={{ top, height: ENTRY_HEIGHT, ...inkStyle(color) }}
+      style={{ top: layout.top, height: ENTRY_HEIGHT + layout.extra, ...inkStyle(color) }}
       data-testid="pdf-marker"
       data-cue={cue.id}
       data-anchor={anchor.id}
@@ -497,20 +531,28 @@ function MarginEntry({
           ⋯
         </MenuButton>
       </div>
-      {!compact && text && (
+      {!compact && lines.length > 0 && (
         <button
           type="button"
           className={styles.entryLabel}
           style={{ maxWidth: labelWidth }}
           data-testid="pdf-marker-label"
-          title={[badge, cue.trigger_value, cue.description].filter(Boolean).join(" · ")}
+          title={[badge, markerTitle(cue)].filter(Boolean).join(" · ")}
           onClick={() => actions.onOpen(cue.id)}
         >
-          {text}
+          {lines.map((line, k) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: the lines of one label, in order
+            <span key={k} className={styles.labelLine}>
+              {/* A space between lines keeps the label's text (copy, find, tests) whole. */}
+              {k > 0 && " "}
+              {line}
+            </span>
+          ))}
         </button>
       )}
       <a
         className={styles.number}
+        style={layout.extra ? { marginTop: layout.extra } : undefined}
         href={href}
         data-testid="pdf-cue-number"
         aria-label={`${label}${badge ? ` · ${badge}` : ""}: show in the cue list${mark.warn ? " (check the placement)" : ""}`}

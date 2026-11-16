@@ -97,7 +97,7 @@ const widths = new Map<string, number>();
  * Text widths the way pdf.js's text layer measures them (a canvas in the item's CSS font
  * family), so underlines meet the selectable text. Proportional without a canvas (jsdom).
  */
-export const canvasMeasure: Measure = (text, font) => {
+function context(): CanvasRenderingContext2D | null {
   if (ctx === undefined) {
     try {
       ctx = document.createElement("canvas").getContext("2d");
@@ -105,14 +105,46 @@ export const canvasMeasure: Measure = (text, font) => {
       ctx = null;
     }
   }
-  if (!ctx) return proportional(text, font);
+  return ctx;
+}
+
+export const canvasMeasure: Measure = (text, font) => {
+  const c = context();
+  if (!c) return proportional(text, font);
   const key = `${font}\u0000${text}`;
   let w = widths.get(key);
   if (w === undefined) {
-    ctx.font = `100px ${font}`;
-    w = ctx.measureText(text).width;
+    c.font = `100px ${font}`;
+    w = c.measureText(text).width;
     if (widths.size > 20_000) widths.clear();
     widths.set(key, w);
   }
   return w;
 };
+
+/**
+ * A width measure for margin labels: `text` in `weight` `size`px `family`, plus
+ * `letterSpacing` px per character. 0.6 em per character without a canvas (jsdom).
+ */
+export function labelMeasure(
+  weight: number,
+  size: number,
+  family: string,
+  letterSpacing = 0,
+): (text: string) => number {
+  const prefix = `${weight}\u0000${family}\u0000`;
+  return (text) => {
+    const spacing = letterSpacing * text.length;
+    const c = context();
+    if (!c) return text.length * size * 0.6 + spacing;
+    const key = prefix + text;
+    let w = widths.get(key);
+    if (w === undefined) {
+      c.font = `${weight} 100px ${family}`;
+      w = c.measureText(text).width;
+      if (widths.size > 20_000) widths.clear();
+      widths.set(key, w);
+    }
+    return (w * size) / 100 + spacing;
+  };
+}

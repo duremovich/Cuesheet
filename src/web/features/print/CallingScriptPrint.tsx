@@ -19,10 +19,10 @@ import {
   cueLabel,
   isPlaced,
   isPositionalCue,
+  markerBadge,
   markerText,
   pagesOf,
   quoteRanges,
-  triggerBadge,
 } from "../script/markers";
 import { BlockText } from "../script/ScriptBlocks";
 import { useScriptVersions } from "../script/source";
@@ -247,7 +247,7 @@ export function CallingScriptPrint() {
                           {list.map((a) => {
                             const cue = state.tables.cues.get(a.cue_id);
                             if (!cue) return null;
-                            const badge = triggerBadge(cue);
+                            const badge = markerBadge(cue);
                             return (
                               <div
                                 key={a.id}

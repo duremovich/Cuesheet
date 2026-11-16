@@ -212,7 +212,9 @@ test("script PDF view: import, place by selection, number → list → back, pos
   await expect(pop).toBeHidden();
   const m520 = page.locator('[data-testid="pdf-marker"]', { hasText: "5.20" });
   await expect(m520).toHaveAttribute("data-positional", "true");
-  await expect(m520.getByTestId("pdf-marker-label")).toHaveText("VISUAL · TRAIN OUT");
+  await expect(m520.getByTestId("pdf-marker-label")).toHaveText(
+    "TRAIN OUT: the carriages slide off",
+  );
   const a520 = (await m520.getAttribute("data-anchor")) as string;
   await expect(page.locator(`g[data-anchor="${a520}"] [data-testid="pdf-tick"]`)).toHaveCount(1);
   await expect(page.locator(`[data-testid="pdf-underline"][data-anchor="${a520}"]`)).toHaveCount(0);

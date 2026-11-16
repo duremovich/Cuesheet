@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { cueRow } from "../testData";
-import { layoutMargin, leaderLabel, type MarginItem, shortText } from "./pdfMargin";
+import { layoutMargin, leaderLabel, type MarginItem, wrapLines } from "./pdfMargin";
 
 /** No two entries overlap (with the gap), in wanted order. */
 function expectNoOverlap(items: MarginItem[], tops: Map<string, number>, gap: number) {
@@ -68,32 +68,47 @@ describe("layoutMargin", () => {
 });
 
 describe("leader labels", () => {
-  it("shortens a description to its lead-in or first clause", () => {
-    expect(shortText("PRESHOW: Title card on the scroll at rest")).toBe("PRESHOW");
-    expect(shortText("800-010 IN: Wind kicks up")).toBe("800-010 IN");
-    expect(shortText("Lights fade. Then a long beat.")).toBe("Lights fade");
-    expect(shortText("The soldier walks slowly to the river bank and sits")).toBe(
-      "The soldier walks slowly to…",
-    );
-    expect(shortText("  ")).toBe("");
-  });
-
-  it("is the trigger badge plus what triggers the cue", () => {
-    const l = (p: Parameters<typeof cueRow>[0], quote?: string) => leaderLabel(cueRow(p), quote);
-    expect(l({ id: "a", trigger_type: "Visual", description: "PRESHOW: Title card" })).toBe(
-      "VISUAL · PRESHOW",
-    );
+  it("is a reference badge (LX / SQ / TC, never the bare type) and the full callout", () => {
+    const l = (p: Parameters<typeof cueRow>[0]) => leaderLabel(cueRow(p));
+    expect(
+      l({ id: "a", trigger_type: "Visual", description: "PRESHOW: Title card on the scroll" }),
+    ).toBe("PRESHOW: Title card on the scroll");
     expect(
       l({ id: "a", trigger_type: "Visual", trigger_value: "He sits", description: "X: y" }),
-    ).toBe("VISUAL · He sits");
+    ).toBe("He sits");
     expect(l({ id: "a", trigger_type: "LX", lx_cue: "117", description: "Steam wash" })).toBe(
       "LX 117 · Steam wash",
     );
     expect(l({ id: "a", trigger_type: "Timecode", timecode: "1:00:00" })).toBe("TC 1:00:00");
-    expect(l({ id: "a", trigger_type: "Visual", sm_call: "[CUE 1 - THE MARCH]" })).toBe(
-      "VISUAL · CUE 1 - THE MARCH",
-    );
-    // Nothing on the cue: the words at the line.
-    expect(l({ id: "a" }, "The curtain rises")).toBe("The curtain rises");
+    expect(
+      l({
+        id: "a",
+        trigger_type: "Visual",
+        sm_call: "[Transition DAY to LATE FRIDAY NIGHT]",
+        description: "Sky shifts",
+      }),
+    ).toBe("Transition DAY to LATE FRIDAY NIGHT");
+    expect(l({ id: "a", trigger_type: "Visual" })).toBe("");
+  });
+});
+
+describe("wrapLines", () => {
+  const mono = (s: string) => s.length; // 1 unit per character
+
+  it("wraps at word boundaries without losing a word", () => {
+    const text = "Transition DAY to LATE FRIDAY NIGHT";
+    const lines = wrapLines(text, 12, mono);
+    expect(lines).toEqual(["Transition", "DAY to LATE", "FRIDAY NIGHT"]);
+    for (const line of lines) expect(line.length).toBeLessThanOrEqual(12);
+    expect(lines.join(" ")).toBe(text);
+  });
+
+  it("keeps a short text on one line, collapses whitespace, and is empty for nothing", () => {
+    expect(wrapLines("  Top   of show ", 40, mono)).toEqual(["Top of show"]);
+    expect(wrapLines("   ", 40, mono)).toEqual([]);
+  });
+
+  it("breaks a word longer than a line", () => {
+    expect(wrapLines("a ABCDEFGHIJ b", 4, mono)).toEqual(["a", "ABCD", "EFGH", "IJ b"]);
   });
 });
