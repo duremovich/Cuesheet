@@ -32,9 +32,9 @@ export interface AirtableImportHandle {
 
 export const IMPORT_LABEL = "Import Airtable CSVs…";
 
-/** Types offered for imported columns (files, links and formulas can't come from a CSV). */
+/** Types offered for imported columns (files, links, formulas and lookups can't come from a CSV). */
 const IMPORTABLE_TYPES = CUSTOM_FIELD_TYPES.filter(
-  (t) => t !== "link" && t !== "formula" && t !== "attachment",
+  (t) => t !== "link" && t !== "formula" && t !== "attachment" && t !== "lookup",
 );
 
 interface ColumnChoice {
@@ -345,7 +345,9 @@ function ImportPreview({
                       >
                         {(p.kind
                           ? IMPORTABLE_TYPES
-                          : CUSTOM_FIELD_TYPES.filter((t) => t !== "link" && t !== "formula")
+                          : CUSTOM_FIELD_TYPES.filter(
+                              (t) => t !== "link" && t !== "formula" && t !== "lookup",
+                            )
                         ).map((t) => (
                           <option key={t} value={t}>
                             {CUSTOM_FIELD_TYPE_LABELS[t]}

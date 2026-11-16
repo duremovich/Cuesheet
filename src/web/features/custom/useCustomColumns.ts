@@ -1,7 +1,8 @@
 // A tab's custom field columns (R9): the table's field definitions from the store turned
 // into grid columns after the tab's own, plus the edit → ops for them. Columns rebuild when
-// the definitions change, and, when a field shows linked records or computes a formula,
-// when the show's data changes (labels and formula inputs live in other rows).
+// the definitions change, and, when a field shows linked records, computes a formula or
+// looks up a field of linked records, when the show's data changes (labels, formula inputs
+// and looked-up values live in other rows).
 import { useCallback, useMemo, useRef } from "react";
 import type { FormulaRecord } from "../../../shared/formula";
 import type { Op } from "../../../shared/ops";
@@ -37,11 +38,15 @@ export function useCustomColumns<V>(setup: CustomColumnsSetup<V>): CustomColumns
   const { showId } = useWorkspace();
   const { fieldTable, table, editable, baseColumns } = setup;
   const fields = useShowStore((s) => fieldsFor(s.tables.custom_fields, fieldTable));
-  const needsData = fields.some((f) => f.type === "link" || f.type === "formula");
-  const hasFormula = fields.some((f) => f.type === "formula");
+  const hasLookup = fields.some((f) => f.type === "lookup");
+  const needsData = hasLookup || fields.some((f) => f.type === "link" || f.type === "formula");
+  const hasFormula = hasLookup || fields.some((f) => f.type === "formula");
   const hasFiles = fields.some((f) => f.type === "attachment");
-  // Rebuild triggers (values unused: the columns read the store at call time).
+  // Rebuild triggers (values unused: the columns read the store at call time). Lookups also
+  // read links (joins) and select colors of other tables.
   const dataTick = useShowStore((s) => (needsData ? s.tables : null));
+  const joinsTick = useShowStore((s) => (hasLookup ? s.joins : null));
+  const optionsTick = useShowStore((s) => (hasLookup ? s.fieldOptions : null));
   const filesTick = useShowStore((s) => (hasFiles ? s.tables.attachments : null));
   const rowOfRef = useRef(setup.rowOf);
   rowOfRef.current = setup.rowOf;
@@ -50,7 +55,7 @@ export function useCustomColumns<V>(setup: CustomColumnsSetup<V>): CustomColumns
   const hasFallback = !!setup.fallbackRecord;
   const sampleRows = hasFormula ? setup.rows : null;
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: dataTick / filesTick are rebuild triggers
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the ticks are rebuild triggers
   const custom = useMemo(
     () =>
       fields.length === 0
@@ -77,6 +82,8 @@ export function useCustomColumns<V>(setup: CustomColumnsSetup<V>): CustomColumns
       hasFallback,
       sampleRows,
       dataTick,
+      joinsTick,
+      optionsTick,
       filesTick,
     ],
   );

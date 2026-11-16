@@ -561,7 +561,11 @@ export class Batch {
 
   /** The config rebuilt from known keys, or a 400 naming what's wrong (`sanitizeViewConfig`). */
   private sanitizeConfig(table: ViewTable, value: unknown): unknown {
-    const r = sanitizeViewConfig(table, value, viewFieldsFor(table, this.fieldsOf(table)));
+    const r = sanitizeViewConfig(
+      table,
+      value,
+      viewFieldsFor(table, this.fieldsOf(table), (t) => this.fieldsOf(t)),
+    );
     if ("error" in r) this.fail(`views.${r.error}`);
     return r.config;
   }
@@ -1337,6 +1341,7 @@ export class Batch {
     if (table === "custom_fields") {
       this.fieldDefs = null;
       this.resanitizeViews(String(before.table));
+      this.resanitizeLookupViews(String(before.table));
     }
   }
 
@@ -1511,7 +1516,24 @@ export class Batch {
     }
     if (typeChanged && oldType === "attachment") this.removeFieldFiles(def.table, def.key);
     // Views that use the field drop what no longer applies (operators, grouping).
-    if (before && typeChanged) this.resanitizeViews(def.table);
+    if (before && (typeChanged || def.type === "lookup")) {
+      this.resanitizeViews(def.table);
+      this.resanitizeLookupViews(def.table);
+    }
+  }
+
+  /**
+   * Views of the other tables that have lookup fields: a lookup's kind (links, choices or
+   * values) follows the field it shows, so a field changing or going away elsewhere can
+   * leave their filters with operators that no longer apply.
+   */
+  private resanitizeLookupViews(except: string): void {
+    if (!this.fieldDefs) this.fieldDefs = loadCustomFields(this.sql);
+    for (const [fieldTable, defs] of this.fieldDefs) {
+      if (fieldTable !== except && defs.some((f) => f.type === "lookup")) {
+        this.resanitizeViews(fieldTable);
+      }
+    }
   }
 
   /** Every view of a field table, re-checked against its fields now (stale parts dropped). */
@@ -1525,7 +1547,7 @@ export class Batch {
       const r = sanitizeViewConfig(
         fieldTable,
         config,
-        viewFieldsFor(fieldTable, this.fieldsOf(fieldTable)),
+        viewFieldsFor(fieldTable, this.fieldsOf(fieldTable), (t) => this.fieldsOf(t)),
       );
       if ("error" in r || sameValue(r.config, config)) continue;
       this.noteViewOwner("views", v.id as string, v);

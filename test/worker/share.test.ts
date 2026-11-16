@@ -523,6 +523,20 @@ describe("share links", () => {
             },
           },
           {
+            // A lookup reads other tables on the client: its definition never reaches a
+            // share viewer, so it can't show them anything.
+            op: "create",
+            table: "custom_fields",
+            id: newId(),
+            fields: {
+              table: "notes",
+              key: "cue_content_lookup",
+              label: "Content (from cues)",
+              type: "lookup",
+              options: { link: "cues", field: "content" },
+            },
+          },
+          {
             op: "create",
             table: "custom_rows",
             id: row,
@@ -564,6 +578,7 @@ describe("share links", () => {
     expect(snap.joins.shotTalent).toEqual({});
     expect(text).not.toContain("hush-hush");
     expect(text).not.toContain("Switch");
+    expect(text).not.toContain("cue_content_lookup");
     // A shots link: shots and talent, the people as name + role only.
     const shots = await openLink(
       (await createLink(showId, admin, { kind: "view", table: "shots" })).path,

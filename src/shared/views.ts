@@ -3,6 +3,7 @@
 // Filters, sorts, grouping and color rules are evaluated on the client, over the grid's
 // columns (src/web/features/views/). See CLAUDE.md "Saved views".
 import { type CustomFieldDef, customColumnKey, customFieldKind } from "./custom-fields";
+import { type FieldsOf, lookupViewKind, resolveLookup } from "./lookup";
 import { type DataTableName, isDataTable, OPTION_COLORS, type ViewTable } from "./tables";
 import { isUnit, UNITS, type Unit } from "./units";
 
@@ -520,11 +521,26 @@ export const VIEW_FIELDS: Record<DataTableName, Record<string, ViewFieldSpec>> =
  */
 export function viewFieldsFor(
   table: ViewTable,
-  customFields: readonly Pick<CustomFieldDef, "key" | "type">[],
+  customFields: readonly Pick<CustomFieldDef, "key" | "type" | "options" | "label">[],
+  /** Every table's custom fields, to follow lookups (without it a lookup is text). */
+  fieldsOf?: FieldsOf,
 ): Record<string, ViewFieldSpec> {
   const out: Record<string, ViewFieldSpec> = isDataTable(table) ? { ...VIEW_FIELDS[table] } : {};
-  for (const f of customFields) out[customColumnKey(f.key)] = { kind: customFieldKind(f.type) };
+  for (const f of customFields) {
+    const kind =
+      f.type === "lookup"
+        ? fieldsOf
+          ? lookupViewKind(resolveLookup({ ...f, table }, fieldsOf, coreViewFields))
+          : "text"
+        : customFieldKind(f.type);
+    out[customColumnKey(f.key)] = { kind };
+  }
   return out;
+}
+
+/** A core table's VIEW_FIELDS (lookups' targets). */
+export function coreViewFields(table: string): Record<string, ViewFieldSpec> | undefined {
+  return isDataTable(table) ? VIEW_FIELDS[table] : undefined;
 }
 
 const NUMERIC_OPS: ReadonlySet<FilterOp> = new Set(["gt", "gte", "lt", "lte"]);

@@ -243,7 +243,12 @@ export function buildAirtableImport(
     const rows = byKind.get(kind) ?? [];
     for (const m of mapping.columns ?? []) {
       if (m.file !== file || !isCustomFieldType(m.type)) continue;
-      if (m.type === "attachment" || m.type === "formula" || m.type === "link") {
+      if (
+        m.type === "attachment" ||
+        m.type === "formula" ||
+        m.type === "link" ||
+        m.type === "lookup"
+      ) {
         warnings.add(`${file}: ${m.column} can't be imported as ${m.type}; skipped`);
         continue;
       }

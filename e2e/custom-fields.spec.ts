@@ -1,11 +1,19 @@
 // Custom fields and custom tables (M5a: R9): a select field on Cues (column, edit, filter,
-// color, reload), a formula field on Surfaces reading PPI, a custom table with URL and
-// sensitive fields (masked, reveal, not exported), the Network CSV imported into a custom
-// table through the import preview, and the Fields manager at 390 px.
+// color, reload), a formula field on Surfaces reading PPI, a lookup on Notes of its cues'
+// content (live across clients), a custom table with URL and sensitive fields (masked,
+// reveal, not exported), the Network CSV imported into a custom table through the import
+// preview, and the Fields manager at 390 px.
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { type Browser, expect, type Locator, type Page, test } from "@playwright/test";
-import { apiCreateShow, apiLogin, importExamples, trackErrors, uniqueName } from "./helpers";
+import {
+  apiCreateShow,
+  apiLogin,
+  importExamples,
+  recordId,
+  trackErrors,
+  uniqueName,
+} from "./helpers";
 
 let errors: string[] = [];
 const pages: Page[] = [];
@@ -154,6 +162,87 @@ test("a formula custom field on Surfaces reads PPI", async ({ browser }) => {
   await fields.getByRole("button", { name: "Save field" }).click();
   await closePanel(page, "Fields");
   await expect(cellOf(lpro, "custom.double_ppi")).toHaveText(/#DIV\/0/);
+});
+
+test("a lookup on Notes shows its cues' content, live", async ({ browser }) => {
+  // The WG case: Notes → "Content (from cues)" = each linked cue's Content, as chips.
+  const page = await newPage(browser);
+  const showId = await apiCreateShow(page, uniqueName("Lookup"));
+  const [scene, a, b, c, q10, q20, note] = Array.from({ length: 7 }, () => recordId());
+  const body = uniqueName("lookup note");
+  const seed = (ops: unknown[]) =>
+    page.request.post(`/api/shows/${showId}/mutate`, { data: { clientId: "seed", ops } });
+  const seeded = await seed([
+    { op: "create", table: "scenes", id: scene, fields: { number: "101", name: "Open" } },
+    ...[
+      [a, "101-001-ALPHA"],
+      [b, "101-002-BRAVO"],
+      [c, "101-003-CHARLIE"],
+    ].map(([id, name]) => ({
+      op: "create",
+      table: "content",
+      id,
+      fields: { name, scene_id: scene },
+    })),
+    { op: "create", table: "cues", id: q10, fields: { number: "10", scene_id: scene } },
+    { op: "create", table: "cues", id: q20, fields: { number: "20", scene_id: scene } },
+    { op: "link", table: "cues", id: q10, field: "content", targetId: a },
+    { op: "link", table: "cues", id: q10, field: "content", targetId: b },
+    { op: "link", table: "cues", id: q20, field: "content", targetId: b },
+    { op: "create", table: "notes", id: note, fields: { body, status: "Open" } },
+  ]);
+  expect(seeded.status(), await seeded.text()).toBe(200);
+
+  await page.goto(`/shows/${showId}/notes`);
+  const grid = page.getByRole("grid", { name: "Notes" });
+  const row = grid.getByTestId("grid-row").filter({ hasText: body });
+  await expect(row).toBeVisible();
+  await addField(page, "Content (from cues)", "Lookup", async (form) => {
+    await form.getByLabel("Link field").selectOption({ label: "Cues → Cues" });
+    await form.getByLabel("Field to show").selectOption({ label: "Content" });
+  });
+  await expect(grid.getByRole("columnheader", { name: "Content (from cues)" })).toBeVisible();
+  const lookup = cellOf(row, "custom.content_from_cues");
+  await expect(lookup).toHaveText("");
+
+  // Link cues 10 and 20 to the note: their content appears at once, each item once.
+  const cues = cellOf(row, "cues");
+  await cues.click();
+  const picker = page.getByTestId("record-picker");
+  for (const n of ["10", "20"]) {
+    await page.keyboard.type(n);
+    await expect(picker.getByRole("option", { name: new RegExp(`^${n}`) })).toBeVisible();
+    await page.keyboard.press("Enter");
+  }
+  await page.keyboard.press("Escape");
+  await expect(picker).toHaveCount(0);
+  await expect(lookup).toHaveText(/101-001-ALPHA.*101-002-BRAVO/);
+  await expect(lookup.getByText("101-002-BRAVO")).toHaveCount(1);
+
+  // Another client changes cue 10's content: the note follows through the sync.
+  const other = await newPage(browser);
+  const changed = await other.request.post(`/api/shows/${showId}/mutate`, {
+    data: {
+      clientId: "other",
+      ops: [
+        { op: "unlink", table: "cues", id: q10, field: "content", targetId: a },
+        { op: "link", table: "cues", id: q10, field: "content", targetId: c },
+      ],
+    },
+  });
+  expect(changed.status(), await changed.text()).toBe(200);
+  await expect(lookup).toContainText("101-003-CHARLIE");
+  await expect(lookup).not.toContainText("ALPHA");
+
+  // Read-only; and filterable by the linked content.
+  await lookup.click();
+  await page.keyboard.press("Enter");
+  await expect(picker).toHaveCount(0);
+  const filter = await openPanel(page, "Filter");
+  await filter.getByRole("button", { name: "+ Add filter" }).click();
+  await filter.getByLabel("Filter 1 field").selectOption({ label: "Content (from cues)" });
+  await expect(filter.getByLabel("Filter 1 operator")).toContainText("has any of");
+  await closePanel(page, "Filter");
 });
 
 test("a custom table with URL and sensitive fields: masked, reveal, left out of the export", async ({

@@ -17,6 +17,7 @@ import { useShowStore, useShowStoreInstance } from "../../lib/show-store";
 import { useWorkspace } from "../show/workspace";
 import styles from "../views/ViewBar.module.css";
 import { compileCached } from "./formula";
+import { lookupFieldColumns, lookupLinkColumns, lookupSummary } from "./lookup";
 import {
   customRowsOf,
   fieldsFor,
@@ -38,6 +39,9 @@ interface Draft {
   formula: string;
   decimals: string;
   sensitive: boolean;
+  /** lookup: the link column to go through, and the linked table's column to show. */
+  link: string;
+  field: string;
 }
 
 const EMPTY: Omit<Draft, "id"> = {
@@ -50,6 +54,8 @@ const EMPTY: Omit<Draft, "id"> = {
   formula: "",
   decimals: "",
   sensitive: false,
+  link: "",
+  field: "",
 };
 
 function draftOf(f: CustomFieldRow): Draft {
@@ -64,6 +70,8 @@ function draftOf(f: CustomFieldRow): Draft {
     formula: f.options.formula ?? "",
     decimals: f.options.decimals === undefined ? "" : String(f.options.decimals),
     sensitive: f.options.sensitive === true,
+    link: f.options.link ?? "",
+    field: f.options.field ?? "",
   };
 }
 
@@ -80,6 +88,8 @@ function optionsOf(d: Draft): CustomFieldOptions {
       return { target: d.target, ...(d.multiple ? {} : { multiple: false }) };
     case "formula":
       return { formula: d.formula };
+    case "lookup":
+      return { link: d.link, field: d.field };
     case "number":
       return d.decimals.trim() === "" ? {} : { decimals: Number(d.decimals) };
     case "text":
@@ -141,6 +151,10 @@ export function FieldsManager({ fieldTable, canEdit }: { fieldTable: string; can
         setError(isFormulaError(c) ? c.error : "Write a formula.");
         return;
       }
+    }
+    if (draft.type === "lookup" && (!draft.link || !draft.field)) {
+      setError("Pick a link field and the field to show.");
+      return;
     }
     if (draft.type === "number" && draft.decimals.trim() !== "") {
       const n = Number(draft.decimals);
@@ -242,6 +256,7 @@ export function FieldsManager({ fieldTable, canEdit }: { fieldTable: string; can
                   {f.type === "link" && f.options.target
                     ? ` → ${targetTableLabel(store.getState(), f.options.target)}`
                     : ""}
+                  {f.type === "lookup" ? ` · ${lookupSummary(store.getState(), f)}` : ""}
                   {f.options.sensitive ? " · sensitive" : ""}
                 </span>
               </span>
@@ -288,6 +303,7 @@ export function FieldsManager({ fieldTable, canEdit }: { fieldTable: string; can
       )}
       {canEdit && draft && (
         <FieldForm
+          fieldTable={fieldTable}
           draft={draft}
           onChange={setDraft}
           onSave={save}
@@ -303,12 +319,14 @@ export function FieldsManager({ fieldTable, canEdit }: { fieldTable: string; can
 }
 
 function FieldForm({
+  fieldTable,
   draft,
   onChange,
   onSave,
   onCancel,
   error,
 }: {
+  fieldTable: string;
   draft: Draft;
   onChange: (d: Draft) => void;
   onSave: () => void;
@@ -319,6 +337,31 @@ function FieldForm({
   const customTables = useShowStore((s) => s.tables.custom_tables);
   const targets = useMemo(() => linkTargets(customTables), [customTables]);
   const set = (patch: Partial<Draft>) => onChange({ ...draft, ...patch });
+  // Lookups: this table's link fields, and the fields of the table the chosen one links to.
+  const store = useShowStoreInstance();
+  const customFields = useShowStore((s) => s.tables.custom_fields);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the lists change with the field definitions
+  const lookupLinks = useMemo(
+    () => lookupLinkColumns(store.getState(), fieldTable),
+    [store, fieldTable, customFields, customTables],
+  );
+  const lookupTarget = lookupLinks.find((l) => l.key === draft.link)?.target ?? null;
+  const ownKey = draft.id ? customFields.get(draft.id)?.key : undefined;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the list changes with the field definitions
+  const lookupFields = useMemo(
+    () =>
+      lookupTarget
+        ? lookupFieldColumns(store.getState(), lookupTarget).filter(
+            // A field can't show itself.
+            (c) => !(lookupTarget === fieldTable && ownKey && c.key === `custom.${ownKey}`),
+          )
+        : [],
+    [store, lookupTarget, fieldTable, ownKey, customFields, customTables],
+  );
+  const firstFieldOf = (link: string) => {
+    const target = lookupLinks.find((l) => l.key === link)?.target;
+    return target ? (lookupFieldColumns(store.getState(), target)[0]?.key ?? "") : "";
+  };
   const formulaError = (() => {
     if (draft.type !== "formula" || !draft.formula.trim()) return null;
     const c = compileCached(draft.formula);
@@ -351,7 +394,17 @@ function FieldForm({
         <select
           className={styles.input}
           value={draft.type}
-          onChange={(e) => set({ type: e.target.value as CustomFieldType })}
+          onChange={(e) => {
+            const type = e.target.value as CustomFieldType;
+            // A new lookup starts on the first link field and its first field.
+            const link =
+              type === "lookup" && !draft.link ? (lookupLinks[0]?.key ?? "") : draft.link;
+            set({
+              type,
+              link,
+              field: link !== draft.link ? firstFieldOf(link) : draft.field,
+            });
+          }}
         >
           {CUSTOM_FIELD_TYPES.map((t) => (
             <option key={t} value={t}>
@@ -484,6 +537,54 @@ function FieldForm({
           </span>
         </div>
       )}
+      {draft.type === "lookup" &&
+        (lookupLinks.length === 0 ? (
+          <p className={styles.muted}>
+            This table has no link fields yet. Add a link field first, then look up its records'
+            fields.
+          </p>
+        ) : (
+          <>
+            <label className={styles.field}>
+              <span>Link field</span>
+              <select
+                className={styles.input}
+                value={draft.link}
+                onChange={(e) => set({ link: e.target.value, field: firstFieldOf(e.target.value) })}
+              >
+                {!lookupLinks.some((l) => l.key === draft.link) && (
+                  <option value={draft.link}>
+                    {draft.link ? `${draft.link} (gone)` : "Pick one"}
+                  </option>
+                )}
+                {lookupLinks.map((l) => (
+                  <option key={l.key} value={l.key}>
+                    {l.title} → {targetTableLabel(store.getState(), l.target)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className={styles.field}>
+              <span>Field to show</span>
+              <select
+                className={styles.input}
+                value={draft.field}
+                onChange={(e) => set({ field: e.target.value })}
+              >
+                {!lookupFields.some((c) => c.key === draft.field) && (
+                  <option value={draft.field}>
+                    {draft.field ? `${draft.field} (gone)` : "Pick one"}
+                  </option>
+                )}
+                {lookupFields.map((c) => (
+                  <option key={c.key} value={c.key}>
+                    {c.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        ))}
       {draft.type === "number" && (
         <label className={styles.inline}>
           <span>Decimals</span>

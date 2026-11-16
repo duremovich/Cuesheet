@@ -25,6 +25,7 @@ export const CUSTOM_FIELD_TYPES = [
   "link",
   "attachment",
   "formula",
+  "lookup",
 ] as const;
 export type CustomFieldType = (typeof CUSTOM_FIELD_TYPES)[number];
 
@@ -45,6 +46,7 @@ export const CUSTOM_FIELD_TYPE_LABELS: Record<CustomFieldType, string> = {
   link: "Link to records",
   attachment: "Attachments",
   formula: "Formula",
+  lookup: "Lookup",
 };
 
 export function isCustomFieldType(v: unknown): v is CustomFieldType {
@@ -106,6 +108,13 @@ export interface CustomFieldOptions {
   unit?: string;
   /** text: masked in the grid with a reveal button, kept out of history and exports. */
   sensitive?: boolean;
+  /**
+   * lookup: the link field on this table to go through, as a view / column key (`cues`,
+   * `scene`, `custom.venue`; see shared/lookup.ts).
+   */
+  link?: string;
+  /** lookup: the field shown from each linked record, a column key of the linked table. */
+  field?: string;
 }
 
 export interface CustomFieldDef {
@@ -164,7 +173,7 @@ export function slugify(label: string, taken: Iterable<string> = []): string {
 
 /** Custom field values that aren't stored (computed, or files in the attachments table). */
 export function isStoredType(t: CustomFieldType): boolean {
-  return t !== "formula" && t !== "attachment";
+  return t !== "formula" && t !== "attachment" && t !== "lookup";
 }
 
 const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -279,6 +288,7 @@ export function checkCustomValue(
     }
     case "attachment":
     case "formula":
+    case "lookup":
       return { error: `${name} is not stored in the row (${field.type})` };
   }
 }
@@ -328,6 +338,16 @@ export function checkFieldOptions(
       return { error: "a formula field needs an expression" };
     }
     out.formula = o.formula;
+  }
+  if (type === "lookup") {
+    // Names, not ids: checked when the lookup is computed (a missing one is a #NAME value,
+    // like a formula naming a field that's gone), so deleting a field never cascades here.
+    const name = (v: unknown) => typeof v === "string" && v.trim() !== "" && v.length <= 100;
+    if (!name(o.link) || !name(o.field)) {
+      return { error: "a lookup field needs a link field and a field to show" };
+    }
+    out.link = o.link as string;
+    out.field = o.field as string;
   }
   if (type === "number" && o.decimals !== undefined) {
     if (!Number.isInteger(o.decimals) || (o.decimals as number) < 0 || (o.decimals as number) > 8) {

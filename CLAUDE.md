@@ -1388,8 +1388,9 @@ position is kept outside React.
   ops dropped; fields scrubbed; attachment deletes only for its table's files, found via
   `pending_r2_deletes.row`; possibly an empty `ops` message so versions stay gap-free).
   **M5a data**: custom field definitions, custom tables/rows and shot lists are in no
-  scope (a Shots link sees shots, shot lists, content and talent as name + role), and row
-  `custom` values are never sent (attachments' `custom` file metadata excepted). A
+  scope (lookups included, so they can't reach tables outside the link's scope; a Shots
+  link sees shots, shot lists, content and talent as name + role), and row `custom`
+  values are never sent (attachments' `custom` file metadata excepted). A
   batch touching notes or people sends a notes preset's sockets `{type:"version"}`
   instead, so they refetch their filtered snapshot. **Expiry**: `scope.expiresAt`; expired
   share sockets are closed before every broadcast and by the DO alarm (one alarm shared
@@ -1508,10 +1509,10 @@ position is kept outside React.
   surfaces, shots; or `custom:<customTableId>`; immutable), `key` (a slug `[a-z][a-z0-9_]*`
   ≤ 40, unique per table, immutable; `slugify(label, taken)`), `label`, `type` (text,
   longtext, number, checkbox, select, multiselect, date, datetime, duration, timecode,
-  measurement, pixel_size, url, link, attachment, formula), `options` JSON
+  measurement, pixel_size, url, link, attachment, formula, lookup), `options` JSON
   (`CustomFieldOptions`: `choices` `[{value, color}]`, `target` + `multiple` for links,
-  `formula`, `decimals`, `unit`, `sensitive`; the engine rebuilds it from known keys with
-  `checkFieldOptions`), `position`, `width`. **Values live in each row's `custom` JSON
+  `formula`, `decimals`, `unit`, `sensitive`, `link` + `field` for lookups; the engine
+  rebuilds it from known keys with `checkFieldOptions`), `position`, `width`. **Values live in each row's `custom` JSON
   under the key**; the grid / view column key is **`custom.<key>`** (`customColumnKey`,
   `customKeyOf`). Select values are the choice text (no option ids). `custom_tables`:
   `key`, `label`, `icon`, `position`, `primary_field_key` (the row's name in links,
@@ -1526,7 +1527,8 @@ position is kept outside React.
   `YYYY-MM-DDTHH:MM` datetimes, `h:mm:ss(.ms)` durations, `hh:mm:ss:ff` timecodes, meters
   0–1 km, `{w,h}`, `http(s)://`/`mailto:` or `host.tld/…` URLs, links = arrays of ids
   that must exist in the target: a core table or `custom:<id>`'s rows, ≤ 1 when
-  `multiple: false`); formula and attachment fields aren't stored (400); `null` clears.
+  `multiple: false`); formula, lookup and attachment fields aren't stored (400); `null`
+  clears.
   **Keys without a definition stay free-form** (imported notes' `created_by_name`,
   attachments' `caption`), capped at **16 KB of JSON per row** (`MAX_FREE_FORM_BYTES`;
   over it the write fails and the DO logs a warning). Attachment custom fields are
@@ -1598,11 +1600,35 @@ position is kept outside React.
   ("Circular reference"); a sensitive field is `#HIDDEN`. Results are cached per row
   object; `resultType` (number / measurement / text) is inferred from the first rows.
   Errors show as values (red `#CODE`).
+- **Lookup fields** (decision 0009; data-model.md §Lookups). Options `{link, field}`:
+  column keys of a link on the field's own table and of a field on the linked table
+  (`{link: "cues", field: "content"}`: a note's "Content (from cues)"). The engine checks
+  only their shape (strings ≤ 100); nothing cascades when a field they name goes away.
+  `src/shared/lookup.ts`: `CORE_LINK_COLUMNS` (the link-like columns per core table and
+  where they lead: LINKS, the reverse sides a tab shows, refs), `linkTargetOf`,
+  `resolveLookup` (follows lookups of lookups; kind link / multi / value; `#NAME` /
+  `#ERROR` for missing fields or a cycle) and `viewFieldsFor(table, fields, fieldsOf)`
+  (the engine passes every table's fields so a lookup's view kind is link / multi /
+  text, matching the client's column; when a field changes type or is deleted, or a
+  lookup's options change, `resanitizeLookupViews` re-checks the views of every table
+  that has a lookup). Client `features/custom/lookup.ts`: **record columns**
+  (`recordColumns(data, fieldTable)`: per table, columns over raw rows with the tab's
+  keys, titles and value shapes plus the table's custom fields via `customColumns`,
+  cached per state object; `lookup.test.ts` compares them with the tab factories, so a
+  new tab column needs a record column, or it can't be looked up) and `lookupColumn`
+  (links → read-only `multilink` of picker items, choices → read-only `multiselect`
+  with the field's colors, else a `formula` column whose value is the single value or
+  the list, `resultType` inferred like formulas; deduped, link order; cached per row
+  object; a stack of lookups being computed turns a cycle through formulas into
+  `#ERROR`). `useCustomColumns` also rebuilds on `joins` and `fieldOptions` when a tab
+  has a lookup. The Fields manager picks "Link field" (`lookupLinkColumns`) and "Field to
+  show" (`lookupFieldColumns`). Not offered by the Airtable importer.
 - **Fields manager** (`FieldsManager.tsx`): the view bar's **Fields** popover → a
   top-level **Fields…** entry above the column list (`ViewBar` `fieldTable`; "Custom
   fields…" read-only for others), and **Show settings → Structure** (pick a table, same
   manager). List, **+ Add field**, Edit (name, type, choices with colors, link target +
-  "Allow more than one", formula with a live parse check, decimals, Sensitive), delete
+  "Allow more than one", formula with a live parse check, lookup link + field, decimals,
+  Sensitive), delete
   with a confirmation naming how many rows have values.
 - **Custom tables in the workspace**: tabs after the core ones (`tables/<id>` →
   `/shows/:id/tables/<id>`, `CustomTableGrid`; `AnyTabKey` / `customTabKey` /

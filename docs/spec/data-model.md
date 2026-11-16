@@ -337,9 +337,10 @@ password…).
 
 Available on core and custom tables. Custom fields (M5a) take: text, long text, number,
 checkbox, select, multi-select, date, datetime, duration, timecode, measurement, pixel
-size, URL, link, attachment and formula. Not built yet: percent, currency, date range,
-lookup and rollup as field types (formulas cover lookups: `LOOKUP`, `COUNT`, `SUM`,
-`JOIN`), created/updated by/at as columns, rich text and @mentions in long text.
+size, URL, link, attachment, formula and lookup (2026-11). Not built yet: percent,
+currency, date range, rollup as a field type (formulas cover it: `COUNT`, `SUM`, `JOIN`
+over a link or a lookup), created/updated by/at as columns, rich text and @mentions in
+long text.
 
 | Type | Notes |
 | --- | --- |
@@ -355,10 +356,37 @@ lookup and rollup as field types (formulas cover lookups: `LOOKUP`, `COUNT`, `SU
 | attachment | images (thumbnailed), PDFs, other files; stored by the app |
 | URL | |
 | link | to any table, one or many; reverse field created automatically |
-| lookup | a field from a linked record |
+| **lookup** | a field of the records linked through one of the row's link fields; see below |
 | rollup | count / sum / min / max / list of a field across linked records |
 | **formula** | see below |
 | created by/at, updated by/at | automatic |
+
+### Lookups
+
+Like Airtable's lookup (decision 0009). A lookup field names a **link field of its own
+table** and a **field of the linked table**, both by column key: a note's "Content (from
+cues)" is `{link: "cues", field: "content"}`, the WG base's "Content (from Cue #)".
+
+- **Through**: a core many-link (a cue's Content and Assignees; a note's Cues, Content,
+  Assignees; a scene's or content item's Surfaces; a shot's Talent and Content), the
+  reverse side a tab shows (a content item's Cues, a surface's Scenes and Content), a
+  single reference (Scene, a content item's Creator, a surface's Region of) or a custom
+  link field. Not through another lookup.
+- **Shows** any column of the linked table (core or custom, formulas and other lookups
+  included), except files and the tabs' count columns.
+- **Values**: read-only, computed live on the client like formulas, in link order with
+  repeats removed. A looked-up link shows the records as chips (the same as the link
+  column's); select choices keep their colors; anything else shows as a value (one linked
+  value) or a comma-separated list, and filters and sorts like a formula's result. Never
+  stored or validated as a value; bulk edit skips it.
+- **Errors** are values, as in formulas: the link field or the shown field gone (deleted,
+  or the link retargeted) is `#NAME`; lookups and formulas reading each other in a circle
+  are `#ERROR`; a sensitive field is `#HIDDEN`. Deleting a field never deletes or rewrites
+  the lookups that name it.
+- **Views** filter, sort, group and color by it: a lookup of links filters like a link,
+  of choices like a multi-select, of anything else like text. Formulas read it like a link
+  (`COUNT({Content (from cues)})`, `{Content (from cues)}.Name`) or a value.
+- **Share links** never see it (custom field definitions are in no share scope).
 
 ### Formulas
 

@@ -911,3 +911,90 @@ describe("custom tables: import twice", () => {
     ]);
   });
 });
+
+describe("lookup fields", () => {
+  it("store options only, refuse values, and views filter them by what they show", async () => {
+    const stub = await freshShow();
+    const [mood, look, v, note] = [newId(), newId(), newId(), newId()];
+    ok(
+      await stub.mutate(ctx(), [
+        field("cues", "mood", "select", { choices: [{ value: "Calm" }, { value: "Storm" }] }, mood),
+        field("notes", "cue_mood", "lookup", { link: "cues", field: "custom.mood", junk: 1 }, look),
+        field("notes", "cue_content", "lookup", { link: "cues", field: "content" }),
+        { op: "create", table: "notes", id: note, fields: { body: "x" } },
+      ]),
+    );
+    let snap = await snapshot(stub);
+    expect(snap.tables.custom_fields.find((f) => f.id === look)?.options).toEqual({
+      link: "cues",
+      field: "custom.mood",
+    });
+    // Needs both names; never stored.
+    fail(await stub.mutate(ctx(), [field("notes", "half", "lookup", { link: "cues" })]));
+    expect(
+      fail(
+        await stub.mutate(ctx(), [
+          { op: "update", table: "notes", id: note, fields: { custom: { cue_mood: ["Calm"] } } },
+        ]),
+      ).error,
+    ).toMatch(/lookup field/);
+
+    // A lookup of a select filters like choices; of a link like links (an operator that
+    // doesn't apply is dropped, as for any custom field).
+    ok(
+      await stub.mutate(ctx(), [
+        {
+          op: "create",
+          table: "views",
+          id: v,
+          fields: {
+            table: "notes",
+            name: "Calm",
+            config: viewConfig({
+              filters: [
+                { key: "custom.cue_mood", op: "contains", value: "C" },
+                { key: "custom.cue_mood", op: "anyOf", value: ["Calm"] },
+                { key: "custom.cue_content", op: "anyOf", value: [newId()] },
+              ],
+              group: { key: "custom.cue_mood" },
+            }),
+          },
+        },
+      ]),
+    );
+    snap = await snapshot(stub);
+    expect(snap.tables.views.find((x) => x.id === v)?.config).toMatchObject({
+      filters: [
+        { key: "custom.cue_mood", op: "anyOf" },
+        { key: "custom.cue_content", op: "anyOf" },
+      ],
+      group: { key: "custom.cue_mood" },
+    });
+
+    // The looked-up field becomes text on the cues: the notes view drops what no longer fits.
+    ok(
+      await stub.mutate(ctx(), [
+        { op: "update", table: "custom_fields", id: mood, fields: { type: "text", options: {} } },
+      ]),
+    );
+    snap = await snapshot(stub);
+    expect(snap.tables.views.find((x) => x.id === v)?.config).toMatchObject({
+      filters: [{ key: "custom.cue_content", op: "anyOf" }],
+      group: { key: null },
+    });
+  });
+
+  it("a deleted link or field leaves the lookup in place (a #NAME value on the client)", async () => {
+    const stub = await freshShow();
+    const [venue, look] = [newId(), newId()];
+    ok(
+      await stub.mutate(ctx(), [
+        field("cues", "venue", "link", { target: "persons" }, venue),
+        field("cues", "venue_role", "lookup", { link: "custom.venue", field: "role" }, look),
+      ]),
+    );
+    ok(await stub.mutate(ctx(), [{ op: "delete", table: "custom_fields", id: venue }]));
+    const snap = await snapshot(stub);
+    expect(snap.tables.custom_fields.map((f) => f.id)).toEqual([look]);
+  });
+});

@@ -1,8 +1,8 @@
 // Grid columns for custom fields (R9): one column per field definition, keyed
 // `custom.<key>`, with the grid's value shapes; and how an edit becomes an update of the
-// row's `custom` JSON. Formula fields are computed per row (./formula.ts), cached per row
-// object, and rebuilt when the columns are (the tab rebuilds them when data a formula or a
-// link label reads changes).
+// row's `custom` JSON. Formula fields are computed per row (./formula.ts) and lookups from
+// the linked records (./lookup.ts), cached per row object, and rebuilt when the columns are
+// (the tab rebuilds them when data a formula, a lookup or a link label reads changes).
 import { type CustomFieldType, customColumnKey, customKeyOf } from "../../../shared/custom-fields";
 import { type FormulaRecord, isQuantity, type Value } from "../../../shared/formula";
 import type { Op } from "../../../shared/ops";
@@ -13,6 +13,7 @@ import { attachmentColumn } from "../attachments/Attachments";
 import { attachmentsOf } from "../attachments/selectors";
 import type { FieldDef } from "../views/evaluate";
 import { evaluateFormulaField, type FormulaScope } from "./formula";
+import { lookupColumn } from "./lookup";
 import { searchTarget, targetLabel } from "./model";
 import {
   formatDateTime,
@@ -213,6 +214,8 @@ export function customColumns<V>(
         };
       case "formula":
         return { ...base, type: "formula", editable: false, getValue: () => null };
+      case "lookup":
+        return lookupColumn<V>(f, base, store, rowOf);
       default:
         return { ...base, type: "text", getValue: (v) => str(value(v, f.key)) };
     }
@@ -221,7 +224,20 @@ export function customColumns<V>(
   const formulas = new Map(
     fields.filter((f) => f.type === "formula").map((f) => [customColumnKey(f.key), f] as const),
   );
-  if (formulas.size === 0) return cols;
+  // Lookups that show values (not chips or choices) get a result type like formulas.
+  const lookups = new Set(
+    fields.filter((f) => f.type === "lookup").map((f) => customColumnKey(f.key)),
+  );
+  const inferred = (c: FieldDef<V>) =>
+    formulas.has(c.key) || (c.type === "formula" && lookups.has(c.key));
+  const sample = (ctx.sampleRows ?? []).slice(0, 50);
+  const withTypes = (list: FieldDef<V>[]) =>
+    list.map((c) =>
+      inferred(c)
+        ? { ...c, resultType: inferResultType(sample.map((r) => c.getValue(r) as Value)) }
+        : c,
+    );
+  if (formulas.size === 0) return withTypes(cols);
   const scope: FormulaScope<V> = {
     columns: [...ctx.baseColumns, ...cols],
     formulas,
@@ -242,11 +258,7 @@ export function customColumns<V>(
   });
   scope.columns = [...ctx.baseColumns, ...out];
   // Result type (filters, sorting) from the first computed values.
-  const sample = (ctx.sampleRows ?? []).slice(0, 50);
-  return out.map((c) => {
-    if (!formulas.has(c.key)) return c;
-    return { ...c, resultType: inferResultType(sample.map((r) => c.getValue(r) as Value)) };
-  });
+  return withTypes(out);
 }
 
 /** A formula column's result type from sample values (numbers, lengths or text). */
@@ -275,7 +287,7 @@ export function customEditOps(
   const key = customKeyOf(columnKey);
   if (key === null) return null;
   const f = fields.find((x) => x.key === key);
-  if (!f || f.type === "formula" || f.type === "attachment") return [];
+  if (!f || f.type === "formula" || f.type === "attachment" || f.type === "lookup") return [];
   let stored: unknown = value;
   switch (f.type) {
     case "checkbox":

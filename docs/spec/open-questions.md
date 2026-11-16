@@ -173,6 +173,12 @@ Things the first build had to decide; each is easy to change.
   part of the grid's ⌘Z stack.
 - **CSV exports** show values as the grid does (lengths in your unit, formulas rounded as
   displayed). "Export all" is the raw form (meters, ids, stored text).
+- **Lookups** (2026-11, decision 0009) go through one link field, never through another
+  lookup, and show labels as the linked tab does; a lookup of a text or number field is a
+  comma-separated list, not one cell per linked record. Rollups (sum / min / max of a
+  lookup) are formulas over it for now. Should the Airtable importer recreate the base's
+  lookup columns ("Content (from Cue #)") as lookup fields? Today it leaves them out (or
+  makes them text) because a CSV doesn't say what they look up.
 
 ## Sharing, security and deploy (M5b)
 
