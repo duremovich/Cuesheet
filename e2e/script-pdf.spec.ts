@@ -224,11 +224,37 @@ test("script PDF view: import, place by selection, number → list → back, pos
   };
   expect(snap.tables.cues.find((c) => c.number === "5.20")?.page).toBe("13");
 
+  // --- The navigator's cue list: show order, page labels, the page being read ---
+  const nav = page.getByTestId("script-navigator");
+  const id520 = (await m520.getAttribute("data-cue")) as string;
+  const row = (id: string) => nav.locator(`[data-testid="nav-cue"][data-cue="${id}"]`);
+  await expect(nav.getByTestId("nav-cue")).toHaveCount(2);
+  await expect(nav.getByTestId("nav-cue").first()).toHaveAttribute("data-cue", cueId);
+  await expect(nav.getByTestId("nav-cue-page")).toHaveText(["12", "13"]);
+  await expect(row(id520)).toContainText("TRAIN OUT: the carriages slide off");
+  await expect(row(id520)).toHaveAttribute("data-here", "true");
+  await expect(row(cueId)).not.toHaveAttribute("data-here", /.*/);
+  // A row jumps to its cue's marker and flashes it.
+  await row(cueId).click();
+  await expect(page.getByTestId("current-page")).toHaveText("12");
+  await expect(page.locator(`[data-testid="pdf-marker"][data-cue="${cueId}"]`)).toHaveAttribute(
+    "data-flash",
+    "true",
+  );
+  await expect(row(cueId)).toHaveAttribute("data-here", "true");
+  // The go-to-page field.
+  await nav.getByLabel("Jump to page").fill("13");
+  await nav.getByLabel("Jump to page").press("Enter");
+  await expect(page.getByTestId("current-page")).toHaveText("13");
+
   // --- Remove it again (marker menu) ---
   await m520.hover();
   await m520.getByRole("button", { name: /More actions/ }).click();
   await page.getByRole("menuitem", { name: "Remove from script" }).click();
   await expect(m520).toHaveCount(0);
+  // Its row stays, as not in the script.
+  await expect(row(id520)).toHaveAttribute("data-placed", "false");
+  await expect(row(id520).getByTestId("nav-cue-page")).toHaveText("—");
 
   // --- Print: the PDF pages with the cue margin ---
   await page.getByRole("link", { name: "Print calling script" }).click();

@@ -83,10 +83,16 @@
   position: relative;
 }
 
+/* Go to page on top, then scenes / changed pages (their own scroll, at most 40% of the
+   height), the cues (the rest; they scroll on their own so the list can follow the
+   reader), and the PDF view's "Not on a page". */
 .navigator {
-  width: 190px;
+  width: 240px;
   flex-shrink: 0;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -124,6 +130,100 @@
   font-family: var(--font-mono);
   color: var(--color-text-muted);
   margin-right: var(--space-1);
+}
+
+.pageJump {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.pageJump input {
+  width: 100%;
+  min-width: 0;
+  font-size: 12px;
+  padding: 2px var(--space-2);
+}
+
+.pageJump .error {
+  font-size: 12px;
+}
+
+.navTop {
+  flex: 0 1 auto;
+  max-height: 40%;
+  min-height: 0;
+  overflow: auto;
+}
+
+.navMore {
+  flex: 0 1 auto;
+  max-height: 30%;
+  min-height: 0;
+  overflow: auto;
+  border-top: 1px solid var(--color-border);
+  margin-top: var(--space-1);
+}
+
+.cueList {
+  flex: 1 1 0;
+  min-height: 96px;
+  overflow: auto;
+  /* The rows' offsetTop is measured from here (keeping the current cue in view). */
+  position: relative;
+}
+
+.cueList li.muted {
+  padding: var(--space-1);
+  font-size: 12px;
+}
+
+.cueItem {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: var(--space-2);
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 2px var(--space-1);
+  font-size: 12px;
+}
+
+.cueNum {
+  font-family: var(--font-mono);
+  min-width: 4ch;
+}
+
+.cueText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cuePage {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+/* Not placed on this version of the script. */
+.cueItem[data-placed="false"] {
+  color: var(--color-text-muted);
+}
+
+/* On the page being read. */
+.cueItem[data-here] {
+  background: var(--color-accent-subtle);
+}
+
+/* The cue open in the panel. */
+.cueItem[aria-current="true"] {
+  box-shadow: inset 3px 0 0 var(--color-accent);
+  font-weight: 600;
 }
 
 .pageGrid {
@@ -227,6 +327,15 @@
   display: none;
   padding: 2px var(--space-2);
   font-size: 12px;
+}
+
+/* The header's "Page 12 · 3 of 40": opens the go-to bar. */
+.pageButton {
+  border: 0;
+  background: transparent;
+  padding: 0 var(--space-1);
+  font: inherit;
+  color: inherit;
 }
 
 .pageSlot {
@@ -964,7 +1073,7 @@
   }
 
   .navigator[data-open] {
-    display: block;
+    display: flex;
     position: absolute;
     z-index: 20;
     top: 40px;

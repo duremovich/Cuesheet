@@ -30,6 +30,7 @@ function setup(over: Partial<ReaderProps> = {}, anchors?: CueAnchorRow[]) {
       anchorRow({ id: "a3", cue_id: "c3", block: 5, offset: 25 }),
     ],
     cues,
+    cueOrder: [...cues.keys()],
     assignees: new Map(),
     openNotes: new Map([["c1", 2]]),
     fieldOptions: {},
@@ -266,5 +267,109 @@ describe("Reader placement popover", () => {
     act(() => line.focus());
     press("ArrowDown", {}, line);
     expect(document.activeElement).toBe(container.querySelector('[data-block="8"]'));
+  });
+});
+
+describe("Reader navigator", () => {
+  const nav = (el: HTMLElement) =>
+    el.querySelector('[data-testid="script-navigator"]') as HTMLElement;
+  const rows = (el: HTMLElement) => [
+    ...nav(el).querySelectorAll<HTMLElement>('[data-testid="nav-cue"]'),
+  ];
+  const withUnplaced = new Map([
+    ...cues,
+    ["c4", cueRow({ id: "c4", number: "15", sm_call: "[GO 15]", description: "Blackout" })],
+    ["s1", cueRow({ id: "s1", number: null, is_section: true, description: "ACT 2" })],
+  ]);
+  const order = ["c2", "c1", "s1", "c3", "c4"];
+
+  it("has no page grid: a go-to-page field instead", () => {
+    const { container } = setup();
+    expect(nav(container).querySelector('button[aria-label^="Page "]')).toBeNull();
+    expect(nav(container).textContent).not.toContain("Pages");
+    expect(nav(container).querySelector('input[aria-label="Jump to page"]')).not.toBeNull();
+  });
+
+  it("the go-to-page field jumps by label, or says there's no such page", () => {
+    const { container } = setup();
+    const current = () => container.querySelector('[data-testid="current-page"]')?.textContent;
+    const input = nav(container).querySelector(
+      'input[aria-label="Jump to page"]',
+    ) as HTMLInputElement;
+    const form = input.closest("form") as HTMLFormElement;
+    const submit = () =>
+      act(() => {
+        form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      });
+    expect(current()).toBe("12");
+    setInputValue(input, "99");
+    submit();
+    expect(nav(container).querySelector('[role="alert"]')?.textContent).toBe('No page "99"');
+    setInputValue(input, "13");
+    expect(nav(container).querySelector('[role="alert"]')).toBeNull();
+    submit();
+    expect(current()).toBe("13");
+    expect(input.value).toBe("");
+  });
+
+  it("lists the cues in show order with the page they're on; sections skipped", () => {
+    const { container } = setup({ cues: withUnplaced, cueOrder: order });
+    const r = rows(container);
+    expect(r.map((x) => x.dataset.cue)).toEqual(["c2", "c1", "c3", "c4"]);
+    expect(r[1]?.textContent).toBe("14.20“Sweet Sue”12");
+    expect(r[0]?.title).toContain("Q 14.25");
+    // Not placed on this version: muted, no page, and says so on hover.
+    expect(r[3]?.dataset.placed).toBe("false");
+    expect(r[3]?.textContent).toBe("15GO 15—");
+    expect(r[3]?.title).toContain("Not placed in this version of the script");
+    expect(nav(container).textContent).toContain("Cues (4)");
+  });
+
+  it("clicking a cue asks the parent to show it (placed or not)", () => {
+    const onFocusCue = vi.fn();
+    const { container } = setup({ cues: withUnplaced, cueOrder: order, onFocusCue });
+    click(rows(container)[1] as HTMLElement);
+    expect(onFocusCue).toHaveBeenLastCalledWith("c1");
+    click(rows(container)[3] as HTMLElement);
+    expect(onFocusCue).toHaveBeenLastCalledWith("c4");
+  });
+
+  it("follows the marker filter", () => {
+    const { container } = setup({
+      cues: withUnplaced,
+      cueOrder: order,
+      filter: { ...NO_FILTER, status: "Cued" },
+    });
+    expect(rows(container).map((x) => x.dataset.cue)).toEqual(["c3"]);
+  });
+
+  it("highlights the cues on the page being read, and the panel's cue", () => {
+    const { container } = setup({
+      cues: withUnplaced,
+      cueOrder: order,
+      activeCue: "c3",
+      anchors: [
+        anchorRow({ id: "a1", cue_id: "c1", block: 5 }),
+        anchorRow({ id: "a2", cue_id: "c2", block: 7, page: 2 }),
+        anchorRow({ id: "a3", cue_id: "c3", block: 3 }),
+      ],
+    });
+    const here = () => rows(container).filter((x) => x.dataset.here === "true");
+    expect(here().map((x) => x.dataset.cue)).toEqual(["c1", "c3"]);
+    expect(rows(container).find((x) => x.dataset.cue === "c2")?.textContent).toContain("13");
+    expect(
+      rows(container)
+        .filter((x) => x.getAttribute("aria-current") === "true")
+        .map((x) => x.dataset.cue),
+    ).toEqual(["c3"]);
+    press("j", {}, document.body);
+    expect(here().map((x) => x.dataset.cue)).toEqual(["c2"]);
+  });
+
+  it("the header's page opens the go-to bar", () => {
+    const { container } = setup();
+    const header = container.querySelector('[data-testid="script-page-header"]') as HTMLElement;
+    click(header.querySelector('button[title="Go to a page (g)"]') as HTMLElement);
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Go to page");
   });
 });

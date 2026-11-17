@@ -1141,8 +1141,22 @@ position is kept outside React.
   (`ReaderChrome.tsx`: the navigator, find / go-to bar and keys, shared with the PDF view).
   A sticky header shows the page **at the middle of the visible script**; the list ends
   with a viewport of padding (`paddingEnd`) so any page, the last included, scrolls to the
-  top. The navigator lists headings and pages (a "Pages" toggle below 900 px). At ≤ 600 px: one column, markers become badges in the text that
-  expand on tap (Open / Show in list).
+  top; clicking its "Page 12 · 1 of 3" opens the go-to bar. At ≤ 600 px: one column,
+  markers become badges in the text that expand on tap (Open / Show in list).
+- **Navigator** (`ScriptNavigator` in `ReaderChrome.tsx`, both views; 240 px, behind a
+  "Navigate" toggle below 900 px, closing after a jump): a "Jump to page" field (Enter;
+  the readers' `findPage`, as the `g` bar; "No page …" as `role=alert`), Scenes + Changed
+  pages (`navTop`, own scroll, ≤ 40%), **Cues** (`nav-cues`, own scroll) and the PDF
+  view's children ("Not on a page"). No page grid any more. Cue rows come from
+  `cueNavRows` (`cueNav.ts`): `ReaderProps.cueOrder` (= `state.order.cues`, show order;
+  sections skipped), `matchesMarker` (the filter), callout `markerText`, page label of
+  the cue's placed anchor (null: "—", `data-placed=false`). A click calls
+  `ReaderProps.onFocusCue` → `ScriptPage.focusCue` → the usual `focusRequest` (scroll +
+  flash, or `onFocusMissing`'s toast). Rows on the current page get `data-here`, the
+  panel's cue `aria-current`; `CueList` scrolls only itself to the first `data-here` row
+  when that changes (and to the panel's cue), unless the user wheeled / touched / clicked
+  / typed in the list in the last 3 s. `CueList` and `CueItem` are memoized (the readers
+  re-render every scroll frame), so keep `onCue` and the rows stable.
 - **Markers** (`Marker.tsx`, `markers.ts`): `Q 14.22` + a reference badge only
   (`markerBadge`: LX 117, SQ 12, TC 1:00:00; never the bare type LINE / VISUAL / FOLLOW…,
   which the tick / underline shows; `triggerBadge` keeps every type, for the SM cue sheet)
@@ -1238,8 +1252,8 @@ position is kept outside React.
   "Revised" tag with the version's label in the gutter; PDF view: a tag at the top centre
   of the sheet (`revised-tag`); both: the sticky header says "Revised · <label>" for the
   current page (`header-revised`; a jump puts the page top under the header) and the
-  navigator lists **Changed pages** (`nav-changed-pages`) and marks them in the page grid
-  (`data-revised`). Calling-script print: the page label / running header (text layout)
+  navigator lists **Changed pages** (`nav-changed-pages`, buttons with `data-revised`).
+  Calling-script print: the page label / running header (text layout)
   and the top of the margin (PDF layout), `print-revised`.
 - **PDF page view** (`pdf/`, decision 0008): the default for a version whose original
   (`attachment_id`) is `application/pdf`; a toolbar toggle **PDF pages | Text** (pref

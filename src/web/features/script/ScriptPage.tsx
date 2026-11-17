@@ -869,6 +869,7 @@ export function ScriptPage() {
             text={text}
             anchors={anchors}
             cues={tables.cues}
+            cueOrder={state.order.cues}
             assignees={joins.cueAssignees}
             openNotes={openNotes}
             fieldOptions={fieldOptions}
@@ -880,6 +881,7 @@ export function ScriptPage() {
             focusRequest={focusReq}
             onFocusMissing={onFocusMissing}
             onFocusHandled={onFocusHandled}
+            onFocusCue={focusCue}
             actions={actions}
             placement={placement}
             restore={scroll.restore}
@@ -892,6 +894,7 @@ export function ScriptPage() {
           text={text}
           anchors={anchors}
           cues={tables.cues}
+          cueOrder={state.order.cues}
           assignees={joins.cueAssignees}
           openNotes={openNotes}
           fieldOptions={fieldOptions}
@@ -903,6 +906,7 @@ export function ScriptPage() {
           focusRequest={focusReq}
           onFocusMissing={onFocusMissing}
           onFocusHandled={onFocusHandled}
+          onFocusCue={focusCue}
           actions={actions}
           placement={placement}
           restore={scroll.restore}

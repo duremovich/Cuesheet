@@ -201,8 +201,20 @@ A layout for taking notes fast during tech and previews, from a laptop at the te
   A "PDF pages | Text" toggle switches to the extracted text, reflowed (the only view for
   DOCX/TXT/MD scripts).
 - The text view renders pages of extracted text in a readable column, with a wide right
-  margin for cue markers. Page labels follow the printed page numbers. A page/scene
-  navigator sits on the left.
+  margin for cue markers. Page labels follow the printed page numbers.
+- A **navigator** sits on the left of both views (behind a "Navigate" toggle on narrow
+  screens):
+  - a **Go to page** field (a printed label; Enter jumps; "No page …" otherwise). The `g`
+    key and a click on the header's "Page 12 · 3 of 40" open the same go-to bar;
+  - **Scenes** (the script's headings) and, after a revision, **Changed pages**;
+  - **Cues**: every cue in cue-list order, filtered like the markers, one line each:
+    number, callout (the full text on hover), and the page it's placed on in this version
+    ("—" and dimmed when it isn't). Clicking one scrolls to its marker and flashes it, as
+    "Show in script" does (an unplaced cue says it isn't in this version). Cues on the page
+    being read are highlighted, the open cue is marked, and the list scrolls itself to keep
+    them in view as you read (not while you're scrolling the list yourself);
+  - the PDF view adds **Not on a page**: cues whose anchor is missing or whose text
+    couldn't be found in the PDF.
 - A **cue marker** in the margin shows the cue number and its **callout**: what the SM
   calls the cue on. The SM call when the cue has one, else the trigger text, else the
   description; always in full (a long callout wraps and the marker grows; the markers

@@ -1,10 +1,10 @@
 // The script reader (ux.md §Script view › Reading): pages of extracted text in a readable
 // column, page labels in the gutter, cue markers in a wide right margin (stacked when they
-// share a block), a sticky page header and a page/scene navigator. Pages are virtualized.
-// Keys (outside inputs): j / PageDown next page, k / PageUp previous, "/" find, "g" go to a
-// page label. Editors on the current version place cues by selecting text or clicking
-// the margin (PlacePopover) and drag markers to another block. ≤ 600 px: one column, and
-// markers collapse to badges that expand on tap.
+// share a block), a sticky page header and the navigator (go to page, scenes, cues). Pages
+// are virtualized. Keys (outside inputs): j / PageDown next page, k / PageUp previous, "/"
+// find, "g" go to a page label (or click the header's page). Editors on the current version
+// place cues by selecting text or clicking the margin (PlacePopover) and drag markers to
+// another block. ≤ 600 px: one column, and markers collapse to badges that expand on tap.
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CueRow, FieldOptions } from "../../../shared/tables";
@@ -18,6 +18,7 @@ import {
 import { useMediaQuery } from "../shared/useMediaQuery";
 import type { Anchor, CueAnchorRow, ScriptBlock, ScriptText } from "./contract";
 import { makeAnchor, makePositionAnchor } from "./contract";
+import { cueNavRows } from "./cueNav";
 import type { RevisedPages } from "./data";
 import { type ColorBy, type MarkerFilter, markerColor, matchesMarker } from "./filters";
 import {
@@ -73,6 +74,8 @@ export interface ReaderProps {
   text: ScriptText;
   anchors: readonly CueAnchorRow[];
   cues: ReadonlyMap<string, CueRow>;
+  /** Cue ids in show order (`state.order.cues`): the navigator lists cues in this order. */
+  cueOrder: readonly string[];
   assignees: ReadonlyMap<string, string[]>;
   openNotes: ReadonlyMap<string, number>;
   fieldOptions: FieldOptions;
@@ -87,6 +90,8 @@ export interface ReaderProps {
   onFocusMissing?: (cueId: string) => void;
   /** A focus request was carried out (or found missing): the parent drops it. */
   onFocusHandled?: () => void;
+  /** The navigator's cue row was clicked: the parent sends a `focusRequest` for it. */
+  onFocusCue?: (cueId: string) => void;
   actions: MarkerActions;
   placement: Placement;
   /**
@@ -295,9 +300,10 @@ export function Reader(props: ReaderProps) {
   }, [props.focusRequest?.nonce, props.focusRequest?.cueId]);
 
   // --- find / go to / keys ---
+  const findPageIdx = useCallback((label: string) => findPage(pages, label), [pages]);
   const findGoto = useFindGoto({
     text,
-    findPage: (label) => findPage(pages, label),
+    findPage: findPageIdx,
     toBlock: (b) => scrollToBlock(b),
     toPage: scrollToPage,
     focusBack: () => scroller.current?.focus({ preventScroll: true }),
@@ -421,9 +427,22 @@ export function Reader(props: ReaderProps) {
     [props.actions],
   );
 
+  // --- the navigator ---
   const [navOpen, setNavOpen] = useState(false);
   const current = pages[pageIdx];
   const navPages = useMemo(() => pages.map((p) => ({ key: p.page, label: p.label })), [pages]);
+  const navCues = useMemo(
+    () => cueNavRows({ order: props.cueOrder, cues, assignees, filter, anchors, text }),
+    [props.cueOrder, cues, assignees, filter, anchors, text],
+  );
+  const onFocusCue = props.onFocusCue;
+  const onNavCue = useCallback(
+    (cueId: string) => {
+      onFocusCue?.(cueId);
+      setNavOpen(false);
+    },
+    [onFocusCue],
+  );
 
   return (
     <div className={styles.reader} data-narrow={narrow || undefined}>
@@ -431,6 +450,7 @@ export function Reader(props: ReaderProps) {
         headings={headings}
         pages={navPages}
         current={pageIdx}
+        currentPage={current?.page ?? null}
         open={navOpen}
         revised={props.revised}
         onHeading={(b) => {
@@ -441,6 +461,10 @@ export function Reader(props: ReaderProps) {
           scrollToPage(i);
           setNavOpen(false);
         }}
+        findPage={findPageIdx}
+        cues={navCues}
+        activeCue={props.activeCue}
+        onCue={onNavCue}
       />
       <div className={styles.readerMain}>
         {findGoto.bar}
@@ -468,14 +492,21 @@ export function Reader(props: ReaderProps) {
               aria-expanded={navOpen}
               onClick={() => setNavOpen((o) => !o)}
             >
-              Pages
+              Navigate
             </button>
             <span>
-              Page <strong data-testid="current-page">{current?.label ?? ""}</strong>
-              <span className="muted">
-                {" "}
-                · {pageIdx + 1} of {pages.length}
-              </span>
+              <button
+                type="button"
+                className={styles.pageButton}
+                title="Go to a page (g)"
+                onClick={findGoto.openGoto}
+              >
+                Page <strong data-testid="current-page">{current?.label ?? ""}</strong>
+                <span className="muted">
+                  {" "}
+                  · {pageIdx + 1} of {pages.length}
+                </span>
+              </button>
               {current && props.revised?.pages.has(current.page) && (
                 <span className={styles.revisedNow} data-testid="header-revised">
                   Revised · {props.revised.label}

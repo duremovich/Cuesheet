@@ -16,6 +16,7 @@ import { useMediaQuery } from "../../shared/useMediaQuery";
 import { rowUrl } from "../../show/tabs";
 import type { Anchor, CueAnchorRow } from "../contract";
 import { makeAnchor } from "../contract";
+import { cueNavRows } from "../cueNav";
 import { matchesMarker } from "../filters";
 import type { MarkerActions } from "../Marker";
 import { cueLabel, findPage, headingsOf, isPlaced, NEEDS_LOOK, pagesOf } from "../markers";
@@ -312,13 +313,17 @@ function LoadedReader(props: PdfReaderProps & { pdf: LoadedPdf }) {
   }, [props.focusRequest?.nonce, props.focusRequest?.cueId, ready]);
 
   // --- find / go to / keys ---
-  const findGoto = useFindGoto({
-    text,
-    findPage: (label) =>
+  const findPageIdx = useCallback(
+    (label: string) =>
       findPage(
         navPages.map((p) => ({ page: p.key, label: p.label, blocks: [] })),
         label,
       ),
+    [navPages],
+  );
+  const findGoto = useFindGoto({
+    text,
+    findPage: findPageIdx,
     toBlock: scrollToBlock,
     toPage: scrollToPage,
     focusBack: () => scroller.current?.focus({ preventScroll: true }),
@@ -433,7 +438,20 @@ function LoadedReader(props: PdfReaderProps & { pdf: LoadedPdf }) {
     [props.showId],
   );
 
+  // --- the navigator ---
   const [navOpen, setNavOpen] = useState(false);
+  const navCues = useMemo(
+    () => cueNavRows({ order: props.cueOrder, cues, assignees, filter, anchors, text }),
+    [props.cueOrder, cues, assignees, filter, anchors, text],
+  );
+  const onFocusCue = props.onFocusCue;
+  const onNavCue = useCallback(
+    (cueId: string) => {
+      onFocusCue?.(cueId);
+      setNavOpen(false);
+    },
+    [onFocusCue],
+  );
   const sheetW = maxW * scale + marginW;
   const pagesInText = useMemo(() => pagesOf(text).length, [text]);
   const noPlace = missing.length + unlocated.length;
@@ -444,6 +462,7 @@ function LoadedReader(props: PdfReaderProps & { pdf: LoadedPdf }) {
         headings={headings}
         pages={navPages}
         current={pageIdx}
+        currentPage={pageIdx + 1}
         open={navOpen}
         revised={props.revised}
         onHeading={(b) => {
@@ -454,6 +473,10 @@ function LoadedReader(props: PdfReaderProps & { pdf: LoadedPdf }) {
           scrollToPage(i);
           setNavOpen(false);
         }}
+        findPage={findPageIdx}
+        cues={navCues}
+        activeCue={props.activeCue}
+        onCue={onNavCue}
       >
         {noPlace > 0 && (
           <>
@@ -507,14 +530,21 @@ function LoadedReader(props: PdfReaderProps & { pdf: LoadedPdf }) {
               aria-expanded={navOpen}
               onClick={() => setNavOpen((o) => !o)}
             >
-              Pages
+              Navigate
             </button>
             <span>
-              Page <strong data-testid="current-page">{labelOf(pageIdx + 1)}</strong>
-              <span className="muted">
-                {" "}
-                · {pageIdx + 1} of {pdf.pages.length}
-              </span>
+              <button
+                type="button"
+                className={scriptStyles.pageButton}
+                title="Go to a page (g)"
+                onClick={findGoto.openGoto}
+              >
+                Page <strong data-testid="current-page">{labelOf(pageIdx + 1)}</strong>
+                <span className="muted">
+                  {" "}
+                  · {pageIdx + 1} of {pdf.pages.length}
+                </span>
+              </button>
               {props.revised?.pages.has(pageIdx + 1) && (
                 <span className={scriptStyles.revisedNow} data-testid="header-revised">
                   Revised · {props.revised.label}

@@ -445,6 +445,118 @@ test("script: j/k pages, / find and g go to page", async ({ browser }) => {
   await expect(page.locator("[data-block][data-highlight]")).toContainText("other purse");
 });
 
+test("script: the navigator — go to page, the cue list follows the reader and jumps to cues", async ({
+  browser,
+}) => {
+  test.setTimeout(90_000);
+  const page = await newPage(browser);
+  const showId = await apiCreateShow(page, uniqueName("Script nav"));
+  // 30 cues before the seeded ones, so the list has to scroll to show 14.20.
+  await mutate(
+    page,
+    showId,
+    Array.from({ length: 30 }, (_, i) => ({
+      op: "create",
+      table: "cues",
+      id: recordId(),
+      fields: { number: String(i + 1), description: `Filler ${i + 1}` },
+    })),
+  );
+  const ids = await seed(page, showId);
+  await page.goto(`/shows/${showId}/script`);
+  await importScript(page, "script-v1.txt", "v1");
+  await attachBySelection(page, "Sweet Sue needs a sax and a bass", "14.20");
+  await attachBySelection(page, "Try not to wake the drummer", "14.25");
+
+  // A short window, so the cue list scrolls.
+  await page.setViewportSize({ width: 1300, height: 640 });
+  const nav = page.getByTestId("script-navigator");
+  // No grid of page buttons any more.
+  await expect(nav.getByRole("button", { name: /^Page / })).toHaveCount(0);
+  const row = (cueId: string) => nav.locator(`[data-testid="nav-cue"][data-cue="${cueId}"]`);
+  await expect(nav.getByTestId("nav-cue")).toHaveCount(33);
+  await expect(nav.getByTestId("nav-cue").nth(30)).toHaveAttribute("data-cue", ids.c850);
+  await expect(nav.getByTestId("nav-cue").nth(31)).toHaveAttribute("data-cue", ids.c1420);
+  await expect(nav.getByTestId("nav-cue").nth(32)).toHaveAttribute("data-cue", ids.c1425);
+  await expect(row(ids.c850).getByTestId("nav-cue-page")).toHaveText("—");
+  await expect(row(ids.c850)).toHaveAttribute("data-placed", "false");
+  await expect(row(ids.c1420).getByTestId("nav-cue-page")).toHaveText("12");
+  await expect(row(ids.c1420)).toContainText("14.20");
+  await expect(row(ids.c1420)).toContainText("“Sweet Sue needs a sax and a bass”");
+  await expect(row(ids.c1425).getByTestId("nav-cue-page")).toHaveText("13");
+  const inList = (cueId: string) =>
+    page.evaluate((cueId) => {
+      const list = document.querySelector('[data-testid="nav-cues"]') as HTMLElement;
+      const el = list.querySelector(`[data-cue="${cueId}"]`) as HTMLElement;
+      const l = list.getBoundingClientRect();
+      const r = el.getBoundingClientRect();
+      // (1 px: a row flush with the list's bottom ends a fraction of a pixel past it)
+      return list.scrollHeight > list.clientHeight && r.top >= l.top && r.bottom <= l.bottom + 1;
+    }, cueId);
+  // Scrolled to the top (the cues are far below)…
+  await page.getByTestId("nav-cues").evaluate((el) => {
+    el.scrollTop = 0;
+  });
+  expect(await inList(ids.c1420)).toBe(false);
+
+  // …the go-to-page field jumps to 12: its cue is highlighted and scrolled into the list.
+  const jump = nav.getByLabel("Jump to page");
+  await jump.fill("12");
+  await jump.press("Enter");
+  await expect(page.getByTestId("current-page")).toHaveText("12");
+  await expect(jump).toHaveValue("");
+  await expect(row(ids.c1420)).toHaveAttribute("data-here", "true");
+  await expect(row(ids.c1425)).not.toHaveAttribute("data-here", /.*/);
+  await expect.poll(() => inList(ids.c1420)).toBe(true);
+
+  // j: the highlight moves to page 13's cue.
+  await page.getByTestId("script-reader").click({ position: { x: 5, y: 60 } });
+  await page.keyboard.press("j");
+  await expect(page.getByTestId("current-page")).toHaveText("13");
+  await expect(row(ids.c1425)).toHaveAttribute("data-here", "true");
+  await expect(row(ids.c1420)).not.toHaveAttribute("data-here", /.*/);
+  await expect.poll(() => inList(ids.c1425)).toBe(true);
+
+  // An unknown label says so.
+  await jump.fill("14");
+  await jump.press("Enter");
+  await expect(page.getByTestId("current-page")).toHaveText("14");
+  await expect(jump).toHaveValue("");
+  await jump.fill("99");
+  await jump.press("Enter");
+  await expect(nav.getByRole("alert")).toHaveText('No page "99"');
+  await expect(page.getByTestId("current-page")).toHaveText("14");
+
+  // A cue row jumps to its marker and flashes it.
+  await row(ids.c1420).click();
+  await expect(page.getByTestId("current-page")).toHaveText("12");
+  await expect(marker(page, ids.c1420)).toHaveAttribute("data-flash", "true");
+  await expect(marker(page, ids.c1420)).toBeInViewport();
+  // One that isn't in the script says so.
+  await row(ids.c850).click();
+  await expect(page.getByTestId("toast")).toContainText(
+    "Q 8.50 isn't placed in this version of the script.",
+  );
+
+  // The header's page opens the go-to bar.
+  await page
+    .getByTestId("script-page-header")
+    .getByRole("button", { name: /^Page 12/ })
+    .click();
+  await expect(page.getByLabel("Go to page")).toBeFocused();
+  await page.keyboard.press("Escape");
+
+  // Narrow: the navigator is behind a "Navigate" toggle and closes after a jump.
+  await page.setViewportSize({ width: 800, height: 640 });
+  await expect(nav).toBeHidden();
+  await page.getByRole("button", { name: "Navigate" }).click();
+  await expect(nav).toBeVisible();
+  await row(ids.c1425).click();
+  await expect(nav).toBeHidden();
+  await expect(page.getByTestId("current-page")).toHaveText("13");
+  await expect(marker(page, ids.c1425)).toHaveAttribute("data-flash", "true");
+});
+
 test("script: two editors resolving at once; a newer version mid-resolve", async ({ browser }) => {
   test.setTimeout(90_000);
   const page = await newPage(browser);

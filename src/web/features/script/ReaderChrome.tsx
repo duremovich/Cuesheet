@@ -1,96 +1,270 @@
 // What the text reader and the PDF page view share around their pages: the navigator
-// (scenes and pages), the find / go-to bar, and the keys (j / PageDown next page, k /
-// PageUp previous, "/" find, "g" go to a page label; ignored in inputs and dialogs).
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+// (go to a page, scenes, changed pages, the cues), the find / go-to bar, and the keys
+// (j / PageDown next page, k / PageUp previous, "/" find, "g" go to a page label; ignored in
+// inputs and dialogs).
+import { type FormEvent, memo, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import type { ScriptText } from "./contract";
+import type { CueNavRow } from "./cueNav";
 import type { RevisedPages } from "./data";
 import { findBlocks } from "./markers";
 import styles from "./Script.module.css";
+
+/** How long after the user touches the cue list it stops following the reader, ms. */
+const HANDS_OFF_MS = 3000;
 
 export function ScriptNavigator({
   headings,
   pages,
   current,
+  currentPage,
   open,
   onHeading,
   onPage,
+  findPage,
   revised,
+  cues,
+  activeCue,
+  onCue,
   children,
 }: {
   headings: readonly { block: number; label: string; text: string }[];
   pages: readonly { key: number; label: string }[];
+  /** Index into `pages` of the page being read. */
   current: number;
+  /** That page's physical number (`CueNavRow.page`): its cues are highlighted. */
+  currentPage: number | null;
   open: boolean;
   onHeading: (block: number) => void;
   onPage: (index: number) => void;
-  /** Pages changed or new since the version before (keys are `pages[].key`): listed, marked. */
+  /** A page label → index into `pages` (-1: none); the same resolution as the "g" bar. */
+  findPage: (label: string) => number;
+  /** Pages changed or new since the version before (keys are `pages[].key`): listed. */
   revised?: RevisedPages | null;
+  /** The cues, in show order, filtered like the markers. */
+  cues: readonly CueNavRow[];
+  /** The cue open in the panel. */
+  activeCue: string | null;
+  /** A cue row was clicked: jump to its marker (or say it isn't placed). */
+  onCue: (cueId: string) => void;
   /** More sections (the PDF view's cues not on any page). */
   children?: ReactNode;
 }) {
+  const scenes = headings.length > 0;
+  const changed = !!revised && revised.pages.size > 0;
   return (
     <nav
       className={styles.navigator}
-      aria-label="Script pages"
+      aria-label="Script navigation"
       data-open={open || undefined}
       data-testid="script-navigator"
     >
-      {headings.length > 0 && (
-        <>
-          <h3>Scenes</h3>
-          <ul>
-            {headings.map((h) => (
-              <li key={h.block}>
-                <button type="button" className={styles.navItem} onClick={() => onHeading(h.block)}>
-                  <span className={styles.navLabel}>{h.label}</span> {h.text}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </>
+      <PageJump findPage={findPage} onPage={onPage} />
+      {(scenes || changed) && (
+        <div className={styles.navTop}>
+          {scenes && (
+            <>
+              <h3>Scenes</h3>
+              <ul>
+                {headings.map((h) => (
+                  <li key={h.block}>
+                    <button
+                      type="button"
+                      className={styles.navItem}
+                      onClick={() => onHeading(h.block)}
+                    >
+                      <span className={styles.navLabel}>{h.label}</span> {h.text}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          {revised && changed && (
+            <>
+              <h3 title={`Pages changed or new in ${revised.label} since the version before`}>
+                Changed pages ({revised.pages.size})
+              </h3>
+              <div className={styles.pageGrid} data-testid="nav-changed-pages">
+                {pages.map((p, i) =>
+                  revised.pages.has(p.key) ? (
+                    <button
+                      key={p.key}
+                      type="button"
+                      aria-current={i === current ? "page" : undefined}
+                      aria-label={`Changed page ${p.label}`}
+                      data-revised={revised.pages.get(p.key)}
+                      onClick={() => onPage(i)}
+                    >
+                      {p.label}
+                    </button>
+                  ) : null,
+                )}
+              </div>
+            </>
+          )}
+        </div>
       )}
-      {revised && revised.pages.size > 0 && (
-        <>
-          <h3 title={`Pages changed or new in ${revised.label} since the version before`}>
-            Changed pages ({revised.pages.size})
-          </h3>
-          <div className={styles.pageGrid} data-testid="nav-changed-pages">
-            {pages.map((p, i) =>
-              revised.pages.has(p.key) ? (
-                <button
-                  key={p.key}
-                  type="button"
-                  aria-current={i === current ? "page" : undefined}
-                  aria-label={`Changed page ${p.label}`}
-                  data-revised={revised.pages.get(p.key)}
-                  onClick={() => onPage(i)}
-                >
-                  {p.label}
-                </button>
-              ) : null,
-            )}
-          </div>
-        </>
-      )}
-      <h3>Pages</h3>
-      <div className={styles.pageGrid}>
-        {pages.map((p, i) => (
-          <button
-            key={p.key}
-            type="button"
-            aria-current={i === current ? "page" : undefined}
-            aria-label={`Page ${p.label}`}
-            data-revised={revised?.pages.get(p.key)}
-            onClick={() => onPage(i)}
-          >
-            {p.label}
-          </button>
-        ))}
-      </div>
-      {children}
+      <h3>Cues ({cues.length})</h3>
+      <CueList rows={cues} currentPage={currentPage} activeCue={activeCue} onCue={onCue} />
+      {children ? <div className={styles.navMore}>{children}</div> : null}
     </nav>
   );
 }
+
+/** The navigator's "Go to page" field: Enter jumps (label exact, then prefix). */
+function PageJump({
+  findPage,
+  onPage,
+}: {
+  findPage: (label: string) => number;
+  onPage: (index: number) => void;
+}) {
+  const [value, setValue] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const submit = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!value.trim()) return;
+    const i = findPage(value);
+    if (i < 0) {
+      setError(`No page "${value.trim()}"`);
+      return;
+    }
+    onPage(i);
+    setValue("");
+    setError(null);
+    // Back to reading: j / k work again.
+    e.currentTarget.querySelector("input")?.blur();
+  };
+  return (
+    <form className={styles.pageJump} onSubmit={submit} data-testid="nav-page-jump">
+      <input
+        type="text"
+        aria-label="Jump to page"
+        placeholder="Go to page…"
+        value={value}
+        aria-invalid={error ? true : undefined}
+        onChange={(e) => {
+          setValue(e.target.value);
+          setError(null);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            setValue("");
+            setError(null);
+            e.currentTarget.blur();
+          }
+        }}
+      />
+      {error && (
+        <span className="error" role="alert">
+          {error}
+        </span>
+      )}
+    </form>
+  );
+}
+
+/**
+ * The cue rows. Rows on the page being read are highlighted (and the panel's cue marked);
+ * the list keeps the first of them in view as the reader moves (and the panel's cue when it
+ * changes) by scrolling only itself, and not while the user is working the list.
+ * Memoized: the readers re-render on every scroll frame, the list only when the page or
+ * the rows change, and then only the rows whose highlight flips.
+ */
+const CueList = memo(function CueList({
+  rows,
+  currentPage,
+  activeCue,
+  onCue,
+}: {
+  rows: readonly CueNavRow[];
+  currentPage: number | null;
+  activeCue: string | null;
+  onCue: (cueId: string) => void;
+}) {
+  const list = useRef<HTMLUListElement>(null);
+  const touched = useRef(Number.NEGATIVE_INFINITY);
+  /** Scrolls the list (only) so the row is in view, unless it already is. */
+  const reveal = (id: string | null | undefined) => {
+    const ul = list.current;
+    if (!id || !ul || performance.now() - touched.current < HANDS_OFF_MS) return;
+    const el = ul.querySelector<HTMLElement>(`[data-cue="${id}"]`);
+    if (!el) return;
+    const top = el.offsetTop;
+    const bottom = top + el.offsetHeight;
+    if (top >= ul.scrollTop && bottom <= ul.scrollTop + ul.clientHeight) return;
+    ul.scrollTop = Math.max(0, top - ul.clientHeight / 3);
+  };
+  // The first cue on the page being read: changes with the page, or when that page gets
+  // (or loses) its first cue; not on every edit.
+  const hereId =
+    currentPage === null ? null : (rows.find((r) => r.page === currentPage)?.id ?? null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: follows the page being read
+  useEffect(() => reveal(hereId), [hereId]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: follows the panel's cue
+  useEffect(() => reveal(activeCue), [activeCue]);
+  useEffect(() => {
+    const ul = list.current;
+    if (!ul) return;
+    const touch = () => {
+      touched.current = performance.now();
+    };
+    const types = ["wheel", "touchstart", "pointerdown", "keydown"];
+    for (const t of types) ul.addEventListener(t, touch, { passive: true });
+    return () => {
+      for (const t of types) ul.removeEventListener(t, touch);
+    };
+  }, []);
+  return (
+    <ul ref={list} className={styles.cueList} data-testid="nav-cues">
+      {rows.length === 0 && <li className="muted">No cues</li>}
+      {rows.map((r) => (
+        <CueItem
+          key={r.id}
+          row={r}
+          here={r.page !== null && r.page === currentPage}
+          active={r.id === activeCue}
+          onCue={onCue}
+        />
+      ))}
+    </ul>
+  );
+});
+
+const CueItem = memo(function CueItem({
+  row,
+  here,
+  active,
+  onCue,
+}: {
+  row: CueNavRow;
+  here: boolean;
+  active: boolean;
+  onCue: (cueId: string) => void;
+}) {
+  const placed = row.page !== null;
+  return (
+    <li>
+      <button
+        type="button"
+        className={styles.cueItem}
+        title={row.title}
+        aria-current={active ? "true" : undefined}
+        data-testid="nav-cue"
+        data-cue={row.id}
+        data-placed={placed}
+        data-here={here || undefined}
+        onClick={() => onCue(row.id)}
+      >
+        <span className={styles.cueNum}>{row.number}</span>
+        <span className={styles.cueText}>{row.text}</span>
+        <span className={styles.cuePage} data-testid="nav-cue-page">
+          {placed ? row.label : "—"}
+        </span>
+      </button>
+    </li>
+  );
+});
 
 /** Keys outside inputs and dialogs; the handlers are read at key time (no re-binding). */
 export function useReaderKeys(handlers: {
