@@ -155,7 +155,7 @@ export interface SentEmail {
   body: {
     from: string;
     to: string | string[];
-    reply_to: string;
+    reply_to?: string;
     subject: string;
     headers: Record<string, string>;
     text: string;

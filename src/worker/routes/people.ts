@@ -3,7 +3,8 @@
 // - `GET /api/people`: everyone who is a direct member of a show you can open (directly or
 //   through a team), or in one of your teams; not you. For the "add people" autocomplete.
 // - `GET /api/me/access`: your teams (role, how many shows) and every show you can open
-//   (effective role; `direct` when you're a member of the show itself, `team` otherwise).
+//   (effective role; `direct` when you're a member of the show itself, `team` otherwise),
+//   and a login-email change waiting for its link (`pendingEmail`; routes/me.ts).
 import { and, count, eq, inArray, ne, or } from "drizzle-orm";
 import { Hono } from "hono";
 import type { MyAccessResponse, PeopleResponse } from "../../shared/api";
@@ -11,6 +12,7 @@ import { accessibleShowRows } from "../access";
 import { requireAuth } from "../auth/middleware";
 import { schema } from "../db/d1/client";
 import type { AppEnv } from "../types";
+import { pendingEmailChange } from "./me";
 
 export const peopleRoutes = new Hono<AppEnv>()
   .get("/people", requireAuth, async (c) => {
@@ -54,7 +56,7 @@ export const peopleRoutes = new Hono<AppEnv>()
       .from(schema.shows)
       .groupBy(schema.shows.teamId)
       .as("show_count");
-    const [teams, shows] = await Promise.all([
+    const [teams, shows, pendingEmail] = await Promise.all([
       db
         .select({
           id: schema.teams.id,
@@ -68,6 +70,7 @@ export const peopleRoutes = new Hono<AppEnv>()
         .where(eq(tm.userId, c.var.user.id))
         .orderBy(schema.teams.name),
       accessibleShowRows(db, c.var.user.id),
+      pendingEmailChange(db, c.var.user.id),
     ]);
     return c.json({
       teams: teams.map((t) => ({ ...t, showCount: t.showCount ?? 0 })),
@@ -79,5 +82,6 @@ export const peopleRoutes = new Hono<AppEnv>()
         teamId: show.teamId,
         teamName: show.teamName,
       })),
+      pendingEmail,
     } satisfies MyAccessResponse);
   });

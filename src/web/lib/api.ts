@@ -1,8 +1,12 @@
 // Thin fetch wrapper for /api. Every call is same-origin and sends the session cookie.
 
 import type {
+  ChangeEmailRequest,
+  ChangeEmailResponse,
   ChangePasswordRequest,
+  ConfirmEmailChangeResponse,
   CreateResetLinkResponse,
+  EmailChangeInfoResponse,
   ResetLinkInfoResponse,
 } from "../../shared/account";
 import type { ImportMapping } from "../../shared/airtable-columns";
@@ -254,6 +258,19 @@ export const api = {
     request<ResetLinkInfoResponse>("GET", `/password-resets/${encodeURIComponent(token)}`),
   completeReset: (token: string, password: string) =>
     request<MeResponse>("POST", `/password-resets/${encodeURIComponent(token)}`, { password }),
+
+  // ---- profile: display name, login email ----
+  /** Rename yourself. */
+  updateProfile: (name: string) => request<MeResponse>("PATCH", "/me", { name }),
+  /** Email a confirmation link to a new login address (replaces any earlier request). */
+  requestEmailChange: (body: ChangeEmailRequest) =>
+    request<ChangeEmailResponse>("POST", "/me/email", body),
+  resendEmailChange: () => request<ChangeEmailResponse>("POST", "/me/email/resend", {}),
+  cancelEmailChange: () => request<{ ok: true }>("DELETE", "/me/email"),
+  getEmailChange: (token: string) =>
+    request<EmailChangeInfoResponse>("GET", `/email-changes/${encodeURIComponent(token)}`),
+  confirmEmailChange: (token: string) =>
+    request<ConfirmEmailChangeResponse>("POST", `/email-changes/${encodeURIComponent(token)}`, {}),
 
   // ---- share links (R23) ----
   shareLinks: (id: string) => request<ShareLinksResponse>("GET", showPath(id, "/share-links")),

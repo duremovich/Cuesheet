@@ -1,6 +1,6 @@
-// The header's account menu (R24): My access (/account: your teams and shows), change
-// password, sign out everywhere (every session of this account ends and its open shows
-// disconnect, this browser included).
+// The header's account menu (R24): Account (/account: your name and login email, your
+// teams and shows), change password, sign out everywhere (every session of this account
+// ends and its open shows disconnect, this browser included; also on the Account page).
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { MIN_PASSWORD_LENGTH } from "../../shared/api";
@@ -8,9 +8,20 @@ import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import styles from "./AppHeader.module.css";
 
-export function AccountMenu() {
+/** Ends every session of this account (this browser too) and goes to sign in. */
+export function useSignOutEverywhere(): () => Promise<void> {
   const { setUser } = useAuth();
   const navigate = useNavigate();
+  return async () => {
+    await api.logoutAll().catch(() => undefined);
+    setUser(null);
+    navigate("/login");
+  };
+}
+
+export function AccountMenu() {
+  const navigate = useNavigate();
+  const signOutAll = useSignOutEverywhere();
   const [open, setOpen] = useState(false);
   const [changing, setChanging] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
@@ -30,9 +41,7 @@ export function AccountMenu() {
   const signOutEverywhere = async () => {
     setOpen(false);
     if (!window.confirm("Sign out on every device and browser, this one included?")) return;
-    await api.logoutAll().catch(() => undefined);
-    setUser(null);
-    navigate("/login");
+    await signOutAll();
   };
 
   return (
@@ -69,7 +78,7 @@ export function AccountMenu() {
               navigate("/account");
             }}
           >
-            My access
+            Account
           </button>
           <button
             type="button"
@@ -91,7 +100,7 @@ export function AccountMenu() {
   );
 }
 
-/** The change-password dialog (also opened from My access). */
+/** The change-password dialog (also opened from the Account page). */
 export function ChangePasswordDialog({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);

@@ -25,7 +25,6 @@ import {
   GRANTABLE_ROLES,
   GRANTABLE_TEAM_ROLES,
   type InviteInfoResponse,
-  MAX_NAME_LENGTH,
   type MeResponse,
   MIN_PASSWORD_LENGTH,
   type PendingInviteDTO,
@@ -46,7 +45,7 @@ import { serializeSessionCookie } from "../auth/cookie";
 import { requireAuth } from "../auth/middleware";
 import { hashPassword } from "../auth/password";
 import { clientIp, inviteLimits, recordFailure, retryAfter, tooMany } from "../auth/rate-limit";
-import { createSession, isPlausibleEmail, normalizeEmail } from "../auth/session";
+import { cleanName, createSession, isPlausibleEmail, normalizeEmail } from "../auth/session";
 import { type D1Db, schema } from "../db/d1/client";
 import { appOrigin, inviteEmail, sendEmail } from "../email";
 import type { AppEnv } from "../types";
@@ -591,9 +590,9 @@ export const inviteRoutes = new Hono<AppEnv>()
   })
   .post("/invites/:token/accept", async (c) => {
     const body = await readJsonObject(c);
-    const name = str(body?.name).trim();
+    const name = cleanName(body?.name);
     const password = str(body?.password);
-    if (!name || name.length > MAX_NAME_LENGTH) return c.json({ error: "Enter your name" }, 400);
+    if (!name) return c.json({ error: "Enter your name" }, 400);
     if (password.length < MIN_PASSWORD_LENGTH) {
       return c.json({ error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters` }, 400);
     }

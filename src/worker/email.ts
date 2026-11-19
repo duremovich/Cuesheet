@@ -16,13 +16,27 @@ export interface EmailMessage {
   subject: string;
   text: string;
   html: string;
-  /** Where replies go: the person who invited or added them. */
-  replyTo: string;
+  /** Where replies go: the person who invited or added them (none for account notices). */
+  replyTo?: string;
   /** Unique per message (`X-Entity-Ref-ID`), so mail clients don't thread them together. */
   refId: string;
 }
 
 type EmailEnv = { RESEND_API_KEY?: string; EMAIL_FROM?: string; APP_ORIGIN?: string };
+
+/**
+ * Developer builds only (`vite dev`, and the e2e build with VITE_DEV_PAGES=1): emails that
+ * weren't sent because there's no key are kept here (the last 50, in this isolate's memory)
+ * for admins at GET /api/dev/outbox, so a developer or the e2e suite can follow their
+ * links. A build-time constant: production builds compile it out.
+ */
+const DEV_OUTBOX = import.meta.env?.DEV === true || import.meta.env?.VITE_DEV_PAGES === "1";
+const outbox: EmailMessage[] = [];
+
+/** The developer outbox (oldest first), or null in builds without one. */
+export function devOutbox(): readonly EmailMessage[] | null {
+  return DEV_OUTBOX ? outbox : null;
+}
 
 /** How long a send may take before it counts as failed (it never holds a request longer). */
 export const EMAIL_TIMEOUT_MS = 5000;
@@ -38,7 +52,13 @@ export async function sendEmail(
 ): Promise<boolean> {
   const vars = env as EmailEnv;
   const key = vars.RESEND_API_KEY;
-  if (!key) return false;
+  if (!key) {
+    if (DEV_OUTBOX) {
+      outbox.push(message);
+      if (outbox.length > 50) outbox.shift();
+    }
+    return false;
+  }
   try {
     const res = await fetch(RESEND_URL, {
       method: "POST",
@@ -47,7 +67,7 @@ export async function sendEmail(
       body: JSON.stringify({
         from: vars.EMAIL_FROM || DEFAULT_EMAIL_FROM,
         to: message.to,
-        reply_to: message.replyTo,
+        ...(message.replyTo ? { reply_to: message.replyTo } : {}),
         subject: message.subject,
         headers: { "X-Entity-Ref-ID": message.refId },
         text: message.text,
@@ -148,5 +168,57 @@ export function addedEmail(e: AddedEmail): EmailMessage {
     subject: `${e.inviterName} added you to ${e.targetName} on Cuesheet`,
     text: `${lines.join("\n\n")}\n\n${e.link}\n`,
     html: html(lines, e.link, `Open the ${e.targetKind}`),
+  };
+}
+
+export interface EmailChangeEmail {
+  /** The new address (the link proves the account holder controls it). */
+  to: string;
+  name: string;
+  oldEmail: string;
+  /** The link's row id (the message's X-Entity-Ref-ID). */
+  refId: string;
+  /** Absolute confirm link. */
+  link: string;
+  expiresAt: number;
+}
+
+/** "Confirm your new Cuesheet login email": sent to the new address. */
+export function emailChangeEmail(e: EmailChangeEmail): EmailMessage {
+  const expires = new Date(e.expiresAt).toUTCString();
+  const lines = [
+    `${e.name} asked to change the login email of their Cuesheet account from ${e.oldEmail} to this address.`,
+    `Confirm with the link below. It works once and expires ${expires}. If this wasn't you, ignore this email: nothing changes.`,
+  ];
+  return {
+    to: e.to,
+    refId: e.refId,
+    subject: "Confirm your new Cuesheet login email",
+    text: `${lines.join("\n\n")}\n\n${e.link}\n`,
+    html: html(lines, e.link, "Confirm the new email"),
+  };
+}
+
+export interface EmailChangedEmail {
+  /** The old address. */
+  to: string;
+  name: string;
+  newEmail: string;
+  /** Absolute link to the app (sign in). */
+  link: string;
+}
+
+/** "Your Cuesheet login email was changed": the notice to the old address. */
+export function emailChangedEmail(e: EmailChangedEmail): EmailMessage {
+  const lines = [
+    `The login email of your Cuesheet account (${e.name}) was changed from ${e.to} to ${e.newEmail}.`,
+    "If this wasn't you, contact your Cuesheet admin.",
+  ];
+  return {
+    to: e.to,
+    refId: crypto.randomUUID(),
+    subject: "Your Cuesheet login email was changed",
+    text: `${lines.join("\n\n")}\n\n${e.link}\n`,
+    html: html(lines, e.link, "Open Cuesheet"),
   };
 }

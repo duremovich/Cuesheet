@@ -263,7 +263,7 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   row was gone or became the owner's meanwhile); closes their sockets unless the team still
   gives access). `GET /api/shows/:id` adds `teamId`/`teamName`/`invitePolicy` for members
   only: a share link's viewer gets the show without them. **Presence** (R22): the DO keeps each socket's name
-  (`X-Cuesheet-Name`, URI-encoded; share visitors "Guest (read-only)") and sends
+  (`X-Cuesheet-Name`, URI-encoded, refreshed by `notifyName` on a rename; share visitors "Guest (read-only)") and sends
   `hello`/`presence` with `{clients, readOnly, users: [{id, name, readOnly}]}` (one entry
   per user or share link; members by name, guests last). Share visitors get the counts
   without `users`. The pill keeps the count; hovering names people, clicking lists them
@@ -1488,7 +1488,9 @@ position is kept outside React.
   `login:emailip:<email>|<ip>` 10/min + 50/h (so nobody can lock an account out from
   elsewhere), `login:email:<email>` 100/h, `login:ip:<ip>` 50/h; a success clears the
   email+IP key, a reset clears the email's keys (no LIKE: D1 caps LIKE patterns at 50
-  bytes). Others: `invite:ip:`, `reset:ip:`, `share:ip:`, `password:user:<id>`. Over a limit: 429 + `Retry-After` (seconds until the window has
+  bytes). Others: `invite:ip:`, `reset:ip:`, `share:ip:`, `email-change:ip:`,
+  `password:user:<id>` (password change and email change share it), and
+  `email-change:user:<id>` (every confirmation email counts: 5/h, 20/day). Over a limit: 429 + `Retry-After` (seconds until the window has
   room) and a message that says nothing about the account. The IP is
   `CF-Connecting-IP` ("unknown" locally, so tests set it). Every function takes `now`, so
   tests move time by passing it (or by aging rows).
@@ -1496,13 +1498,30 @@ position is kept outside React.
   its last extension gets 30 fresh days and a re-sent cookie (`sessionOf` in
   `auth/middleware.ts`, `maybeExtendSession`). `POST /api/auth/logout-all` deletes every
   session of the user and `disconnectUser`s them in all their shows ("Sign out
-  everywhere" in the header's ⋯ menu, `components/AccountMenu.tsx`).
+  everywhere" in the header's ⋯ menu, `components/AccountMenu.tsx`, and on `/account`).
+- **Profile** (`routes/me.ts`, `/account` "Account" card). `PATCH /api/me {name}` (the
+  invite-accept rule, `cleanName`: trimmed, 1–200) → `{user}`; open sockets' presence
+  names follow at once (`ShowDO.notifyName` in each of the user's shows). **Login email**:
+  `POST /api/me/email {newEmail, currentPassword}` (wrong password 400 + rate limit, own
+  address 400, another account's 409) stores a link in `invites` (kind "email",
+  `user_id`, 24 h; a TS enum value, no migration) and emails `/confirm-email/<token>` to
+  the NEW address → `{pending: {email, expiresAt}, emailed, message?}`. The link is never
+  returned: `emailed: false` + `message` when email is off or the send failed (it stays
+  pending). A new request or `POST /api/me/email/resend` revokes the earlier link;
+  `DELETE /api/me/email` cancels; `GET /api/me/access` has `pendingEmail`. Confirming
+  needs no session: `GET`/`POST /api/email-changes/:token` (the page confirms on a
+  button); one D1 batch moves the email only while the link is open, and the unique index
+  on `users.email` is the "still free?" check (409, link stays pending). The old address
+  gets a notice; sessions are kept. **Dev outbox**: in `vite dev` and the e2e build
+  (VITE_DEV_PAGES=1), mail not sent for lack of a key is kept in memory for admins at
+  `GET /api/dev/outbox?to=` (how `e2e/account.spec.ts` follows the link); production
+  builds compile it out (404).
 - **Password change** `POST /api/auth/password {currentPassword, newPassword}` (≥ 10;
   wrong current → 400, rate-limited): keeps this session, deletes the others and closes
   their sockets (`disconnectSession` per session id). **Admin reset links**:
   `POST /api/admin/password-resets {email}` → `/reset/<token>` (24 h, stored in `invites`
-  with `kind` "reset" and `user_id`; plain invites have kind "signup" and can't be used as
-  resets or vice versa), `GET/POST /api/password-resets/:token` (sets the password, signs
+  with `kind` "reset" and `user_id`; plain invites have kind "signup", email changes
+  "email"; none can be used as another kind), `GET/POST /api/password-resets/:token` (sets the password, signs
   out everywhere, signs in, clears the login lock). Page: `pages/ResetPasswordPage.tsx`;
   the form is on the Shows page for admins.
 - **Invites** (`routes/invites.ts`) carry a show (`show_id` + `role`) or a team (`team_id`
@@ -1621,9 +1640,12 @@ position is kept outside React.
   inviter), subject, headers: {"X-Entity-Ref-ID": invite id, or a UUID for "added"},
   text, html}`. Templates `inviteEmail` / `addedEmail`: who, what (show/team), role,
   link (`APP_ORIGIN`, else the request's origin), expiry; HTML-escaped, no images.
+  `emailChangeEmail` (to the new address) / `emailChangedEmail` (to the old) have no
+  `reply_to`.
 - **UI**: Shows page (grouped by team, then Personal; New team; a team picker on New
-  show), `/teams/:id` (`pages/TeamPage.tsx`), Show settings → Members, `/account` "My
-  access" (`pages/AccountPage.tsx`, from the account menu), the invite page names the team.
+  show), `/teams/:id` (`pages/TeamPage.tsx`), Show settings → Members, `/account` "Account"
+  (profile, then my teams and shows; `pages/AccountPage.tsx`, from the account menu), the
+  invite page names the team.
   `features/teams/` (`AddPeople`, `PendingInvites`, `MemberMeta`, `roleText`),
   `components/ConfirmStrip.tsx` (in-row confirms), `lib/relativeTime.ts`. e2e:
   `e2e/teams.spec.ts`; worker: `test/worker/teams.test.ts`, `test/worker/people.test.ts`,

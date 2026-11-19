@@ -60,6 +60,20 @@ export function inviteLimits(userId: string): Limit {
   };
 }
 
+/**
+ * Login-email change links one account may have sent (requests and resends): 5 an hour,
+ * 20 a day. Every send counts, so nobody can use it to mail strangers.
+ */
+export function emailChangeLimits(userId: string): Limit {
+  return {
+    key: `email-change:user:${userId}`,
+    windows: [
+      { ms: 3_600_000, max: 5 },
+      { ms: 86_400_000, max: 20 },
+    ],
+  };
+}
+
 /** Seconds to wait before `limits` may try again, or 0 if none is over a limit. */
 export async function retryAfter(
   db: D1Database,

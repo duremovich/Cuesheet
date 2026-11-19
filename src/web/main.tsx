@@ -26,6 +26,7 @@ import { TechPage } from "./features/tech/TechPage";
 import { AuthProvider, RequireAuth } from "./lib/auth";
 import { installStaleBuildRecovery } from "./lib/staleBuild";
 import { AccountPage } from "./pages/AccountPage";
+import { ConfirmEmailPage } from "./pages/ConfirmEmailPage";
 import { devRoutes } from "./pages/dev/routes";
 import { InvitePage } from "./pages/InvitePage";
 import { LoginPage } from "./pages/LoginPage";
@@ -58,6 +59,7 @@ const router = createBrowserRouter([
       { path: "/login", element: <LoginPage /> },
       { path: "/invite/:token", element: <InvitePage /> },
       { path: "/reset/:token", element: <ResetPasswordPage /> },
+      { path: "/confirm-email/:token", element: <ConfirmEmailPage /> },
       // Read-only share links (R23): no sign-in.
       { path: "/s/:token", element: <SharePage grids={GRIDS} /> },
       { path: "/", element: <RequireAuth>{(user) => <ShowsPage user={user} />}</RequireAuth> },

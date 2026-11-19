@@ -1,6 +1,7 @@
-// M5b (R24): sign out everywhere closes the account's other browsers' shows; changing the
-// password from the account menu; an admin's one-time reset link. Uses its own invited user
-// (never the shared admin: see CLAUDE.md "E2E reliability").
+// M5b (R24): sign out everywhere closes the account's other browsers' shows; renaming
+// yourself and changing the login email through its emailed link (from the e2e build's dev
+// outbox); changing the password from the account menu; an admin's one-time reset link.
+// Uses its own invited user (never the shared admin: see CLAUDE.md "E2E reliability").
 import { type Browser, expect, type Page, test } from "@playwright/test";
 import { ADMIN, apiCreateShow, apiLogin, openShow, trackErrors, uniqueName } from "./helpers";
 
@@ -64,6 +65,64 @@ test("sign out everywhere closes the show in the account's other browser", async
   await expect(b.getByTestId("presence")).toHaveAttribute("data-status", "unauthorized");
   await b.reload();
   await expect(b).toHaveURL(/\/login/);
+});
+
+test("rename yourself, then change the login email through the emailed link", async ({
+  browser,
+}) => {
+  const admin = await newPage(browser);
+  await apiLogin(admin);
+  const { page, email } = await invitedUser(browser, admin);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Account" }).click();
+  await page.getByRole("menuitem", { name: "Account" }).click();
+  await expect(page.getByRole("heading", { name: "Account" })).toBeVisible();
+  const profile = page.getByTestId("profile");
+  await expect(page.getByTestId("profile-email")).toHaveText(email);
+
+  const name = uniqueName("Renamed");
+  await profile.getByRole("button", { name: "Rename" }).click();
+  await profile.getByLabel("Your name").fill(name);
+  await profile.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("profile-name")).toHaveText(name);
+
+  // No email is set up in e2e: the dialog says so plainly, and the change waits.
+  const newEmail = `${uniqueName("moved").replace(/\s+/g, "-")}@cuesheet.test`;
+  await profile.getByRole("button", { name: "Change…" }).click();
+  const dialog = page.getByRole("dialog", { name: "Change login email" });
+  await dialog.getByLabel("New email").fill(newEmail);
+  await dialog.getByLabel("Current password").fill(PASSWORD);
+  await dialog.getByRole("button", { name: "Send link" }).click();
+  await expect(dialog.getByRole("alert")).toContainText("Email isn't set up");
+  await dialog.getByRole("button", { name: "Done" }).click();
+  await expect(page.getByTestId("pending-email")).toContainText(newEmail);
+
+  // The link from the developer outbox (the e2e build keeps unsent email for admins).
+  const box = await admin.request.get(`/api/dev/outbox?to=${encodeURIComponent(newEmail)}`);
+  expect(box.status()).toBe(200);
+  const { messages } = (await box.json()) as { messages: { text: string }[] };
+  const link = /https?:\/\/\S+\/confirm-email\/[A-Za-z0-9_-]+/.exec(
+    messages.at(-1)?.text ?? "",
+  )?.[0];
+  expect(link).toBeTruthy();
+
+  // Opened signed out (another device): the link alone confirms it.
+  const phone = await newPage(browser);
+  await phone.goto(new URL(link as string).pathname);
+  await expect(phone.getByTestId("confirm-email-address")).toHaveText(newEmail);
+  await phone.getByRole("button", { name: "Confirm new email" }).click();
+  await expect(phone.getByRole("status")).toContainText(`you now sign in with ${newEmail}`);
+
+  // The new address signs in; the old one doesn't (one deliberate failure).
+  await apiLogin(phone, newEmail, PASSWORD);
+  const stranger = await newPage(browser);
+  const old = await stranger.request.post("/api/auth/login", {
+    data: { email, password: PASSWORD },
+  });
+  expect(old.status()).toBe(401);
+  await page.reload();
+  await expect(page.getByTestId("profile-email")).toHaveText(newEmail);
+  await expect(page.getByTestId("pending-email")).toHaveCount(0);
 });
 
 test("change the password from the account menu; an admin's reset link", async ({ browser }) => {

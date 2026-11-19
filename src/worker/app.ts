@@ -3,10 +3,12 @@
 import { Hono } from "hono";
 import { csrf } from "hono/csrf";
 import { HTTPException } from "hono/http-exception";
-import { seedAdmin } from "./auth/middleware";
+import { requireAdmin, requireAuth, seedAdmin } from "./auth/middleware";
 import { getDb } from "./db/d1/client";
+import { devOutbox } from "./email";
 import { authRoutes } from "./routes/auth";
 import { inviteRoutes } from "./routes/invites";
+import { meRoutes } from "./routes/me";
 import { peopleRoutes } from "./routes/people";
 import { shareRoutes } from "./routes/share";
 import { showRoutes } from "./routes/shows";
@@ -72,12 +74,24 @@ app.use(async (c, next) => {
 });
 app.use(seedAdmin);
 
+// Developer builds only (email.ts `devOutbox`): the emails that weren't sent, for admins.
+app.get("/dev/outbox", requireAuth, requireAdmin, (c) => {
+  const box = devOutbox();
+  if (!box) return c.json({ error: "Not found" }, 404);
+  const to = c.req.query("to");
+  const messages = box
+    .filter((m) => !to || m.to === to)
+    .map(({ to, subject, text }) => ({ to, subject, text }));
+  return c.json({ messages });
+});
+
 app.route("/", authRoutes);
 app.route("/", showRoutes);
 app.route("/", shareRoutes);
 app.route("/", inviteRoutes);
 app.route("/", teamRoutes);
 app.route("/", peopleRoutes);
+app.route("/", meRoutes);
 app.route("/", transferRoutes);
 
 app.notFound((c) => c.json({ error: "Not found" }, 404));

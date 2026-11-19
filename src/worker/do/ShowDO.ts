@@ -737,6 +737,20 @@ export class ShowDO extends DurableObject<Env> {
   }
 
   /**
+   * A user renamed themselves: their open sockets' presence name follows (members' names
+   * are read from D1 everywhere else). Returns how many sockets were theirs.
+   */
+  async notifyName(userId: string, name: string): Promise<number> {
+    const sockets = this.ctx.getWebSockets(userId);
+    for (const ws of sockets) {
+      const att = ws.deserializeAttachment() as SocketAttachment | null;
+      if (att && !att.share) ws.serializeAttachment({ ...att, name });
+    }
+    if (sockets.length > 0) this.broadcastPresence();
+    return sockets.length;
+  }
+
+  /**
    * Show-level fields changed in D1 (name, current session): tell every open socket
    * (`{type:"show"}`). Nothing is stored here; D1 is the source of truth and the meta name
    * refreshes when the show is opened. Returns how many sockets were told.

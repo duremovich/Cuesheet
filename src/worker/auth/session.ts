@@ -2,7 +2,7 @@
 // Sessions last 30 days and slide: a session used more than a day after it was last
 // extended gets a fresh 30 days (and a fresh cookie; `requireAuth`).
 import { and, eq, gt, isNull, lt, ne, or } from "drizzle-orm";
-import type { UserDTO } from "../../shared/api";
+import { MAX_NAME_LENGTH, type UserDTO } from "../../shared/api";
 import { accessibleShowIds } from "../access";
 import type { D1Db } from "../db/d1/client";
 import { schema } from "../db/d1/client";
@@ -138,6 +138,12 @@ export function toUserDTO(row: typeof schema.users.$inferSelect): UserDTO {
 
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
+}
+
+/** A display name as typed: trimmed, 1–MAX_NAME_LENGTH characters; null when not valid. */
+export function cleanName(raw: unknown): string | null {
+  const name = typeof raw === "string" ? raw.trim() : "";
+  return name && name.length <= MAX_NAME_LENGTH ? name : null;
 }
 
 export function isPlausibleEmail(email: string): boolean {

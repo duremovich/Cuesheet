@@ -1,6 +1,8 @@
 // JSON shapes exchanged between the Worker API and the web client.
 // Both sides import from here; keep it free of runtime dependencies.
 
+import type { PendingEmailChange } from "./account";
+
 /**
  * Per-show role. owner = the creator (manages members); editor = everything else;
  * commenter = read all, create/edit/delete own notes; viewer = read only.
@@ -358,6 +360,8 @@ export interface MyAccessResponse {
     teamId: string | null;
     teamName: string | null;
   }[];
+  /** A login-email change waiting for its confirmation link (null: none). */
+  pendingEmail: PendingEmailChange | null;
 }
 
 export interface AcceptInviteRequest {

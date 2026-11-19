@@ -128,12 +128,14 @@ export const invites = sqliteTable("invites", {
   acceptedAt: integer("accepted_at"),
   /**
    * `signup`: a new account (the invite link). `reset`: an admin's one-time password
-   * reset link for `userId` (the same page shape; `/reset/<token>`).
+   * reset link for `userId` (the same page shape; `/reset/<token>`). `email`: `userId`'s
+   * request to change their login to `email` (`/confirm-email/<token>`, sent there).
+   * A TS enum only (no CHECK constraint), so a new kind needs no migration.
    */
-  kind: text("kind", { enum: ["signup", "reset"] })
+  kind: text("kind", { enum: ["signup", "reset", "email"] })
     .notNull()
     .default("signup"),
-  /** reset: the account whose password the link sets. */
+  /** reset: the account whose password the link sets; email: whose login it changes. */
   userId: text("user_id"),
   /** signup: the show the new account joins on accept (null: none), with `role`. */
   showId: text("show_id"),
