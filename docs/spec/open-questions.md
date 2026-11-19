@@ -212,7 +212,31 @@ Things the first build had to decide; each is easy to change.
 - A shot list example for the Shot table (the M5a fields follow data-model.md; confirm
   framing and status lists with a real shoot).
 
+## Teams and invites (decisions to confirm)
+
+- **Who can see whether an email has an account.** Anyone who may add people learns it
+  (an account is added at once, otherwise an invite is made). Accepted for a small
+  invite-only instance; revisit if the instance opens up. → decision 0010
+- **Downgrading a team member on one show.** Not possible (the effective role is the
+  highest); give them a lower team role or make them a guest instead. Enough in practice?
+- **Bulk invite** (several emails, or several shows at once): not built. Needed once a
+  whole crew is onboarded at the start of a production?
+- **Moving teams between instances**: a team show arrives personal, with its direct
+  members only. Build team migration if a team ever moves.
+
 ## Answered
+
+- **Teams** (2026-11-18): real teams with a team role, a show in at most one team, team
+  members get a derived role on every show of the team. → decision 0010, CLAUDE.md "Teams"
+- **Who may invite** (2026-11-18): the show's owner, and editors unless the owner sets the
+  invite policy to owner only; in a team the owner and admins, and editors unless the
+  team's policy says owner. Nobody grants above their own role; inviters manage the
+  people they added. → decision 0010, R23
+- **Invite email** (2026-11-18): optional, through Resend from
+  `cuesheet@easyschematic.live`; without a key the link is copied by hand.
+  → docs/deploy.md "Email (optional)"
+- **Pending invites** (2026-11-18): listed per show and team (managers see all, others
+  their own), revocable and reissuable; expired ones stay listed for 30 days.
 
 - **Custom field values on notes** (M5a review): commenters may edit custom values on
   their own notes, like the notes' core fields. → CLAUDE.md "Custom fields and custom
@@ -225,7 +249,7 @@ Things the first build had to decide; each is easy to change.
   email+IP, 100 an hour per email, 50 an hour per IP; bad invite/reset/share tokens 10 a
   minute and 50 an hour per IP. → CLAUDE.md "Account security"
 - **Invites into a show** (M5b): a show's owner (not only admins) may invite people into
-  their show with a role.
+  their show with a role. (Widened to editors and teams on 2026-11-18, above.)
 - **Co-owners** (M5b): no; one owner per show, transfer makes the old owner an editor.
 - **Backups** (M5b), as built: weekly D1 dumps to R2 (13 kept) plus per-show JSON exports
   on demand. → docs/deploy.md

@@ -84,6 +84,7 @@ The same steps as a bare checklist: [`scripts/cf-setup.md`](../scripts/cf-setup.
    again once a user exists:
    `pnpm exec wrangler secret delete ADMIN_PASSWORD --env production --config wrangler.jsonc`.
    Invite the team from the Shows page.
+   Optional: email for invites, see [Email (optional)](#email-optional) below.
 8. **GitHub Actions.** Create an API token (Cloudflare dashboard → My Profile → API
    Tokens → Create token → "Edit Cloudflare Workers" template, plus **D1: Edit**; account
    resources: your account; zone resources: the zone of your custom domain, if any). In
@@ -110,6 +111,42 @@ The same steps as a bare checklist: [`scripts/cf-setup.md`](../scripts/cf-setup.
 
    Deploy; Cloudflare creates the DNS record and certificate. Turn on "Always Use HTTPS"
    for the zone. Share links, invite and reset links use the page's origin, so they follow.
+   Links in **emails** don't (there's no page): set `APP_ORIGIN` to the new URL (see
+   [Email (optional)](#email-optional)).
+
+## Email (optional)
+
+Invites and "you were added" notices can be emailed through [Resend](https://resend.com)
+(`src/worker/email.ts`; decision 0010). Without it nothing is sent: every invite still
+shows its link once, to copy and send by hand, and the API answers `emailed: false`. A
+failed send never fails the request either (the same `emailed: false`, plus a
+`console.error` with Resend's status and error, never the message, which holds the link).
+
+1. **Sender.** The default `EMAIL_FROM` is `Cuesheet <cuesheet@easyschematic.live>`.
+   easyschematic.live is already a verified domain on Dylan's Resend account (EasySchematic
+   sends from it; Resend's free plan allows one domain), and verification covers every
+   address on it, so nothing to set up. Another sender needs its domain verified in Resend
+   first (DNS records), then a new `EMAIL_FROM` value in `wrangler.jsonc` under
+   `env.production.vars`.
+2. **API key.** Resend dashboard → API Keys → Create API key, permission **Sending
+   access**, domain easyschematic.live (a key for Cuesheet only, so it can be revoked on
+   its own). Then:
+
+   ```sh
+   pnpm exec wrangler secret put RESEND_API_KEY --env production --config wrangler.jsonc
+   ```
+
+   `secret put` takes effect on the deployed Worker without a code deploy. Delete the
+   secret to turn email off again (`wrangler secret delete RESEND_API_KEY --env production
+   --config wrangler.jsonc`).
+3. **`APP_ORIGIN`.** Set it to the production URL (`https://cuesheet.example.com`, or the
+   `workers.dev` one, no trailing slash) in `wrangler.jsonc` → `env.production.vars`, and
+   deploy. Links in emails use it; while it's `""` they use the origin of the request that
+   sent the invite, which is right only when that request came through the public URL.
+
+Locally `.dev.vars` may hold a test key (`RESEND_API_KEY=`, empty by default: no email).
+Tests never reach Resend: worker tests stub `fetch` with `stubResend()`
+(`test/worker/helpers.ts`), and everything else runs without a key.
 
 ## What each deploy does
 
@@ -235,6 +272,10 @@ default user agents with 403 "error code: 1010". https targets with `Secure` coo
   invite them on the target first, then migrate.
 - **Not copied:** sessions (everyone signs in again), pending invites, rate-limit events,
   upload reservations, other shows. Nothing is deleted on the source.
+- **Teams don't move.** A team's show arrives as a **personal** show (the target clears
+  `team_id`) with its direct members only: whoever reached it through the team has no
+  access on the target until they're added (or the show is moved into a team there).
+  `invited_by` of a membership whose inviter has no account on the target is cleared.
 - **Safety:** the target accepts an import only into a show id it doesn't have (no D1
   row, an empty Durable Object). A previous import of the same show (the DO's
   `transfer:state` marker) is replaced only with `--overwrite`, and never once someone has

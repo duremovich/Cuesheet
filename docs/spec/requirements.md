@@ -83,6 +83,13 @@ specified in [ux.md](ux.md); the tables in [data-model.md](data-model.md).
   cell resolve last-write-wins with the history showing both.
 - **R23 Roles.** Per show: editor, commenter (read everything, add and edit own notes),
   viewer. Share a view by link, optionally read-only without login for SM/director.
+  **Teams** (decision 0010): a team (owner, admin, editor, commenter, viewer) owns any
+  number of shows; its members get a role on every show of the team, and a person's
+  effective role in a show is the highest of their own and the team's. **Delegated
+  inviting**: besides the owner, editors may add people to a show and team editors to a
+  team (unless the invite policy says owner only), never above their own role, and manage
+  the people they added. Pending invites can be listed, revoked and reissued; invites are
+  emailed when email is set up, else the link is copied.
 - **R24 Sign-in** for the team: email + password, invite-only. Google sign-in can come later.
 
 ### Import / export
@@ -119,5 +126,6 @@ specified in [ux.md](ux.md); the tables in [data-model.md](data-model.md).
 
 - Playback or show control.
 - Storing full-resolution media.
-- Multi-organization SaaS features (billing, public sign-up).
+- Billing and public sign-up. (Teams exist, but the instance stays invite-only for one
+  group of people; see decision 0010.)
 - A full spreadsheet formula language.

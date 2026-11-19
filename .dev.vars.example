@@ -3,5 +3,5 @@
 ADMIN_EMAIL=admin@cuesheet.test
 ADMIN_PASSWORD=change-me-please
 # Email (invites, "you were added"): a Resend API key. Empty: no email, links are copied.
-# Production: wrangler secret put RESEND_API_KEY --env production
+# Production: docs/deploy.md, "Email (optional)".
 RESEND_API_KEY=
