@@ -30,7 +30,14 @@
     }
   ],
   "r2_buckets": [{ "binding": "FILES", "bucket_name": "cuesheet-files" }],
-  "vars": { "ENVIRONMENT": "development" },
+  // EMAIL_FROM: the sender of invite emails (Resend; src/worker/email.ts), sent only when the
+  // RESEND_API_KEY secret is set. APP_ORIGIN: the origin of links in emails ("": the
+  // request's own origin).
+  "vars": {
+    "ENVIRONMENT": "development",
+    "EMAIL_FROM": "Cuesheet <cuesheet@easyschematic.live>",
+    "APP_ORIGIN": ""
+  },
   // Weekly D1 backup to R2 (Mondays 03:17 UTC; src/worker/routes/backup.ts).
   "triggers": { "crons": ["17 3 * * 1"] },
   "observability": { "enabled": true },
@@ -40,10 +47,16 @@
   "env": {
     // `wrangler deploy --env production` (the Worker is named cuesheet-production).
     // Bindings aren't inherited by environments: everything is repeated here.
-    // Secrets (not in this file): ADMIN_EMAIL, ADMIN_PASSWORD
+    // Secrets (not in this file): ADMIN_EMAIL, ADMIN_PASSWORD, RESEND_API_KEY (optional:
+    // without it no email is sent and invite links are copied by hand)
     //   wrangler secret put ADMIN_EMAIL --env production
     "production": {
-      "vars": { "ENVIRONMENT": "production" },
+      "vars": {
+        "ENVIRONMENT": "production",
+        "EMAIL_FROM": "Cuesheet <cuesheet@easyschematic.live>",
+        // The app's public origin for links in emails ("": the request's origin).
+        "APP_ORIGIN": ""
+      },
       "durable_objects": {
         "bindings": [{ "name": "SHOW", "class_name": "ShowDO" }]
       },

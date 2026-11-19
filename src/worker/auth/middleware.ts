@@ -6,11 +6,18 @@ import { isHttps } from "../routes/util";
 import type { AppEnv } from "../types";
 import { readSessionToken, serializeSessionCookie } from "./cookie";
 import { hashPassword } from "./password";
-import { getSession, maybeExtendSession, normalizeEmail, type SessionInfo } from "./session";
+import {
+  getSession,
+  maybeExtendSession,
+  normalizeEmail,
+  type SessionInfo,
+  touchLastActive,
+} from "./session";
 
 /**
  * The request's session, if its cookie is valid; slides the session's expiry (30 days
- * from now, at most once a day) and re-sends the cookie when it does.
+ * from now, at most once a day) and re-sends the cookie when it does, and stamps the
+ * user's last activity (at most hourly).
  */
 export async function sessionOf(c: Context<AppEnv>): Promise<SessionInfo | null> {
   const token = readSessionToken(c.req.header("Cookie"));
@@ -18,6 +25,7 @@ export async function sessionOf(c: Context<AppEnv>): Promise<SessionInfo | null>
   if (!token || !session) return null;
   c.set("user", session.user);
   c.set("sessionToken", token);
+  await touchLastActive(c.var.db, session);
   if (await maybeExtendSession(c.var.db, session)) {
     c.header("Set-Cookie", serializeSessionCookie(token, { secure: isHttps(c) }), {
       append: true,

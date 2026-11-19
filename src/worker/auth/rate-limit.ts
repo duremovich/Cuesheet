@@ -5,7 +5,8 @@
 //
 // Only *failures* are counted (a wrong password, an unknown invite / reset / share token),
 // so a team signing in all day behind one office IP never trips it, and a locked key frees
-// itself as its failures age out. Every check takes `now`, so tests move time freely.
+// itself as its failures age out. The one exception is invite creation (`inviteLimits`),
+// where every invite counts. Every check takes `now`, so tests move time freely.
 import type { Context } from "hono";
 
 export interface Window {
@@ -28,7 +29,7 @@ const keyOf = (l: Limit) => (typeof l === "string" ? l : l.key);
 const windowsOf = (l: Limit) => (typeof l === "string" ? DEFAULT_WINDOWS : l.windows);
 
 /** The longest window any key uses (rows older than this are never needed). */
-export const LONGEST_WINDOW_MS = 3_600_000;
+export const LONGEST_WINDOW_MS = 86_400_000;
 const LONGEST = (windows: readonly Window[]) => Math.max(...windows.map((w) => w.ms));
 
 /**
@@ -42,6 +43,21 @@ export function loginLimits(email: string, ip: string): Limit[] {
     { key: `login:email:${email}`, windows: [{ ms: 3_600_000, max: 100 }] },
     { key: `login:ip:${ip}`, windows: [{ ms: 3_600_000, max: 50 }] },
   ];
+}
+
+/**
+ * Invites one person may create (not admins): 30 an hour, 100 a day. Every invite counts
+ * (`recordFailure` after creating one), so an outside collaborator who may invite can't
+ * use the instance to mail strangers in bulk.
+ */
+export function inviteLimits(userId: string): Limit {
+  return {
+    key: `invite-send:user:${userId}`,
+    windows: [
+      { ms: 3_600_000, max: 30 },
+      { ms: 86_400_000, max: 100 },
+    ],
+  };
 }
 
 /** Seconds to wait before `limits` may try again, or 0 if none is over a limit. */
@@ -122,12 +138,12 @@ export function clientIp(c: Context): string {
 }
 
 /** A 429 with `Retry-After` and a message that says nothing about the account. */
-export function tooMany(c: Context, seconds: number): Response {
+export function tooMany(c: Context, seconds: number, what = "attempts"): Response {
   const minutes = Math.max(1, Math.ceil(seconds / 60));
   c.header("Retry-After", String(Math.max(1, seconds)));
   return c.json(
     {
-      error: `Too many attempts. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`,
+      error: `Too many ${what}. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`,
     },
     429,
   );

@@ -147,6 +147,11 @@ export interface ShowMetaDTO {
 export interface ShowInfoDTO extends ShowMetaDTO {
   /** The session new notes are stamped with ("Tech 2"); null when unset. */
   currentSession: string | null;
+  /** The team the show belongs to (null: personal). */
+  teamId: string | null;
+  teamName: string | null;
+  /** Who may add people besides the owner: editors (`editors`) or nobody (`owner`). */
+  invitePolicy: InvitePolicy;
 }
 
 export interface ShowResponse {
@@ -166,6 +171,8 @@ export interface UpdateShowRequest {
    * personal (`null`: the owner, or the team's owner/admins).
    */
   teamId?: string | null;
+  /** Owner only. */
+  invitePolicy?: InvitePolicy;
 }
 
 export interface UpdateShowResponse {
@@ -238,17 +245,23 @@ export interface TeamShowsResponse {
 }
 
 /**
- * POST /api/invites. Admins invite anyone; a show's owner may invite to that show
- * (`showId` required then). On accept the new account joins `showId` with `role`
- * (default editor).
+ * POST /api/invites: a one-time sign-up link (copy it; no email). Admins invite anyone,
+ * with or without a target. Otherwise it needs a target: a show (`showId` + `role`,
+ * default editor) or a team (`teamId` + `teamRole`, default editor), never both, and the
+ * caller must be allowed to add people there, up to their own role (decision 4). The new
+ * account joins the target on accept.
  */
 export interface CreateInviteRequest {
   email: string;
   showId?: string;
   role?: Role;
+  teamId?: string;
+  teamRole?: TeamRole;
 }
 
 export interface CreateInviteResponse {
+  /** The invite's id (for revoke / reissue). */
+  id: string;
   email: string;
   /** Path (not absolute URL) of the one-time accept page, e.g. /invite/abc... */
   path: string;
@@ -260,6 +273,87 @@ export interface InviteInfoResponse {
   /** The show the account joins on accept, if any. */
   showName?: string | null;
   role?: Role | null;
+  /** Or the team it joins, with the team role. */
+  teamName?: string | null;
+  teamRole?: TeamRole | null;
+}
+
+/**
+ * An open invite (not accepted, not revoked) in GET /api/shows/:id/invites or
+ * /api/teams/:id/invites. Expired ones stay listed for 30 days so they can be reissued.
+ * The token is never listed (only its hash is stored): the link is shown once, when the
+ * invite is made or reissued.
+ */
+export interface PendingInviteDTO {
+  id: string;
+  email: string;
+  /** The show role, or for a team invite the team role. */
+  role: Role | TeamRole;
+  invitedBy: PersonRefDTO | null;
+  createdAt: number;
+  expiresAt: number;
+  expired: boolean;
+}
+
+export interface PendingInvitesResponse {
+  invites: PendingInviteDTO[];
+}
+
+/** POST /api/invites/:id/reissue: a new link (the old one stops working). */
+export interface ReissueInviteResponse {
+  id: string;
+  path: string;
+  expiresAt: number;
+  emailed: boolean;
+}
+
+/** POST /api/shows/:id/people and /api/teams/:id/people. */
+export interface AddPeopleRequest {
+  email: string;
+  role: Role | TeamRole;
+}
+
+/** The invite made for an email without an account. */
+export interface InvitedDTO {
+  id: string;
+  email: string;
+  role: Role | TeamRole;
+  /** Path of the one-time accept page (shown once). */
+  path: string;
+  expiresAt: number;
+}
+
+/**
+ * An existing account is added at once (`added`, "you were added" email); otherwise an
+ * invite is made (`invited`, invite email). `emailed` is false when no email went out (no
+ * email configured, or sending failed): share the link instead.
+ */
+export type AddShowPeopleResponse =
+  | { added: MemberDTO; emailed: boolean }
+  | { invited: InvitedDTO; emailed: boolean };
+
+export type AddTeamPeopleResponse =
+  | { added: TeamMemberDTO; emailed: boolean }
+  | { invited: InvitedDTO; emailed: boolean };
+
+/** GET /api/people: everyone you share a show or a team with (for autocomplete). */
+export interface PeopleResponse {
+  people: { id: string; name: string; email: string }[];
+}
+
+/** GET /api/me/access: your teams and every show you can open. */
+export interface MyAccessResponse {
+  teams: { id: string; name: string; role: TeamRole; showCount: number }[];
+  shows: {
+    id: string;
+    name: string;
+    /** Effective role. */
+    role: Role;
+    /** `direct`: you're a member of the show (and can leave it); `team`: through its team. */
+    source: "direct" | "team";
+    teamId: string | null;
+    teamName: string | null;
+  }[];
 }
 
 export interface AcceptInviteRequest {

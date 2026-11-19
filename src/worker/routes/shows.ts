@@ -1,15 +1,19 @@
-import { and, eq, exists, inArray, isNull, notExists, sql } from "drizzle-orm";
+import { and, eq, exists, inArray, isNull, ne, notExists, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { type Context, Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import type { ImportMapping } from "../../shared/airtable-columns";
 import {
+  type AddShowPeopleResponse,
   type CreateShowRequest,
   GRANTABLE_ROLES,
+  INVITE_POLICIES,
+  type InvitePolicy,
   MAX_NAME_LENGTH,
   MAX_SESSION_LENGTH,
   type MemberDTO,
   type MembersResponse,
+  type PendingInvitesResponse,
   type Role,
   type ShowResponse,
   type ShowSummaryDTO,
@@ -25,6 +29,9 @@ import type {
 } from "../../shared/ops";
 import {
   accessibleShows,
+  canGrant,
+  canInviteToShow,
+  canManageShowMember,
   isTeamEditor,
   isTeamManager,
   refreshAccess,
@@ -35,7 +42,7 @@ import {
 } from "../access";
 import { sha256Hex } from "../auth/bytes";
 import { requireAuth } from "../auth/middleware";
-import { normalizeEmail } from "../auth/session";
+import { isPlausibleEmail, normalizeEmail } from "../auth/session";
 import { requireAuthOrShare, shareResourceGuard } from "../auth/share-auth";
 import { type D1Db, schema } from "../db/d1/client";
 import { RESERVED_KEYS } from "../do/ops-engine";
@@ -48,11 +55,21 @@ import {
   SHARE_SCOPE_HEADER,
   USER_ID_HEADER,
 } from "../do/ShowDO";
+import { addedEmail, appOrigin, sendEmail } from "../email";
 import { buildAirtableImport, type CsvFile } from "../import/airtable";
 import type { AppEnv } from "../types";
 import * as attachments from "./attachments";
 import { exportShow } from "./backup";
 import * as clone from "./clone";
+import {
+  countInvite,
+  createInvite,
+  emailInvite,
+  endInvites,
+  type InviteRole,
+  inviteLimited,
+  pendingInvites,
+} from "./invites";
 import * as script from "./script";
 import {
   declaredTooLarge,
@@ -72,7 +89,14 @@ export function showStub(env: Env, showId: string) {
 
 export type ShowEnv = AppEnv & {
   Variables: AppEnv["Variables"] & {
-    show: { id: string; name: string; currentSession: string | null; teamId: string | null };
+    show: {
+      id: string;
+      name: string;
+      currentSession: string | null;
+      teamId: string | null;
+      teamName: string | null;
+      invitePolicy: InvitePolicy;
+    };
     /** Effective role (src/worker/access.ts): the highest of the direct and the team one. */
     role: Role;
     /** The caller's direct membership role (null: access only through the show's team). */
@@ -145,7 +169,7 @@ function hasReservedCustomKey(op: unknown): boolean {
  * Makes `to` the show's owner and `from` (the owner) an editor, in one D1 transaction that
  * re-checks both sides, so the show always has exactly one owner: if `from` is no longer
  * the owner (a concurrent transfer won) or `to` is no longer a member, nothing changes and
- * this returns false. The old owner's open invites into the show expire with it.
+ * this returns false. The old owner's open invites into the show are revoked with it.
  */
 export async function transferOwnership(
   db: D1Db,
@@ -179,12 +203,13 @@ export async function transferOwnership(
       ),
     db
       .update(schema.invites)
-      .set({ expiresAt: Date.now() })
+      .set({ revokedAt: Date.now() })
       .where(
         and(
           eq(schema.invites.showId, showId),
           eq(schema.invites.invitedBy, from),
           isNull(schema.invites.acceptedAt),
+          isNull(schema.invites.revokedAt),
           exists(holds(to, "owner")),
           notExists(holds(from, "owner")),
         ),
@@ -193,7 +218,7 @@ export async function transferOwnership(
   return promoted.length > 0;
 }
 
-function isGrantable(role: unknown): role is Role {
+function isGrantable(role: unknown): role is InviteRole {
   return typeof role === "string" && (GRANTABLE_ROLES as readonly string[]).includes(role);
 }
 
@@ -292,6 +317,57 @@ async function showMembers(
 }
 
 const TEAM_ONLY = "Manage this person in the team";
+
+/** 403 unless the caller may add people to the show with `role` (decision 4). */
+function grantRefusal(c: Context<ShowEnv>, role: Role): Response | null {
+  if (!canInviteToShow(c.var.role, c.var.show.invitePolicy)) {
+    return c.json({ error: "You can't add people to this show" }, 403);
+  }
+  if (!canGrant(c.var.role, role)) {
+    return c.json({ error: "You can't give a role above your own" }, 403);
+  }
+  return null;
+}
+
+async function userByEmail(db: D1Db, email: string) {
+  return db
+    .select({ id: schema.users.id, email: schema.users.email, name: schema.users.name })
+    .from(schema.users)
+    .where(eq(schema.users.email, email))
+    .get();
+}
+
+async function directMember(db: D1Db, showId: string, userId: string) {
+  const m = schema.memberships;
+  return db
+    .select({ role: m.role, invitedBy: m.invitedBy })
+    .from(m)
+    .where(and(eq(m.showId, showId), eq(m.userId, userId)))
+    .get();
+}
+
+/**
+ * Add a direct member, invited by the caller; null when they already are one. A team
+ * member may also be added directly (a guest role above their team one).
+ */
+async function addDirectMember(
+  c: Context<ShowEnv>,
+  userId: string,
+  role: Role,
+): Promise<MemberDTO | null> {
+  const inserted = await c.var.db
+    .insert(schema.memberships)
+    .values({ showId: c.var.show.id, userId, role, invitedBy: c.var.user.id })
+    .onConflictDoNothing()
+    .returning({ userId: schema.memberships.userId });
+  if (inserted.length === 0) return null;
+  if (c.var.show.teamId) {
+    // They may already have the show open through the team.
+    await refreshAccess(c.env, c.var.db, { showIds: [c.var.show.id], userIds: [userId] });
+  }
+  const [member] = await showMembers(c.var.db, c.var.show, userId);
+  return member ?? null;
+}
 
 /** 409 for someone who only has access through the show's team, else 404. */
 async function notADirectMember(c: Context<ShowEnv>, userId: string): Promise<Response> {
@@ -398,18 +474,39 @@ export const showRoutes = new Hono<ShowEnv>()
     // (and creates it if the DO init failed after the D1 insert).
     const meta = await showStub(c.env, c.var.show.id).sync(c.var.show.id, c.var.show.name);
     return c.json({
-      show: { ...meta, currentSession: c.var.show.currentSession },
+      show: {
+        ...meta,
+        currentSession: c.var.show.currentSession,
+        teamId: c.var.show.teamId,
+        teamName: c.var.show.teamName,
+        invitePolicy: c.var.show.invitePolicy,
+      },
       role: c.var.role,
     } satisfies ShowResponse);
   })
-  // Rename (owner), the current session label (editors and the owner), and the show's team
-  // (`teamId`: see moveShowTeam). D1 is the source of truth; the DO only relays the change
-  // to open sockets.
+  // Rename (owner), the current session label (editors and the owner), the show's team
+  // (`teamId`: see checkTeamMove) and its invite policy (owner). D1 is the source of truth;
+  // the DO only relays the change to open sockets.
   .patch("/shows/:id", requireMembership, async (c) => {
     const body = await readJsonObject(c);
     if (!body) return c.json({ error: "Expected a JSON object" }, 400);
     const canEdit = c.var.role === "owner" || c.var.role === "editor";
-    const set: { name?: string; currentSession?: string | null; teamId?: string | null } = {};
+    const set: {
+      name?: string;
+      currentSession?: string | null;
+      teamId?: string | null;
+      invitePolicy?: InvitePolicy;
+    } = {};
+    if ("invitePolicy" in body) {
+      if (c.var.role !== "owner") {
+        return c.json({ error: "Only the show's owner can change who may invite" }, 403);
+      }
+      const policy = body.invitePolicy;
+      if (typeof policy !== "string" || !(INVITE_POLICIES as readonly string[]).includes(policy)) {
+        return c.json({ error: `invitePolicy must be one of ${INVITE_POLICIES.join(", ")}` }, 400);
+      }
+      set.invitePolicy = policy as InvitePolicy;
+    }
     if ("teamId" in body) {
       const checked = await checkTeamMove(c, body.teamId);
       if (checked instanceof Response) return checked;
@@ -438,7 +535,10 @@ export const showRoutes = new Hono<ShowEnv>()
       set.currentSession = session || null;
     }
     if (Object.keys(set).length === 0) {
-      return c.json({ error: "Nothing to change (name, current_session, teamId)" }, 400);
+      return c.json(
+        { error: "Nothing to change (name, current_session, teamId, invitePolicy)" },
+        400,
+      );
     }
     const updated = await c.var.db
       .update(schema.shows)
@@ -651,65 +751,151 @@ export const showRoutes = new Hono<ShowEnv>()
     const members = await showMembers(c.var.db, c.var.show);
     return c.json({ members } satisfies MembersResponse);
   })
-  .post("/shows/:id/members", requireMembership, requireOwner, async (c) => {
+  // Add someone who has an account (decision 4: the owner, or editors unless the invite
+  // policy is `owner`; up to your own role).
+  .post("/shows/:id/members", requireMembership, async (c) => {
     const body = await readJsonObject(c);
     const email = normalizeEmail(str(body?.email));
     const role = body?.role;
     if (!isGrantable(role)) {
       return c.json({ error: `role must be one of ${GRANTABLE_ROLES.join(", ")}` }, 400);
     }
-    const user = await c.var.db
-      .select({ id: schema.users.id, email: schema.users.email, name: schema.users.name })
-      .from(schema.users)
-      .where(eq(schema.users.email, email))
-      .get();
+    const refused = grantRefusal(c, role);
+    if (refused) return refused;
+    const user = await userByEmail(c.var.db, email);
     // Accounts are created through invites; adding a member never creates one.
     if (!user) return c.json({ error: "No account with that email; invite them first" }, 404);
-    // A team member may also be added directly (a guest role above their team one).
-    const inserted = await c.var.db
-      .insert(schema.memberships)
-      .values({ showId: c.var.show.id, userId: user.id, role, invitedBy: c.var.user.id })
-      .onConflictDoNothing()
-      .returning({ userId: schema.memberships.userId });
-    if (inserted.length === 0) return c.json({ error: "Already a member of this show" }, 409);
-    if (c.var.show.teamId) {
-      // They may already have the show open through the team.
-      await refreshAccess(c.env, c.var.db, { showIds: [c.var.show.id], userIds: [user.id] });
-    }
-    const [member] = await showMembers(c.var.db, c.var.show, user.id);
+    const member = await addDirectMember(c, user.id, role);
+    if (!member) return c.json({ error: "Already a member of this show" }, 409);
     return c.json({ member }, 201);
   })
-  .patch("/shows/:id/members/:userId", requireMembership, requireOwner, async (c) => {
+  // One step: an account is added now ("you were added" email), an unknown email gets an
+  // invite (invite email). Same rules as adding members; invites count toward the
+  // inviter's limit.
+  .post("/shows/:id/people", requireMembership, async (c) => {
+    const body = await readJsonObject(c);
+    const role = body?.role;
+    if (!isGrantable(role)) {
+      return c.json({ error: `role must be one of ${GRANTABLE_ROLES.join(", ")}` }, 400);
+    }
+    const refused = grantRefusal(c, role);
+    if (refused) return refused;
+    const email = normalizeEmail(str(body?.email));
+    if (!isPlausibleEmail(email)) return c.json({ error: "Enter a valid email address" }, 400);
+    const show = c.var.show;
+    const user = await userByEmail(c.var.db, email);
+    if (user) {
+      const member = await addDirectMember(c, user.id, role);
+      if (!member) return c.json({ error: "Already a member of this show" }, 409);
+      const emailed = await sendEmail(
+        c.env,
+        addedEmail({
+          to: user.email,
+          inviterName: c.var.user.name,
+          inviterEmail: c.var.user.email,
+          targetName: show.name,
+          targetKind: "show",
+          role,
+          link: `${appOrigin(c.env, c.req.url)}/shows/${show.id}`,
+        }),
+      );
+      return c.json({ added: member, emailed } satisfies AddShowPeopleResponse, 201);
+    }
+    const limited = await inviteLimited(c);
+    if (limited) return limited;
+    const made = await createInvite(c.var.db, {
+      email,
+      invitedBy: c.var.user.id,
+      show: { id: show.id, role },
+    });
+    await countInvite(c);
+    const emailed = await emailInvite(c, email, { kind: "show", name: show.name, role }, made);
+    const invited = { id: made.id, email, role, path: made.path, expiresAt: made.expiresAt };
+    return c.json({ invited, emailed } satisfies AddShowPeopleResponse, 201);
+  })
+  // Pending invites into the show: the owner sees all, everyone else their own.
+  .get("/shows/:id/invites", requireMembership, async (c) => {
+    const invites = await pendingInvites(
+      c.var.db,
+      { showId: c.var.show.id },
+      c.var.role === "owner" ? undefined : c.var.user.id,
+    );
+    return c.json({ invites } satisfies PendingInvitesResponse);
+  })
+  // Change a direct member's role: the owner anyone's, an inviter their invitees' (decision 4).
+  .patch("/shows/:id/members/:userId", requireMembership, async (c) => {
     const body = await readJsonObject(c);
     const role = body?.role;
     if (!isGrantable(role)) {
       return c.json({ error: `role must be one of ${GRANTABLE_ROLES.join(", ")}` }, 400);
     }
     const userId = c.req.param("userId");
-    if (userId === c.var.user.id) return c.json({ error: "The owner's role can't change" }, 400);
+    if (userId === c.var.user.id) {
+      const error =
+        c.var.role === "owner" ? "The owner's role can't change" : "You can't change your own role";
+      return c.json({ error }, 400);
+    }
+    const target = await directMember(c.var.db, c.var.show.id, userId);
+    if (!target) return notADirectMember(c, userId);
+    if (target.role === "owner") {
+      return c.json({ error: "The owner's role can't change; transfer the show instead" }, 400);
+    }
+    const actor = { id: c.var.user.id, role: c.var.role };
+    if (!canManageShowMember(actor, c.var.show.invitePolicy, target)) {
+      return c.json({ error: "You can only manage the people you added" }, 403);
+    }
+    if (!canGrant(c.var.role, role)) {
+      return c.json({ error: "You can't give a role above your own" }, 403);
+    }
+    // Never touches an owner (a transfer may have made them one meanwhile).
     const updated = await c.var.db
       .update(schema.memberships)
       .set({ role })
       .where(
-        and(eq(schema.memberships.showId, c.var.show.id), eq(schema.memberships.userId, userId)),
+        and(
+          eq(schema.memberships.showId, c.var.show.id),
+          eq(schema.memberships.userId, userId),
+          ne(schema.memberships.role, "owner"),
+        ),
       )
       .returning({ userId: schema.memberships.userId });
-    if (updated.length === 0) return notADirectMember(c, userId);
+    if (updated.length === 0) {
+      return c.json({ error: "The show's members changed meanwhile; reload and try again" }, 409);
+    }
     // Every mutate re-checks the role in D1; tell the user's open tabs so their UI follows
     // (with the effective role: a team role above the new one still counts).
     await refreshAccess(c.env, c.var.db, { showIds: [c.var.show.id], userIds: [userId] });
     return c.json({ ok: true });
   })
-  .delete("/shows/:id/members/:userId", requireMembership, requireOwner, async (c) => {
+  // Remove a direct member (same rules); their open invites into the show end with it.
+  .delete("/shows/:id/members/:userId", requireMembership, async (c) => {
     const userId = c.req.param("userId");
-    if (userId === c.var.user.id) return c.json({ error: "The owner can't be removed" }, 400);
+    if (userId === c.var.user.id) {
+      const error =
+        c.var.role === "owner" ? "The owner can't be removed" : "Leave the show instead";
+      return c.json({ error }, 400);
+    }
+    const target = await directMember(c.var.db, c.var.show.id, userId);
+    if (!target) return notADirectMember(c, userId);
+    if (target.role === "owner") return c.json({ error: "The owner can't be removed" }, 400);
+    const actor = { id: c.var.user.id, role: c.var.role };
+    if (!canManageShowMember(actor, c.var.show.invitePolicy, target)) {
+      return c.json({ error: "You can only manage the people you added" }, 403);
+    }
     const removed = await c.var.db
       .delete(schema.memberships)
       .where(
-        and(eq(schema.memberships.showId, c.var.show.id), eq(schema.memberships.userId, userId)),
+        and(
+          eq(schema.memberships.showId, c.var.show.id),
+          eq(schema.memberships.userId, userId),
+          ne(schema.memberships.role, "owner"),
+        ),
       )
       .returning({ userId: schema.memberships.userId });
-    if (removed.length === 0) return notADirectMember(c, userId);
+    if (removed.length === 0) {
+      return c.json({ error: "The show's members changed meanwhile; reload and try again" }, 409);
+    }
+    await endInvites(c.var.db, { showId: c.var.show.id }, userId);
     // Still in the show's team: they keep that role (notified); otherwise disconnected.
     await refreshAccess(c.env, c.var.db, { showIds: [c.var.show.id], userIds: [userId] });
     return c.json({ ok: true });
@@ -769,6 +955,7 @@ export const showRoutes = new Hono<ShowEnv>()
           eq(schema.memberships.userId, c.var.user.id),
         ),
       );
+    await endInvites(c.var.db, { showId: c.var.show.id }, c.var.user.id);
     // Still in the show's team: their tabs stay open with the team role.
     await refreshAccess(c.env, c.var.db, { showIds: [c.var.show.id], userIds: [c.var.user.id] });
     return c.json({ ok: true });

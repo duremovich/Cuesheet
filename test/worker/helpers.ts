@@ -1,6 +1,6 @@
 // Shared helpers for worker tests: call the /api surface through the real Worker entry.
-import { exports } from "cloudflare:workers";
-import { expect } from "vitest";
+import { env, exports } from "cloudflare:workers";
+import { expect, vi } from "vitest";
 import type { CreateInviteResponse, ShowSummaryDTO } from "../../src/shared/api";
 import type { ServerMessage } from "../../src/shared/ws";
 import doJournal from "../../src/worker/db/do/migrations/meta/_journal.json";
@@ -145,4 +145,50 @@ export function rewindMigrations(sql: SqlStorage, tag: string): void {
     for (const stmt of UNDO_MIGRATION[e.tag] ?? []) sql.exec(stmt);
   }
   sql.exec("DELETE FROM __drizzle_migrations WHERE created_at >= ?", first.when);
+}
+
+export interface SentEmail {
+  url: string;
+  authorization: string | null;
+  body: {
+    from: string;
+    to: string | string[];
+    reply_to: string;
+    subject: string;
+    headers: Record<string, string>;
+    text: string;
+    html: string;
+  };
+}
+
+/**
+ * Turn email on (`RESEND_API_KEY`) with every fetch stubbed, so nothing reaches Resend:
+ * calls are recorded in `sent` and answered 200, a 422 (`fail: "status"`) or a network
+ * error (`fail: "throw"`). Always `restore()` (in a finally): it turns email off again.
+ */
+export function stubResend(opts: { fail?: "status" | "throw" } = {}) {
+  const sent: SentEmail[] = [];
+  const vars = env as unknown as Record<string, string | undefined>;
+  const before = vars.RESEND_API_KEY;
+  vars.RESEND_API_KEY = "re_test_key";
+  const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const req = new Request(input, init);
+    sent.push({
+      url: req.url,
+      authorization: req.headers.get("Authorization"),
+      body: (await req.json()) as SentEmail["body"],
+    });
+    // Responses are made inside the call: workerd ties I/O objects to the request.
+    if (opts.fail === "throw") throw new Error("network down");
+    if (opts.fail === "status") return Response.json({ message: "rejected" }, { status: 422 });
+    return Response.json({ id: `email-${sent.length}` });
+  });
+  return {
+    sent,
+    restore() {
+      spy.mockRestore();
+      if (before === undefined) delete vars.RESEND_API_KEY;
+      else vars.RESEND_API_KEY = before;
+    },
+  };
 }

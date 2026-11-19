@@ -74,8 +74,64 @@ export function canInviteToTeam(role: TeamRole | null | undefined, policy: Invit
   return role === "editor" && policy === "editors";
 }
 
+/**
+ * Who may add people to a show: the owner always, members whose effective role is editor
+ * unless the show's policy is `owner`.
+ */
+export function canInviteToShow(role: Role | null | undefined, policy: InvitePolicy): boolean {
+  if (role === "owner") return true;
+  return role === "editor" && policy === "editors";
+}
+
+/** Someone whose membership is being changed or removed. */
+export interface ManagedMember {
+  role: TeamRole | Role;
+  invitedBy: string | null;
+}
+
+/**
+ * Decision 4, "control over your invitees": whether `actor` may change or remove `target`
+ * in a show. Never the owner; the show's owner everyone else; an editor allowed to invite,
+ * the people they added (`invited_by`), while those hold a role within their own.
+ */
+export function canManageShowMember(
+  actor: { id: string; role: Role },
+  policy: InvitePolicy,
+  target: ManagedMember,
+): boolean {
+  if (target.role === "owner") return false;
+  if (actor.role === "owner") return true;
+  return (
+    canInviteToShow(actor.role, policy) &&
+    target.invitedBy === actor.id &&
+    canGrant(actor.role, target.role)
+  );
+}
+
+/** The same in a team: owner and admins manage everyone but the owner (admins too). */
+export function canManageTeamMember(
+  actor: { id: string; role: TeamRole },
+  policy: InvitePolicy,
+  target: ManagedMember,
+): boolean {
+  if (target.role === "owner") return false;
+  if (isTeamManager(actor.role)) return true;
+  return (
+    canInviteToTeam(actor.role, policy) &&
+    target.invitedBy === actor.id &&
+    canGrant(actor.role, target.role)
+  );
+}
+
 export interface ShowAccess {
-  show: { id: string; name: string; currentSession: string | null; teamId: string | null };
+  show: {
+    id: string;
+    name: string;
+    currentSession: string | null;
+    teamId: string | null;
+    teamName: string | null;
+    invitePolicy: InvitePolicy;
+  };
   /** Effective role; null when the user has no access (the show exists). */
   role: Role | null;
   direct: Role | null;
@@ -97,12 +153,15 @@ export async function showAccess(
       name: s.name,
       currentSession: s.currentSession,
       teamId: s.teamId,
+      teamName: schema.teams.name,
+      invitePolicy: s.invitePolicy,
       direct: m.role,
       teamRole: tm.role,
     })
     .from(s)
     .leftJoin(m, and(eq(m.showId, s.id), eq(m.userId, userId)))
     .leftJoin(tm, and(eq(tm.teamId, s.teamId), eq(tm.userId, userId)))
+    .leftJoin(schema.teams, eq(schema.teams.id, s.teamId))
     .where(eq(s.id, showId))
     .get();
   if (!row) return null;
@@ -143,6 +202,15 @@ export async function accessibleShows(
   userId: string,
   opts: { teamId?: string } = {},
 ): Promise<ShowSummaryDTO[]> {
+  return (await accessibleShowRows(db, userId, opts)).map(({ direct: _d, ...show }) => show);
+}
+
+/** `accessibleShows` plus the direct membership's role (null: through the team only). */
+export async function accessibleShowRows(
+  db: D1Db,
+  userId: string,
+  opts: { teamId?: string } = {},
+): Promise<(ShowSummaryDTO & { direct: Role | null })[]> {
   const s = schema.shows;
   const m = schema.memberships;
   const tm = schema.teamMemberships;
@@ -167,9 +235,9 @@ export async function accessibleShows(
     .leftJoin(schema.teams, eq(schema.teams.id, s.teamId))
     .where(opts.teamId ? and(mine, eq(s.teamId, opts.teamId)) : mine)
     .orderBy(desc(s.createdAt));
-  const out: ShowSummaryDTO[] = [];
-  for (const { direct, teamRole, ...show } of rows) {
-    const role = resolveRole(direct, teamRole);
+  const out: (ShowSummaryDTO & { direct: Role | null })[] = [];
+  for (const { teamRole, ...show } of rows) {
+    const role = resolveRole(show.direct, teamRole);
     if (role) out.push({ ...show, role });
   }
   return out;

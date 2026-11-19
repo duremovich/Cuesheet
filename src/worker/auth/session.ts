@@ -1,7 +1,7 @@
 // Sessions live in D1. The cookie carries a random token; D1 stores only its SHA-256.
 // Sessions last 30 days and slide: a session used more than a day after it was last
 // extended gets a fresh 30 days (and a fresh cookie; `requireAuth`).
-import { and, eq, gt, ne } from "drizzle-orm";
+import { and, eq, gt, isNull, lt, ne, or } from "drizzle-orm";
 import type { UserDTO } from "../../shared/api";
 import { accessibleShowIds } from "../access";
 import type { D1Db } from "../db/d1/client";
@@ -28,7 +28,12 @@ export interface SessionInfo {
   id: string;
   user: UserDTO;
   expiresAt: number;
+  /** The user's last signed-in request (`users.last_active_at`), at most an hour stale. */
+  lastActiveAt: number | null;
 }
+
+/** `users.last_active_at` is refreshed at most this often. */
+export const LAST_ACTIVE_EVERY_MS = 60 * 60 * 1000;
 
 export async function getSession(
   db: D1Db,
@@ -43,14 +48,15 @@ export async function getSession(
       name: schema.users.name,
       isAdmin: schema.users.isAdmin,
       expiresAt: schema.sessions.expiresAt,
+      lastActiveAt: schema.users.lastActiveAt,
     })
     .from(schema.sessions)
     .innerJoin(schema.users, eq(schema.users.id, schema.sessions.userId))
     .where(and(eq(schema.sessions.id, id), gt(schema.sessions.expiresAt, now)))
     .get();
   if (!row) return null;
-  const { expiresAt, ...user } = row;
-  return { id, user, expiresAt };
+  const { expiresAt, lastActiveAt, ...user } = row;
+  return { id, user, expiresAt, lastActiveAt };
 }
 
 export async function getSessionUser(db: D1Db, token: string): Promise<UserDTO | null> {
@@ -72,6 +78,29 @@ export async function maybeExtendSession(
     .set({ expiresAt: now + SESSION_TTL_MS })
     .where(eq(schema.sessions.id, session.id));
   return true;
+}
+
+/**
+ * Stamp the user's `last_active_at` when it's unset or over an hour old (read with the
+ * session, so no extra query otherwise). The UPDATE re-checks, so concurrent requests
+ * write it once.
+ */
+export async function touchLastActive(
+  db: D1Db,
+  session: SessionInfo,
+  now = Date.now(),
+): Promise<void> {
+  if (session.lastActiveAt !== null && now - session.lastActiveAt < LAST_ACTIVE_EVERY_MS) return;
+  const u = schema.users;
+  await db
+    .update(u)
+    .set({ lastActiveAt: now })
+    .where(
+      and(
+        eq(u.id, session.user.id),
+        or(isNull(u.lastActiveAt), lt(u.lastActiveAt, now - LAST_ACTIVE_EVERY_MS)),
+      ),
+    );
 }
 
 export async function deleteSession(db: D1Db, token: string): Promise<void> {

@@ -7,6 +7,7 @@ import { seedAdmin } from "./auth/middleware";
 import { getDb } from "./db/d1/client";
 import { authRoutes } from "./routes/auth";
 import { inviteRoutes } from "./routes/invites";
+import { peopleRoutes } from "./routes/people";
 import { shareRoutes } from "./routes/share";
 import { showRoutes } from "./routes/shows";
 import { teamRoutes } from "./routes/teams";
@@ -76,6 +77,7 @@ app.route("/", showRoutes);
 app.route("/", shareRoutes);
 app.route("/", inviteRoutes);
 app.route("/", teamRoutes);
+app.route("/", peopleRoutes);
 app.route("/", transferRoutes);
 
 app.notFound((c) => c.json({ error: "Not found" }, 404));

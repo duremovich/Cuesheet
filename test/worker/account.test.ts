@@ -391,15 +391,20 @@ describe("invites and members", () => {
 
     // The old owner lost the owner-only routes; the new owner has them.
     expect((await transfer({ userId: person.id }, agent.cookie)).status).toBe(403);
+    // (Adding members isn't owner-only any more: editors may, unless the invite policy says
+    // owner; see people.test.ts. The policy itself is the owner's.)
     expect(
       (
-        await post(
-          `/api/shows/${show.id}/members`,
-          { email: outsider.email, role: "viewer" },
-          agent.cookie,
-        )
+        await api(`/api/shows/${show.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ invitePolicy: "owner" }),
+          cookie: agent.cookie,
+        })
       ).status,
     ).toBe(403);
+    expect((await api(`/api/shows/${show.id}/export.json`, { cookie: agent.cookie })).status).toBe(
+      403,
+    );
     expect((await api(`/api/shows/${show.id}/export.json`, { cookie: person.cookie })).status).toBe(
       200,
     );

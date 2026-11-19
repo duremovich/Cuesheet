@@ -10,7 +10,11 @@
 //   `owner`; nobody grants above their own role or grants owner (that's a transfer).
 // - Managing members: owner and admins manage everyone but the owner (admins other admins
 //   too); an editor who may add people manages the people they added (`invited_by`),
-//   within their own role.
+//   within their own role. Removal (or leaving) ends that person's open invites into the
+//   team.
+// - `POST /teams/:id/people`: one step, an account joins now, an unknown email gets an
+//   invite (routes/invites.ts); `GET /teams/:id/invites`: pending invites (managers all,
+//   others their own).
 // - Transfer (owner): that member becomes the owner, the old owner an admin, in one D1
 //   batch that re-checks both sides (`transferTeam`), so a team always has one owner.
 import { and, eq, exists, ne, notExists, sql } from "drizzle-orm";
@@ -19,11 +23,13 @@ import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import {
   type AddTeamMemberRequest,
+  type AddTeamPeopleResponse,
   type CreateTeamRequest,
   GRANTABLE_TEAM_ROLES,
   INVITE_POLICIES,
   type InvitePolicy,
   MAX_NAME_LENGTH,
+  type PendingInvitesResponse,
   type TeamDTO,
   type TeamMemberDTO,
   type TeamMembersResponse,
@@ -38,14 +44,24 @@ import {
   accessibleShows,
   canGrant,
   canInviteToTeam,
+  canManageTeamMember,
   isTeamManager,
   refreshAccess,
   teamShowIds,
 } from "../access";
 import { requireAuth } from "../auth/middleware";
-import { normalizeEmail } from "../auth/session";
+import { isPlausibleEmail, normalizeEmail } from "../auth/session";
 import { type D1Db, schema } from "../db/d1/client";
+import { addedEmail, appOrigin, sendEmail } from "../email";
 import type { AppEnv } from "../types";
+import {
+  countInvite,
+  createInvite,
+  emailInvite,
+  endInvites,
+  inviteLimited,
+  pendingInvites,
+} from "./invites";
 import { readJsonObject, str } from "./util";
 
 type TeamEnv = AppEnv & {
@@ -133,23 +149,41 @@ async function teamMembers(db: D1Db, teamId: string, userId?: string): Promise<T
   }));
 }
 
-/**
- * Whether the caller may change or remove `target` (decision 4): never the owner; owner
- * and admins everyone else; an editor allowed to add people, the ones they added, while
- * those hold a role within the editor's own.
- */
+/** Whether the caller may change or remove `target` (decision 4; access.ts). */
 function canManage(
   team: TeamDTO,
   actorId: string,
   target: { role: TeamRole; invitedBy: string | null },
 ): boolean {
-  if (target.role === "owner") return false;
-  if (isTeamManager(team.role)) return true;
-  return (
-    canInviteToTeam(team.role, team.invitePolicy) &&
-    target.invitedBy === actorId &&
-    canGrant(team.role, target.role)
-  );
+  return canManageTeamMember({ id: actorId, role: team.role }, team.invitePolicy, target);
+}
+
+/** 403 unless the caller may add people to the team with `role`. */
+function grantRefusal(team: TeamDTO, role: TeamRole): string | null {
+  if (!canInviteToTeam(team.role, team.invitePolicy)) return "You can't add people to this team";
+  if (!canGrant(team.role, role)) return "You can't give a role above your own";
+  return null;
+}
+
+/** Add an existing account to the team, invited by `invitedBy`; null when already in it. */
+async function addTeamMember(
+  env: Pick<Env, "SHOW">,
+  db: D1Db,
+  teamId: string,
+  userId: string,
+  role: TeamRole,
+  invitedBy: string,
+): Promise<TeamMemberDTO | null> {
+  const inserted = await db
+    .insert(tm)
+    .values({ teamId, userId, role, invitedBy })
+    .onConflictDoNothing()
+    .returning({ userId: tm.userId });
+  if (inserted.length === 0) return null;
+  // They reach the team's shows at once (and may have some open as a guest).
+  await refreshAccess(env, db, { showIds: await teamShowIds(db, teamId), userIds: [userId] });
+  const [member] = await teamMembers(db, teamId, userId);
+  return member ?? null;
 }
 
 async function memberRow(db: D1Db, teamId: string, userId: string) {
@@ -279,33 +313,75 @@ export const teamRoutes = new Hono<TeamEnv>()
   // Add someone who has an account (no account: 404, invite them).
   .post("/teams/:id/members", requireTeamMember, async (c) => {
     const team = c.var.team;
-    if (!canInviteToTeam(team.role, team.invitePolicy)) {
-      return c.json({ error: "You can't add people to this team" }, 403);
-    }
     const body = (await readJsonObject(c)) as Partial<AddTeamMemberRequest> | null;
     const role = body?.role;
     if (!isGrantableTeamRole(role)) return c.json({ error: BAD_ROLE }, 400);
-    if (!canGrant(team.role, role)) {
-      return c.json({ error: "You can't give a role above your own" }, 403);
-    }
+    const refused = grantRefusal(team, role);
+    if (refused) return c.json({ error: refused }, 403);
     const user = await c.var.db
       .select({ id: schema.users.id })
       .from(schema.users)
       .where(eq(schema.users.email, normalizeEmail(str(body?.email))))
       .get();
     if (!user) return c.json({ error: "No account with that email; invite them first" }, 404);
-    const inserted = await c.var.db
-      .insert(tm)
-      .values({ teamId: team.id, userId: user.id, role, invitedBy: c.var.user.id })
-      .onConflictDoNothing()
-      .returning({ userId: tm.userId });
-    if (inserted.length === 0) return c.json({ error: "Already a member of this team" }, 409);
-    await refreshAccess(c.env, c.var.db, {
-      showIds: await teamShowIds(c.var.db, team.id),
-      userIds: [user.id],
-    });
-    const [member] = await teamMembers(c.var.db, team.id, user.id);
+    const member = await addTeamMember(c.env, c.var.db, team.id, user.id, role, c.var.user.id);
+    if (!member) return c.json({ error: "Already a member of this team" }, 409);
     return c.json({ member }, 201);
+  })
+  // One step: an account joins now ("you were added" email), an unknown email gets an
+  // invite (invite email; counts toward the inviter's limit).
+  .post("/teams/:id/people", requireTeamMember, async (c) => {
+    const team = c.var.team;
+    const body = await readJsonObject(c);
+    const role = body?.role;
+    if (!isGrantableTeamRole(role)) return c.json({ error: BAD_ROLE }, 400);
+    const refused = grantRefusal(team, role);
+    if (refused) return c.json({ error: refused }, 403);
+    const email = normalizeEmail(str(body?.email));
+    if (!isPlausibleEmail(email)) return c.json({ error: "Enter a valid email address" }, 400);
+    const user = await c.var.db
+      .select({ id: schema.users.id, email: schema.users.email })
+      .from(schema.users)
+      .where(eq(schema.users.email, email))
+      .get();
+    if (user) {
+      const member = await addTeamMember(c.env, c.var.db, team.id, user.id, role, c.var.user.id);
+      if (!member) return c.json({ error: "Already a member of this team" }, 409);
+      const emailed = await sendEmail(
+        c.env,
+        addedEmail({
+          to: user.email,
+          inviterName: c.var.user.name,
+          inviterEmail: c.var.user.email,
+          targetName: team.name,
+          targetKind: "team",
+          role,
+          link: `${appOrigin(c.env, c.req.url)}/teams/${team.id}`,
+        }),
+      );
+      return c.json({ added: member, emailed } satisfies AddTeamPeopleResponse, 201);
+    }
+    const limited = await inviteLimited(c);
+    if (limited) return limited;
+    const made = await createInvite(c.var.db, {
+      email,
+      invitedBy: c.var.user.id,
+      team: { id: team.id, role },
+    });
+    await countInvite(c);
+    const emailed = await emailInvite(c, email, { kind: "team", name: team.name, role }, made);
+    const invited = { id: made.id, email, role, path: made.path, expiresAt: made.expiresAt };
+    return c.json({ invited, emailed } satisfies AddTeamPeopleResponse, 201);
+  })
+  // Pending invites into the team: owner and admins see all, everyone else their own.
+  .get("/teams/:id/invites", requireTeamMember, async (c) => {
+    const team = c.var.team;
+    const invites = await pendingInvites(
+      c.var.db,
+      { teamId: team.id },
+      isTeamManager(team.role) ? undefined : c.var.user.id,
+    );
+    return c.json({ invites } satisfies PendingInvitesResponse);
   })
   .patch("/teams/:id/members/:userId", requireTeamMember, async (c) => {
     const team = c.var.team;
@@ -359,6 +435,7 @@ export const teamRoutes = new Hono<TeamEnv>()
     if (removed.length === 0) {
       return c.json({ error: "The team's members changed meanwhile; reload and try again" }, 409);
     }
+    await endInvites(c.var.db, { teamId: team.id }, userId);
     // Their tabs in the team's shows close, unless they're also direct members there.
     await refreshAccess(c.env, c.var.db, {
       showIds: await teamShowIds(c.var.db, team.id),
@@ -372,6 +449,7 @@ export const teamRoutes = new Hono<TeamEnv>()
       return c.json({ error: "Transfer the team to someone else before leaving" }, 400);
     }
     await c.var.db.delete(tm).where(and(eq(tm.teamId, team.id), eq(tm.userId, c.var.user.id)));
+    await endInvites(c.var.db, { teamId: team.id }, c.var.user.id);
     await refreshAccess(c.env, c.var.db, {
       showIds: await teamShowIds(c.var.db, team.id),
       userIds: [c.var.user.id],

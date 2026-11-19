@@ -2,3 +2,6 @@
 # On first request, if no users exist, this account is created as the admin.
 ADMIN_EMAIL=admin@cuesheet.test
 ADMIN_PASSWORD=change-me-please
+# Email (invites, "you were added"): a Resend API key. Empty: no email, links are copied.
+# Production: wrangler secret put RESEND_API_KEY --env production
+RESEND_API_KEY=
