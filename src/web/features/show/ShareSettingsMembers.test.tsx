@@ -9,9 +9,30 @@ import { click, press, render, wait } from "../../test/dom";
 import { MembersSection } from "./ShareSettingsMembers";
 import { type Workspace, WorkspaceContext } from "./workspace";
 
+const DIRECT = {
+  source: "direct",
+  teamRole: null,
+  invitedBy: null,
+  joinedAt: 0,
+  lastActiveAt: null,
+} as const;
 const MEMBERS: MemberDTO[] = [
-  { userId: "u-owner", email: "owner@test.local", name: "Owner", role: "owner" },
-  { userId: "u-dylan", email: "dylan@test.local", name: "Dylan", role: "editor" },
+  {
+    userId: "u-owner",
+    email: "owner@test.local",
+    name: "Owner",
+    role: "owner",
+    directRole: "owner",
+    ...DIRECT,
+  },
+  {
+    userId: "u-dylan",
+    email: "dylan@test.local",
+    name: "Dylan",
+    role: "editor",
+    directRole: "editor",
+    ...DIRECT,
+  },
 ];
 
 function workspace(role: Role): Workspace {

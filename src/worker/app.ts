@@ -9,6 +9,7 @@ import { authRoutes } from "./routes/auth";
 import { inviteRoutes } from "./routes/invites";
 import { shareRoutes } from "./routes/share";
 import { showRoutes } from "./routes/shows";
+import { teamRoutes } from "./routes/teams";
 import { transferRoutes } from "./routes/transfer";
 import { baseSecurityHeaders, logError, redactTokens } from "./security";
 import type { AppEnv } from "./types";
@@ -74,6 +75,7 @@ app.route("/", authRoutes);
 app.route("/", showRoutes);
 app.route("/", shareRoutes);
 app.route("/", inviteRoutes);
+app.route("/", teamRoutes);
 app.route("/", transferRoutes);
 
 app.notFound((c) => c.json({ error: "Not found" }, 404));

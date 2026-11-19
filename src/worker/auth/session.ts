@@ -3,6 +3,7 @@
 // extended gets a fresh 30 days (and a fresh cookie; `requireAuth`).
 import { and, eq, gt, ne } from "drizzle-orm";
 import type { UserDTO } from "../../shared/api";
+import { accessibleShowIds } from "../access";
 import type { D1Db } from "../db/d1/client";
 import { schema } from "../db/d1/client";
 import { randomToken, sha256Hex } from "./bytes";
@@ -97,13 +98,9 @@ export async function deleteUserSessions(
   return rows.map((r) => r.id);
 }
 
-/** The ids of the shows a user is a member of. */
+/** The ids of the shows a user can open: direct members and through their teams. */
 export async function userShowIds(db: D1Db, userId: string): Promise<string[]> {
-  const rows = await db
-    .select({ showId: schema.memberships.showId })
-    .from(schema.memberships)
-    .where(eq(schema.memberships.userId, userId));
-  return rows.map((r) => r.showId);
+  return accessibleShowIds(db, userId);
 }
 
 export function toUserDTO(row: typeof schema.users.$inferSelect): UserDTO {

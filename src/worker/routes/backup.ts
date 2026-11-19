@@ -2,8 +2,10 @@
 //
 // - `GET /api/shows/:id/export.json` (owner): everything in the show's Durable Object
 //   (every table, personal views included, joins, select options, settings) plus the D1
-//   side (show row, members, share links without their token hashes) and a manifest of the
-//   attachment files in R2 (key, size, type) so a restore can copy them.
+//   side (show row with its team's id and name, the direct members, share links without
+//   their token hashes) and a manifest of the attachment files in R2 (key, size, type) so
+//   a restore can copy them. The team's members aren't listed: their access comes from the
+//   team, not the show.
 // - `backupD1` (the Worker's weekly `scheduled` handler): every D1 table except sessions
 //   and rate-limit events as gzipped JSON in R2 under `_backups/d1/<date>.json.gz`; the
 //   newest BACKUPS_KEPT are kept. **Show data is not in D1** (it's in each show's Durable
@@ -22,7 +24,14 @@ export interface ShowExport {
   format: typeof EXPORT_FORMAT;
   version: number;
   exportedAt: string;
-  show: { id: string; name: string; currentSession: string | null; createdAt: number };
+  show: {
+    id: string;
+    name: string;
+    currentSession: string | null;
+    createdAt: number;
+    teamId: string | null;
+    teamName: string | null;
+  };
   members: { userId: string; email: string; name: string; role: string }[];
   shareLinks: Record<string, unknown>[];
   snapshot: SnapshotResponse;
@@ -50,8 +59,11 @@ export async function exportShow(c: Context<ShowEnv>): Promise<Response> {
       name: schema.shows.name,
       currentSession: schema.shows.currentSession,
       createdAt: schema.shows.createdAt,
+      teamId: schema.shows.teamId,
+      teamName: schema.teams.name,
     })
     .from(schema.shows)
+    .leftJoin(schema.teams, eq(schema.teams.id, schema.shows.teamId))
     .where(eq(schema.shows.id, showId))
     .get();
   const members = await db
@@ -72,7 +84,14 @@ export async function exportShow(c: Context<ShowEnv>): Promise<Response> {
     format: EXPORT_FORMAT,
     version: EXPORT_VERSION,
     exportedAt: new Date().toISOString(),
-    show: show ?? { id: showId, name: c.var.show.name, currentSession: null, createdAt: 0 },
+    show: show ?? {
+      id: showId,
+      name: c.var.show.name,
+      currentSession: null,
+      createdAt: 0,
+      teamId: null,
+      teamName: null,
+    },
     members,
     shareLinks: links.map(({ tokenHash: _t, ...rest }) => rest),
     snapshot,

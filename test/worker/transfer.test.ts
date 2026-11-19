@@ -307,6 +307,37 @@ describe("show transfer", { timeout: 30_000 }, () => {
     expect((await copyShow(show.id, to, admin, users, { overwrite: true })).status).toBe(409);
   });
 
+  it("a team's show arrives personal, with its direct members only", async () => {
+    const admin = await loginAdmin();
+    const { show, member } = await seed(admin);
+    const teamMember = await newUser(admin, "Team member");
+    const team = (
+      await json<{ team: { id: string } }>(post("/api/teams", { name: "Movers" }, admin))
+    ).team;
+    await json(
+      post(`/api/teams/${team.id}/members`, { email: teamMember.email, role: "editor" }, admin),
+    );
+    await json(
+      api(`/api/shows/${show.id}`, {
+        method: "PATCH",
+        cookie: admin,
+        body: JSON.stringify({ teamId: team.id }),
+      }),
+    );
+    expect((await manifest(show.id, admin)).d1.show?.team_id).toBe(team.id);
+    const adminId = (await json<{ user: { id: string } }>(api("/api/me", { cookie: admin }))).user
+      .id;
+    const to = crypto.randomUUID();
+    const res = await copyShow(show.id, to, admin, new Map([[member.id, member.id]]));
+    expect(res.status, await res.clone().text()).toBe(200);
+    const dst = await manifest(to, admin);
+    expect(dst.d1.show?.team_id).toBeNull();
+    expect(dst.d1.memberships.map((m) => m.user_id).sort()).toEqual([member.id, adminId].sort());
+    // The team member reaches the source through the team, not the copy.
+    expect((await api(`/api/shows/${show.id}`, { cookie: teamMember.cookie })).status).toBe(200);
+    expect((await api(`/api/shows/${to}`, { cookie: teamMember.cookie })).status).toBe(404);
+  });
+
   it("an interrupted import leaves no show behind and can be redone", async () => {
     const admin = await loginAdmin();
     const { show } = await seed(admin);

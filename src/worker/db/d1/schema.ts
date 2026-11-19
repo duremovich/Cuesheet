@@ -1,10 +1,15 @@
-// D1: the cross-show index (users, sessions, shows, memberships, invites).
+// D1: the cross-show index (users, sessions, teams, shows, memberships, invites).
 // Per-show data lives in the show's Durable Object; see ../do/schema.ts.
 // After editing, run `pnpm db:generate` and commit the new SQL in ./migrations.
 import { sql } from "drizzle-orm";
 import { index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 const now = sql`(unixepoch() * 1000)`;
+
+// Foreign keys on columns added to an existing table (ALTER TABLE ADD) carry no ON DELETE
+// action: drizzle-kit drops it from the generated ADD COLUMN, so the schema doesn't claim
+// one. They are NO ACTION, and the code deletes or clears dependents itself (a team is
+// deleted together with its invites; users are never deleted).
 
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
@@ -13,6 +18,8 @@ export const users = sqliteTable("users", {
   passwordHash: text("password_hash").notNull(),
   isAdmin: integer("is_admin", { mode: "boolean" }).notNull().default(false),
   createdAt: integer("created_at").notNull().default(now),
+  /** Last signed-in request (touched at most hourly); null before the first one. */
+  lastActiveAt: integer("last_active_at"),
 });
 
 export const sessions = sqliteTable(
@@ -29,20 +36,66 @@ export const sessions = sqliteTable(
   (t) => [index("sessions_user_idx").on(t.userId)],
 );
 
-export const shows = sqliteTable("shows", {
+/** Who may invite into a team or show: `editors` (and up) or only the `owner` (+ team admins). */
+const INVITE_POLICIES = ["editors", "owner"] as const;
+/** Team roles (src/worker/access.ts maps them to show roles). */
+const TEAM_ROLES = ["owner", "admin", "editor", "commenter", "viewer"] as const;
+
+/**
+ * A set of people with a team role. A show belongs to at most one team (`shows.team_id`);
+ * team members get a role on every show of the team (src/worker/access.ts).
+ */
+export const teams = sqliteTable("teams", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   createdBy: text("created_by")
     .notNull()
     .references(() => users.id),
   createdAt: integer("created_at").notNull().default(now),
-  /** The rehearsal/session new notes are stamped with ("Tech 2"); shared by the team. */
-  currentSession: text("current_session"),
-  /** Bytes of attachments in R2 (thumbnails not counted); kept by the Worker, max 2 GB. */
-  storageBytes: integer("storage_bytes").notNull().default(0),
-  /** A show template (R27): listed separately; "New from template" clones it. */
-  isTemplate: integer("is_template", { mode: "boolean" }).notNull().default(false),
+  invitePolicy: text("invite_policy", { enum: INVITE_POLICIES }).notNull().default("editors"),
 });
+
+export const teamMemberships = sqliteTable(
+  "team_memberships",
+  {
+    teamId: text("team_id")
+      .notNull()
+      .references(() => teams.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** Exactly one `owner` per team. */
+    role: text("role", { enum: TEAM_ROLES }).notNull(),
+    invitedBy: text("invited_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: integer("created_at").notNull().default(now),
+  },
+  (t) => [
+    primaryKey({ columns: [t.teamId, t.userId] }),
+    index("team_memberships_user_idx").on(t.userId),
+  ],
+);
+
+export const shows = sqliteTable(
+  "shows",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: integer("created_at").notNull().default(now),
+    /** The rehearsal/session new notes are stamped with ("Tech 2"); shared by the team. */
+    currentSession: text("current_session"),
+    /** Bytes of attachments in R2 (thumbnails not counted); kept by the Worker, max 2 GB. */
+    storageBytes: integer("storage_bytes").notNull().default(0),
+    /** A show template (R27): listed separately; "New from template" clones it. */
+    isTemplate: integer("is_template", { mode: "boolean" }).notNull().default(false),
+    /** The team the show belongs to (null: personal). A team with shows can't be deleted. */
+    teamId: text("team_id").references(() => teams.id),
+    invitePolicy: text("invite_policy", { enum: INVITE_POLICIES }).notNull().default("editors"),
+  },
+  (t) => [index("shows_team_idx").on(t.teamId)],
+);
 
 export const memberships = sqliteTable(
   "memberships",
@@ -55,6 +108,8 @@ export const memberships = sqliteTable(
       .references(() => users.id, { onDelete: "cascade" }),
     role: text("role", { enum: ["owner", "editor", "commenter", "viewer"] }).notNull(),
     createdAt: integer("created_at").notNull().default(now),
+    /** Who added them (null: the creator, or rows from before teams). */
+    invitedBy: text("invited_by").references(() => users.id),
   },
   (t) => [
     primaryKey({ columns: [t.showId, t.userId] }),
@@ -84,6 +139,11 @@ export const invites = sqliteTable("invites", {
   /** signup: the show the new account joins on accept (null: none), with `role`. */
   showId: text("show_id"),
   role: text("role", { enum: ["editor", "commenter", "viewer"] }),
+  /** signup: or the team it joins, with `teamRole` (never both a show and a team). */
+  teamId: text("team_id").references(() => teams.id),
+  teamRole: text("team_role", { enum: TEAM_ROLES }),
+  /** Revoked by its inviter or a manager (kept, not deleted, so the list can say so). */
+  revokedAt: integer("revoked_at"),
 });
 
 /**

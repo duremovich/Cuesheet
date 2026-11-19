@@ -16,6 +16,9 @@
 // Object), or, with `overwrite`, one a previous import created (the DO's marker) and that
 // nobody has edited since. The D1 rows (show, memberships, share links) are written last,
 // so the show appears in no one's list until everything else is in.
+//
+// Teams don't move: a team show arrives as a personal show (`team_id` cleared), with only
+// its direct members; whoever had access only through the team has none on the target.
 
 import type { Context } from "hono";
 import { Hono } from "hono";
@@ -313,12 +316,19 @@ export const transferRoutes = new Hono<AppEnv>()
     if (!users.has(String(show.created_by))) {
       return c.json({ error: `show.created_by ${show.created_by} is not a user here` }, 400);
     }
+    // The source's team isn't here (teams don't move): the show arrives personal.
+    if ("team_id" in show) show.team_id = null;
     const skipped = { memberships: [] as string[], shareLinks: [] as string[] };
-    const keepMembers = memberships.filter((m) => {
-      const ok = m.show_id === showId && users.has(String(m.user_id));
-      if (!ok) skipped.memberships.push(String(m.user_id));
-      return ok;
-    });
+    const keepMembers = memberships
+      .filter((m) => {
+        const ok = m.show_id === showId && users.has(String(m.user_id));
+        if (!ok) skipped.memberships.push(String(m.user_id));
+        return ok;
+      })
+      // Who added them may have no account here.
+      .map((m) =>
+        m.invited_by != null && !users.has(String(m.invited_by)) ? { ...m, invited_by: null } : m,
+      );
     const keepLinks = shareLinks.filter((l) => {
       const ok = l.show_id === showId && users.has(String(l.created_by));
       if (!ok) skipped.shareLinks.push(String(l.id));

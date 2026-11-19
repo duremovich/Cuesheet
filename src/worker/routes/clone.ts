@@ -297,6 +297,15 @@ export async function cloneShow(c: C): Promise<Response> {
       .values({ id, name, createdBy: userId, createdAt, isTemplate: asTemplate }),
     c.var.db.insert(schema.memberships).values({ showId: id, userId, role: "owner", createdAt }),
   ]);
-  const show: ShowSummaryDTO = { id, name, role: "owner", createdAt, isTemplate: asTemplate };
+  // A copy is personal, whatever team the source is in (move it in afterwards).
+  const show: ShowSummaryDTO = {
+    id,
+    name,
+    role: "owner",
+    createdAt,
+    isTemplate: asTemplate,
+    teamId: null,
+    teamName: null,
+  };
   return c.json({ show } satisfies CloneShowResponse, 201);
 }

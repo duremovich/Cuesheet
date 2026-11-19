@@ -11,11 +11,49 @@ export const ROLES: readonly Role[] = ["owner", "editor", "commenter", "viewer"]
 /** Roles that can be granted through the members API (there is one owner per show). */
 export const GRANTABLE_ROLES: readonly Role[] = ["editor", "commenter", "viewer"];
 
+/**
+ * Team role. owner = exactly one (the creator; transfers like a show); admin = manages
+ * the team's members (but not the owner) and settings. On every show of the team a team
+ * owner/admin is an editor, the others get the same-named show role.
+ */
+export type TeamRole = "owner" | "admin" | "editor" | "commenter" | "viewer";
+export const TEAM_ROLES: readonly TeamRole[] = ["owner", "admin", "editor", "commenter", "viewer"];
+/** Team roles that can be granted (one owner per team: that's a transfer). */
+export const GRANTABLE_TEAM_ROLES: readonly TeamRole[] = ["admin", "editor", "commenter", "viewer"];
+
+/** Who may invite: editors and up (`editors`), or only the owner (+ team admins: `owner`). */
+export type InvitePolicy = "editors" | "owner";
+export const INVITE_POLICIES: readonly InvitePolicy[] = ["editors", "owner"];
+
+/** Someone, by id and name (who invited a member). */
+export interface PersonRefDTO {
+  id: string;
+  name: string;
+}
+
+/**
+ * GET /api/shows/:id/members: the show's direct members plus the members of its team. A
+ * person with both appears once, with the effective (highest) role.
+ */
 export interface MemberDTO {
   userId: string;
   email: string;
   name: string;
+  /** Effective role in the show. */
   role: Role;
+  /**
+   * `direct`: has a membership of the show (managed here); `team`: access only through
+   * the show's team (managed in the team).
+   */
+  source: "direct" | "team";
+  /** The direct membership's role (null for `team` rows). */
+  directRole: Role | null;
+  /** Their role in the show's team, when they're in it (also on `direct` rows). */
+  teamRole: TeamRole | null;
+  invitedBy: PersonRefDTO | null;
+  /** When the direct membership (or, for team rows, the team membership) was made. */
+  joinedAt: number;
+  lastActiveAt: number | null;
 }
 
 export interface MembersResponse {
@@ -62,10 +100,14 @@ export interface LoginRequest {
 export interface ShowSummaryDTO {
   id: string;
   name: string;
+  /** Effective role: the highest of the direct membership's and the team-derived one. */
   role: Role;
   createdAt: number;
   /** A show template (R27): listed separately; "New from template" copies it. */
   isTemplate?: boolean;
+  /** The team the show belongs to (null: personal). */
+  teamId: string | null;
+  teamName: string | null;
 }
 
 /**
@@ -88,8 +130,10 @@ export interface ShowsResponse {
   shows: ShowSummaryDTO[];
 }
 
+/** POST /api/shows. With `teamId` the creator must be an editor (or up) of that team. */
 export interface CreateShowRequest {
   name: string;
+  teamId?: string | null;
 }
 
 /** What the show's Durable Object knows about itself. */
@@ -117,6 +161,11 @@ export interface ShowResponse {
 export interface UpdateShowRequest {
   name?: string;
   current_session?: string | null;
+  /**
+   * Move the show into a team (owner, who must be a team editor or up) or back to
+   * personal (`null`: the owner, or the team's owner/admins).
+   */
+  teamId?: string | null;
 }
 
 export interface UpdateShowResponse {
@@ -124,6 +173,69 @@ export interface UpdateShowResponse {
 }
 
 export const MAX_SESSION_LENGTH = 100;
+
+// ---- Teams (src/worker/routes/teams.ts) ----
+
+export interface TeamDTO {
+  id: string;
+  name: string;
+  /** Your role in the team. */
+  role: TeamRole;
+  invitePolicy: InvitePolicy;
+  createdAt: number;
+}
+
+export interface TeamsResponse {
+  teams: TeamDTO[];
+}
+
+export interface TeamResponse {
+  team: TeamDTO;
+}
+
+export interface CreateTeamRequest {
+  name: string;
+}
+
+/** PATCH /api/teams/:id (owner and admins). */
+export interface UpdateTeamRequest {
+  name?: string;
+  invitePolicy?: InvitePolicy;
+}
+
+export interface TeamMemberDTO {
+  userId: string;
+  name: string;
+  email: string;
+  role: TeamRole;
+  invitedBy: PersonRefDTO | null;
+  joinedAt: number;
+  lastActiveAt: number | null;
+}
+
+export interface TeamMembersResponse {
+  members: TeamMemberDTO[];
+}
+
+/** POST /api/teams/:id/members: an existing account joins now (no account: 404). */
+export interface AddTeamMemberRequest {
+  email: string;
+  role: TeamRole;
+}
+
+export interface UpdateTeamMemberRequest {
+  role: TeamRole;
+}
+
+/** POST /api/teams/:id/transfer (owner): name the member by id or by email. */
+export interface TransferTeamRequest {
+  userId?: string;
+  email?: string;
+}
+
+export interface TeamShowsResponse {
+  shows: ShowSummaryDTO[];
+}
 
 /**
  * POST /api/invites. Admins invite anyone; a show's owner may invite to that show

@@ -1,5 +1,6 @@
-import { and, desc, eq, exists, inArray, isNull, notExists, sql } from "drizzle-orm";
-import { Hono } from "hono";
+import { and, eq, exists, inArray, isNull, notExists, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
+import { type Context, Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import type { ImportMapping } from "../../shared/airtable-columns";
 import {
@@ -22,6 +23,16 @@ import type {
   MutateError,
   MutateResponse,
 } from "../../shared/ops";
+import {
+  accessibleShows,
+  isTeamEditor,
+  isTeamManager,
+  refreshAccess,
+  resolveRole,
+  showAccess,
+  teamMemberIds,
+  teamRoleOf,
+} from "../access";
 import { sha256Hex } from "../auth/bytes";
 import { requireAuth } from "../auth/middleware";
 import { normalizeEmail } from "../auth/session";
@@ -61,51 +72,37 @@ export function showStub(env: Env, showId: string) {
 
 export type ShowEnv = AppEnv & {
   Variables: AppEnv["Variables"] & {
-    show: { id: string; name: string; currentSession: string | null };
+    show: { id: string; name: string; currentSession: string | null; teamId: string | null };
+    /** Effective role (src/worker/access.ts): the highest of the direct and the team one. */
     role: Role;
+    /** The caller's direct membership role (null: access only through the show's team). */
+    directRole: Role | null;
   };
 };
 
 /**
- * 404 unless the show exists and the signed-in user is a member of it, or the request is
- * a share link's viewer for this show (`c.var.share`; role viewer; routes/share.ts).
+ * 404 unless the show exists and the signed-in user has access to it (a direct member,
+ * or a member of the show's team; src/worker/access.ts), or the request is a share link's
+ * viewer for this show (`c.var.share`; role viewer; routes/share.ts).
  */
 export const requireMembership = createMiddleware<ShowEnv>(async (c, next) => {
   const showId = c.req.param("id") ?? "";
   const share = c.var.share;
-  const row = await c.var.db
-    .select({
-      id: schema.shows.id,
-      name: schema.shows.name,
-      currentSession: schema.shows.currentSession,
-      role: schema.memberships.role,
-    })
-    .from(schema.shows)
-    .innerJoin(schema.memberships, eq(schema.memberships.showId, schema.shows.id))
-    .where(and(eq(schema.shows.id, showId), eq(schema.memberships.userId, c.var.user.id)))
-    .get();
-  if (row) {
+  // A share viewer's stand-in user (`share:<linkId>`) has no memberships: role null.
+  const access = await showAccess(c.var.db, showId, c.var.user.id);
+  if (access?.role) {
     // A member's own access wins over a share cookie they may also carry.
     c.set("share", undefined);
-    c.set("show", { id: row.id, name: row.name, currentSession: row.currentSession });
-    c.set("role", row.role);
+    c.set("show", access.show);
+    c.set("role", access.role);
+    c.set("directRole", access.direct);
     return next();
   }
-  if (share && share.showId === showId) {
-    const show = await c.var.db
-      .select({
-        id: schema.shows.id,
-        name: schema.shows.name,
-        currentSession: schema.shows.currentSession,
-      })
-      .from(schema.shows)
-      .where(eq(schema.shows.id, showId))
-      .get();
-    if (show) {
-      c.set("show", show);
-      c.set("role", "viewer");
-      return next();
-    }
+  if (access && share && share.showId === showId) {
+    c.set("show", access.show);
+    c.set("role", "viewer");
+    c.set("directRole", null);
+    return next();
   }
   // Same response for "no such show" and "not a member": don't leak show IDs.
   return c.json({ error: "Show not found" }, 404);
@@ -200,24 +197,155 @@ function isGrantable(role: unknown): role is Role {
   return typeof role === "string" && (GRANTABLE_ROLES as readonly string[]).includes(role);
 }
 
+const inviter = alias(schema.users, "inviter");
+
+/**
+ * A show's members (MemberDTO), by name: its direct members and (for a team show) the
+ * team's members without a direct membership. `userId` narrows it to one person.
+ */
+async function showMembers(
+  db: D1Db,
+  show: { id: string; teamId: string | null },
+  userId?: string,
+): Promise<MemberDTO[]> {
+  const m = schema.memberships;
+  const tm = schema.teamMemberships;
+  const u = schema.users;
+  const [direct, team] = await Promise.all([
+    db
+      .select({
+        userId: u.id,
+        email: u.email,
+        name: u.name,
+        lastActiveAt: u.lastActiveAt,
+        directRole: m.role,
+        teamRole: tm.role,
+        joinedAt: m.createdAt,
+        invitedById: inviter.id,
+        invitedByName: inviter.name,
+      })
+      .from(m)
+      .innerJoin(u, eq(u.id, m.userId))
+      // No team: "" matches no team (ids are UUIDs), so teamRole stays null.
+      .leftJoin(tm, and(eq(tm.teamId, show.teamId ?? ""), eq(tm.userId, m.userId)))
+      .leftJoin(inviter, eq(inviter.id, m.invitedBy))
+      .where(and(eq(m.showId, show.id), userId ? eq(m.userId, userId) : undefined)),
+    show.teamId
+      ? db
+          .select({
+            userId: u.id,
+            email: u.email,
+            name: u.name,
+            lastActiveAt: u.lastActiveAt,
+            teamRole: tm.role,
+            joinedAt: tm.createdAt,
+            invitedById: inviter.id,
+            invitedByName: inviter.name,
+          })
+          .from(tm)
+          .innerJoin(u, eq(u.id, tm.userId))
+          .leftJoin(inviter, eq(inviter.id, tm.invitedBy))
+          .where(
+            and(
+              eq(tm.teamId, show.teamId),
+              userId ? eq(tm.userId, userId) : undefined,
+              notExists(
+                db
+                  .select({ one: sql`1` })
+                  .from(m)
+                  .where(and(eq(m.showId, show.id), eq(m.userId, tm.userId))),
+              ),
+            ),
+          )
+      : Promise.resolve([]),
+  ]);
+  const by = (r: { invitedById: string | null; invitedByName: string | null }) =>
+    r.invitedById ? { id: r.invitedById, name: r.invitedByName ?? "" } : null;
+  const members: MemberDTO[] = [
+    ...direct.map((r) => ({
+      userId: r.userId,
+      email: r.email,
+      name: r.name,
+      role: resolveRole(r.directRole, r.teamRole) ?? r.directRole,
+      source: "direct" as const,
+      directRole: r.directRole,
+      teamRole: r.teamRole,
+      invitedBy: by(r),
+      joinedAt: r.joinedAt,
+      lastActiveAt: r.lastActiveAt,
+    })),
+    ...team.map((r) => ({
+      userId: r.userId,
+      email: r.email,
+      name: r.name,
+      role: resolveRole(null, r.teamRole) ?? "viewer",
+      source: "team" as const,
+      directRole: null,
+      teamRole: r.teamRole,
+      invitedBy: by(r),
+      joinedAt: r.joinedAt,
+      lastActiveAt: r.lastActiveAt,
+    })),
+  ];
+  // By name in byte order, like SQL's ORDER BY.
+  return members.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
+const TEAM_ONLY = "Manage this person in the team";
+
+/** 409 for someone who only has access through the show's team, else 404. */
+async function notADirectMember(c: Context<ShowEnv>, userId: string): Promise<Response> {
+  const teamId = c.var.show.teamId;
+  if (teamId && (await teamRoleOf(c.var.db, teamId, userId))) {
+    return c.json({ error: TEAM_ONLY }, 409);
+  }
+  return c.json({ error: "Not a member of this show" }, 404);
+}
+
+async function teamById(db: D1Db, teamId: string) {
+  return (
+    (await db
+      .select({ id: schema.teams.id, name: schema.teams.name })
+      .from(schema.teams)
+      .where(eq(schema.teams.id, teamId))
+      .get()) ?? null
+  );
+}
+
+/**
+ * PATCH /shows/:id `teamId`: who may move the show. Into a team (or from one team to
+ * another): the show's owner, who must be an editor (or up) of the target team. Out of
+ * its team (`null`): the owner, or the team's owner/admins. Returns the new team id, or
+ * the error response.
+ */
+async function checkTeamMove(c: Context<ShowEnv>, raw: unknown): Promise<string | null | Response> {
+  if (raw !== null && typeof raw !== "string") {
+    return c.json({ error: "teamId must be a string or null" }, 400);
+  }
+  const isOwner = c.var.role === "owner";
+  if (raw === null || raw === "") {
+    const current = c.var.show.teamId;
+    if (isOwner) return null;
+    if (current && isTeamManager(await teamRoleOf(c.var.db, current, c.var.user.id))) return null;
+    return c.json({ error: "Only the show's owner or the team's admins can do that" }, 403);
+  }
+  if (!isOwner) return c.json({ error: "Only the show's owner can move it into a team" }, 403);
+  const role = await teamRoleOf(c.var.db, raw, c.var.user.id);
+  if (!role) return c.json({ error: "Team not found" }, 404);
+  if (!isTeamEditor(role)) {
+    return c.json({ error: "Only the team's editors can add shows to it" }, 403);
+  }
+  return raw;
+}
+
 export const showRoutes = new Hono<ShowEnv>()
   .use("/shows", requireAuth)
   // Share links' viewers get through on a few GET routes (auth/share-auth.ts).
   .use("/shows/*", requireAuthOrShare)
+  // Direct and team shows, with the effective role and the team.
   .get("/shows", async (c) => {
-    const rows = await c.var.db
-      .select({
-        id: schema.shows.id,
-        name: schema.shows.name,
-        createdAt: schema.shows.createdAt,
-        role: schema.memberships.role,
-        isTemplate: schema.shows.isTemplate,
-      })
-      .from(schema.memberships)
-      .innerJoin(schema.shows, eq(schema.shows.id, schema.memberships.showId))
-      .where(eq(schema.memberships.userId, c.var.user.id))
-      .orderBy(desc(schema.shows.createdAt));
-    return c.json({ shows: rows satisfies ShowSummaryDTO[] } satisfies ShowsResponse);
+    const shows = await accessibleShows(c.var.db, c.var.user.id);
+    return c.json({ shows } satisfies ShowsResponse);
   })
   .post("/shows", async (c) => {
     const body = (await readJsonObject(c)) as Partial<CreateShowRequest> | null;
@@ -225,16 +353,44 @@ export const showRoutes = new Hono<ShowEnv>()
     if (!name || name.length > MAX_NAME_LENGTH) {
       return c.json({ error: `Show name must be 1–${MAX_NAME_LENGTH} characters` }, 400);
     }
+    const teamId = body?.teamId ?? null;
+    if (teamId !== null && typeof teamId !== "string") {
+      return c.json({ error: "teamId must be a string or null" }, 400);
+    }
+    let team: { id: string; name: string } | null = null;
+    if (teamId) {
+      // In a team: the creator must be one of its editors (or up).
+      const role = await teamRoleOf(c.var.db, teamId, c.var.user.id);
+      if (!role) return c.json({ error: "Team not found" }, 404);
+      if (!isTeamEditor(role)) {
+        return c.json({ error: "Only the team's editors can add shows to it" }, 403);
+      }
+      team = await teamById(c.var.db, teamId);
+      if (!team) return c.json({ error: "Team not found" }, 404);
+    }
     const id = crypto.randomUUID();
     const createdAt = Date.now();
     await c.var.db.batch([
-      c.var.db.insert(schema.shows).values({ id, name, createdBy: c.var.user.id, createdAt }),
+      c.var.db.insert(schema.shows).values({
+        id,
+        name,
+        createdBy: c.var.user.id,
+        createdAt,
+        teamId: team?.id ?? null,
+      }),
       c.var.db
         .insert(schema.memberships)
         .values({ showId: id, userId: c.var.user.id, role: "owner", createdAt }),
     ]);
     await showStub(c.env, id).sync(id, name);
-    const show: ShowSummaryDTO = { id, name, role: "owner", createdAt };
+    const show: ShowSummaryDTO = {
+      id,
+      name,
+      role: "owner",
+      createdAt,
+      teamId: team?.id ?? null,
+      teamName: team?.name ?? null,
+    };
     return c.json({ show }, 201);
   })
   .get("/shows/:id", requireMembership, async (c) => {
@@ -246,13 +402,19 @@ export const showRoutes = new Hono<ShowEnv>()
       role: c.var.role,
     } satisfies ShowResponse);
   })
-  // Rename (owner) and the current session label (editors and the owner). D1 is the source
-  // of truth; the DO only relays the change to open sockets.
+  // Rename (owner), the current session label (editors and the owner), and the show's team
+  // (`teamId`: see moveShowTeam). D1 is the source of truth; the DO only relays the change
+  // to open sockets.
   .patch("/shows/:id", requireMembership, async (c) => {
     const body = await readJsonObject(c);
     if (!body) return c.json({ error: "Expected a JSON object" }, 400);
     const canEdit = c.var.role === "owner" || c.var.role === "editor";
-    const set: { name?: string; currentSession?: string | null } = {};
+    const set: { name?: string; currentSession?: string | null; teamId?: string | null } = {};
+    if ("teamId" in body) {
+      const checked = await checkTeamMove(c, body.teamId);
+      if (checked instanceof Response) return checked;
+      set.teamId = checked;
+    }
     if ("name" in body) {
       if (c.var.role !== "owner") {
         return c.json({ error: "Only the show's owner can rename it" }, 403);
@@ -276,7 +438,7 @@ export const showRoutes = new Hono<ShowEnv>()
       set.currentSession = session || null;
     }
     if (Object.keys(set).length === 0) {
-      return c.json({ error: "Nothing to change (name, current_session)" }, 400);
+      return c.json({ error: "Nothing to change (name, current_session, teamId)" }, 400);
     }
     const updated = await c.var.db
       .update(schema.shows)
@@ -289,10 +451,21 @@ export const showRoutes = new Hono<ShowEnv>()
       })
       .get();
     if (!updated) return c.json({ error: "Show not found" }, 404);
-    await showStub(c.env, c.var.show.id).notifyShow({
-      name: updated.name,
-      currentSession: updated.currentSession,
-    });
+    if ("name" in set || "currentSession" in set) {
+      await showStub(c.env, c.var.show.id).notifyShow({
+        name: updated.name,
+        currentSession: updated.currentSession,
+      });
+    }
+    if ("teamId" in set && set.teamId !== c.var.show.teamId) {
+      // The old team's members may have lost access, the new team's gained it.
+      const before = c.var.show.teamId ? await teamMemberIds(c.var.db, c.var.show.teamId) : [];
+      const after = set.teamId ? await teamMemberIds(c.var.db, set.teamId) : [];
+      await refreshAccess(c.env, c.var.db, {
+        showIds: [c.var.show.id],
+        userIds: [...before, ...after],
+      });
+    }
     return c.json({ show: updated } satisfies UpdateShowResponse);
   })
   .get("/shows/:id/ws", requireSameOriginUpgrade, requireMembership, async (c) => {
@@ -473,19 +646,10 @@ export const showRoutes = new Hono<ShowEnv>()
   .get("/shows/:id/export.json", requireMembership, requireOwner, exportShow)
 
   // ---- members ----
+  // Direct members and (for a team show) the team's members, each once.
   .get("/shows/:id/members", requireMembership, async (c) => {
-    const rows = await c.var.db
-      .select({
-        userId: schema.users.id,
-        email: schema.users.email,
-        name: schema.users.name,
-        role: schema.memberships.role,
-      })
-      .from(schema.memberships)
-      .innerJoin(schema.users, eq(schema.users.id, schema.memberships.userId))
-      .where(eq(schema.memberships.showId, c.var.show.id))
-      .orderBy(schema.users.name);
-    return c.json({ members: rows satisfies MemberDTO[] } satisfies MembersResponse);
+    const members = await showMembers(c.var.db, c.var.show);
+    return c.json({ members } satisfies MembersResponse);
   })
   .post("/shows/:id/members", requireMembership, requireOwner, async (c) => {
     const body = await readJsonObject(c);
@@ -501,13 +665,18 @@ export const showRoutes = new Hono<ShowEnv>()
       .get();
     // Accounts are created through invites; adding a member never creates one.
     if (!user) return c.json({ error: "No account with that email; invite them first" }, 404);
+    // A team member may also be added directly (a guest role above their team one).
     const inserted = await c.var.db
       .insert(schema.memberships)
-      .values({ showId: c.var.show.id, userId: user.id, role })
+      .values({ showId: c.var.show.id, userId: user.id, role, invitedBy: c.var.user.id })
       .onConflictDoNothing()
       .returning({ userId: schema.memberships.userId });
     if (inserted.length === 0) return c.json({ error: "Already a member of this show" }, 409);
-    const member: MemberDTO = { userId: user.id, email: user.email, name: user.name, role };
+    if (c.var.show.teamId) {
+      // They may already have the show open through the team.
+      await refreshAccess(c.env, c.var.db, { showIds: [c.var.show.id], userIds: [user.id] });
+    }
+    const [member] = await showMembers(c.var.db, c.var.show, user.id);
     return c.json({ member }, 201);
   })
   .patch("/shows/:id/members/:userId", requireMembership, requireOwner, async (c) => {
@@ -525,9 +694,10 @@ export const showRoutes = new Hono<ShowEnv>()
         and(eq(schema.memberships.showId, c.var.show.id), eq(schema.memberships.userId, userId)),
       )
       .returning({ userId: schema.memberships.userId });
-    if (updated.length === 0) return c.json({ error: "Not a member of this show" }, 404);
-    // Every mutate re-checks the role in D1; tell the user's open tabs so their UI follows.
-    await showStub(c.env, c.var.show.id).notifyRole(userId, role);
+    if (updated.length === 0) return notADirectMember(c, userId);
+    // Every mutate re-checks the role in D1; tell the user's open tabs so their UI follows
+    // (with the effective role: a team role above the new one still counts).
+    await refreshAccess(c.env, c.var.db, { showIds: [c.var.show.id], userIds: [userId] });
     return c.json({ ok: true });
   })
   .delete("/shows/:id/members/:userId", requireMembership, requireOwner, async (c) => {
@@ -539,8 +709,9 @@ export const showRoutes = new Hono<ShowEnv>()
         and(eq(schema.memberships.showId, c.var.show.id), eq(schema.memberships.userId, userId)),
       )
       .returning({ userId: schema.memberships.userId });
-    if (removed.length === 0) return c.json({ error: "Not a member of this show" }, 404);
-    await showStub(c.env, c.var.show.id).disconnectUser(userId);
+    if (removed.length === 0) return notADirectMember(c, userId);
+    // Still in the show's team: they keep that role (notified); otherwise disconnected.
+    await refreshAccess(c.env, c.var.db, { showIds: [c.var.show.id], userIds: [userId] });
     return c.json({ ok: true });
   })
   // Hand the show to another member (owner only): they become the owner, you an editor.
@@ -587,6 +758,9 @@ export const showRoutes = new Hono<ShowEnv>()
     if (c.var.role === "owner") {
       return c.json({ error: "Transfer ownership to someone else before leaving" }, 400);
     }
+    if (!c.var.directRole) {
+      return c.json({ error: "You have access through the show's team; leave the team" }, 400);
+    }
     await c.var.db
       .delete(schema.memberships)
       .where(
@@ -595,6 +769,7 @@ export const showRoutes = new Hono<ShowEnv>()
           eq(schema.memberships.userId, c.var.user.id),
         ),
       );
-    await showStub(c.env, c.var.show.id).disconnectUser(c.var.user.id);
+    // Still in the show's team: their tabs stay open with the team role.
+    await refreshAccess(c.env, c.var.db, { showIds: [c.var.show.id], userIds: [c.var.user.id] });
     return c.json({ ok: true });
   });
