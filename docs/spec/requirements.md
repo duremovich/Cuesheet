@@ -91,6 +91,8 @@ specified in [ux.md](ux.md); the tables in [data-model.md](data-model.md).
   the people they added. Pending invites can be listed, revoked and reissued; invites are
   emailed when email is set up, else the link is copied.
 - **R24 Sign-in** for the team: email + password, invite-only. Google sign-in can come later.
+  Everyone can rename themselves and change their login email (current password, then a
+  link sent to the new address; the old address is told).
 
 ### Import / export
 
