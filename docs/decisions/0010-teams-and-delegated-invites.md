@@ -39,7 +39,9 @@ same people to every show by hand, and the owner was a bottleneck for every new 
   owners and admins manage every team member except the owner, admins included, and
   (decided 2026-11-19) also the direct guests of their team's shows: they change a guest's
   role (up to editor, their own show role) and remove them, alongside the show's owner, and
-  see, reissue and revoke every pending invite into those shows. They never touch the show owner's
+  see and revoke every pending invite into those shows; they reissue only an invite they
+  could make themselves (never under an owner-only show policy: a reissue hands the link
+  to whoever asks). They never touch the show owner's
   row, so a guest added by an editor who has since left is never orphaned.
 - **An invite never outlives its inviter's rights.** Accepting (and reissuing, by its
   inviter) re-checks that the inviter could still make that invite today: a demotion, a

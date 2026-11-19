@@ -573,7 +573,7 @@ export const showRoutes = new Hono<ShowEnv>()
       const before = c.var.show.teamId ? await teamMemberIds(c.var.db, c.var.show.teamId) : [];
       const after = set.teamId ? await teamMemberIds(c.var.db, set.teamId) : [];
       // Whoever lost access also loses the invites they made into the show.
-      await endInvitesWithoutAccess(c.var.db, [c.var.show.id], before);
+      await endInvitesWithoutAccess(c.var.db, { showId: c.var.show.id });
       await refreshAccess(c.env, c.var.db, {
         showIds: [c.var.show.id],
         userIds: [...before, ...after],
@@ -902,16 +902,19 @@ export const showRoutes = new Hono<ShowEnv>()
     if (!canManageShowMember(actor, c.var.show.invitePolicy, target)) {
       return c.json({ error: "You can only manage the people you added" }, 403);
     }
+    // Only the row as checked above (role and inviter), like a role change.
+    const dm = schema.memberships;
     const removed = await c.var.db
-      .delete(schema.memberships)
+      .delete(dm)
       .where(
         and(
-          eq(schema.memberships.showId, c.var.show.id),
-          eq(schema.memberships.userId, userId),
-          ne(schema.memberships.role, "owner"),
+          eq(dm.showId, c.var.show.id),
+          eq(dm.userId, userId),
+          eq(dm.role, target.role),
+          target.invitedBy === null ? isNull(dm.invitedBy) : eq(dm.invitedBy, target.invitedBy),
         ),
       )
-      .returning({ userId: schema.memberships.userId });
+      .returning({ userId: dm.userId });
     if (removed.length === 0) {
       return c.json({ error: "The show's members changed meanwhile; reload and try again" }, 409);
     }

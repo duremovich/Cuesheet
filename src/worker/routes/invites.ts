@@ -16,7 +16,7 @@
 // leaving a team ends those of whoever lost access; a show transfer ends the old owner's.
 // Non-admins may create 30 invites an hour, 100 a day (`inviteLimits`). Bad tokens are
 // rate-limited per IP (auth/rate-limit.ts).
-import { and, desc, eq, gt, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, notExists, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import type { Context } from "hono";
 import { Hono } from "hono";
@@ -225,8 +225,9 @@ export async function pendingInvites(
 type InviteRow = typeof inv.$inferSelect;
 
 /**
- * Whether the caller may revoke or reissue an invite. The show's owner (and a team show's
- * team owner/admins) and, for a team invite, the team's owner/admins always may. Its inviter may always revoke it, but reissue it only while
+ * Whether the caller may revoke or reissue an invite. The show's owner, and for a team
+ * invite the team's owner/admins, always may. A team show's team owner/admins may revoke
+ * every invite into it but reissue only what they could invite themselves. Its inviter may always revoke it, but reissue it only while
  * they could still make it (`inviterMayGrant`: same target, same role). `hidden` when the
  * caller can't see the show or team at all (404).
  */
@@ -243,8 +244,18 @@ async function inviteControl<E extends AppEnv>(
     const access = await showAccess(c.var.db, invite.showId, me);
     const role = access?.role;
     if (role === "owner") return "allowed";
-    // The show's team owner/admins manage every invite into it, like the show's owner.
-    if (isTeamManager(access?.teamRole)) return "allowed";
+    // The show's team owner/admins may revoke any invite into it, but reissue (which hands
+    // them the link) only one they could make themselves: never under an owner-only policy.
+    if (access && isTeamManager(access.teamRole)) {
+      if (action === "revoke") return "allowed";
+      if (
+        role &&
+        canInviteToShow(role, access.show.invitePolicy) &&
+        canGrant(role, invite.role ?? "editor")
+      ) {
+        return "allowed";
+      }
+    }
     if (mine && (await asInviter())) return "allowed";
     return role ? "forbidden" : "hidden";
   }
@@ -372,20 +383,48 @@ export async function inviterMayGrant(
 }
 
 /**
- * End the open invites each of `userIds` made into each of `showIds` where they can no
- * longer open the show (they left or were removed from its team, or it left their team).
+ * End open invites into shows whose inviter can no longer open the show, in one UPDATE:
+ * `{teamId, userId}` (they left or were removed from the team: their invites into its
+ * shows) or `{showId}` (the show left its team: everyone's invites into it). Access is
+ * the same as `showAccess`: a direct membership, or a membership of the show's team.
  */
 export async function endInvitesWithoutAccess(
   db: D1Db,
-  showIds: Iterable<string>,
-  userIds: Iterable<string>,
+  scope: { teamId: string; userId: string } | { showId: string },
 ): Promise<void> {
-  const users = [...new Set(userIds)];
-  for (const showId of new Set(showIds)) {
-    for (const userId of users) {
-      if (!(await showAccess(db, showId, userId))?.role) await endInvites(db, { showId }, userId);
-    }
-  }
+  const m = schema.memberships;
+  const tm = schema.teamMemberships;
+  const s = schema.shows;
+  const hasDirect = db
+    .select({ one: sql`1` })
+    .from(m)
+    .where(and(eq(m.showId, inv.showId), eq(m.userId, inv.invitedBy)));
+  const hasTeam = db
+    .select({ one: sql`1` })
+    .from(s)
+    .innerJoin(tm, eq(tm.teamId, s.teamId))
+    .where(and(eq(s.id, inv.showId), eq(tm.userId, inv.invitedBy)));
+  await db
+    .update(inv)
+    .set({ revokedAt: Date.now() })
+    .where(
+      and(
+        "showId" in scope
+          ? eq(inv.showId, scope.showId)
+          : and(
+              inArray(
+                inv.showId,
+                db.select({ id: s.id }).from(s).where(eq(s.teamId, scope.teamId)),
+              ),
+              eq(inv.invitedBy, scope.userId),
+            ),
+        eq(inv.kind, "signup"),
+        isNull(inv.acceptedAt),
+        isNull(inv.revokedAt),
+        notExists(hasDirect),
+        notExists(hasTeam),
+      ),
+    );
 }
 
 export const inviteRoutes = new Hono<AppEnv>()
@@ -479,7 +518,7 @@ export const inviteRoutes = new Hono<AppEnv>()
     // The new invite must be acceptable: it keeps its inviter while they could still make
     // it, else the reissuer becomes its inviter, which they must be able to be (a team
     // admin can't take over an invite under the show's owner-only policy).
-    const keepInviter = invite.invitedBy === c.var.user.id || (await inviterMayGrant(db, invite));
+    const keepInviter = await inviterMayGrant(db, invite);
     if (
       !keepInviter &&
       !(await inviterMayGrant(db, { ...invite, invitedBy: c.var.user.id }, c.var.user.isAdmin))

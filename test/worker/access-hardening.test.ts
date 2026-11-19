@@ -369,13 +369,45 @@ describe("team owner/admins manage their team shows' guests", () => {
     expect(await pendingIds(`/api/shows/${show.id}/invites`, teamAdmin.cookie)).toEqual([
       pending.id,
     ]);
-    // …and reissue it (the show's owner can still make it, so it stays theirs and works).
+    // Under an owner-only policy they may still revoke it, but not reissue it: the reissue
+    // hands them the link, and they couldn't invite there themselves.
+    await ok(send("PATCH", `/api/shows/${show.id}`, showOwner.cookie, { invitePolicy: "owner" }));
+    expect((await post(`/api/invites/${pending.id}/reissue`, {}, teamAdmin.cookie)).status).toBe(
+      403,
+    );
+    expect((await send("DELETE", `/api/invites/${pending.id}`, teamAdmin.cookie)).status).toBe(200);
+    expect(await pendingIds(`/api/shows/${show.id}/invites`, showOwner.cookie)).toEqual([]);
+  });
+
+  it("an admin reissues a demoted editor's invite (normal policy) and becomes its inviter", async () => {
+    const { teamAdmin, showOwner, departed, show } = await setup("TG3");
+    const invite = await inviteToShow(show.id, departed);
+    // Demoted, not removed: their invite stays pending but can't be accepted.
+    await ok(
+      send("PATCH", `/api/shows/${show.id}/members/${departed.id}`, showOwner.cookie, {
+        role: "viewer",
+      }),
+    );
     const again = await ok<ReissueInviteResponse>(
-      post(`/api/invites/${pending.id}/reissue`, {}, teamAdmin.cookie),
+      post(`/api/invites/${invite.id}/reissue`, {}, teamAdmin.cookie),
     );
     expect((await api(`/api/invites/${tokenOf(again.path)}`)).status).toBe(200);
-    expect((await send("DELETE", `/api/invites/${again.id}`, teamAdmin.cookie)).status).toBe(200);
-    expect(await pendingIds(`/api/shows/${show.id}/invites`, showOwner.cookie)).toEqual([]);
+    const listed = (
+      await ok<PendingInvitesResponse>(
+        api(`/api/shows/${show.id}/invites`, { cookie: showOwner.cookie }),
+      )
+    ).invites;
+    expect(listed.map((i) => [i.id, i.invitedBy?.id])).toEqual([[again.id, teamAdmin.id]]);
+  });
+
+  it("an admin can't reissue their own invite once the policy is owner-only (never a dead link)", async () => {
+    const { teamAdmin, showOwner, show } = await setup("TG4");
+    const mine = await inviteToShow(show.id, teamAdmin);
+    await ok(send("PATCH", `/api/shows/${show.id}`, showOwner.cookie, { invitePolicy: "owner" }));
+    const res = await post(`/api/invites/${mine.id}/reissue`, {}, teamAdmin.cookie);
+    expect([403, 409]).toContain(res.status);
+    // Nothing was revoked or made: the old invite is still the only one.
+    expect(await pendingIds(`/api/shows/${show.id}/invites`, showOwner.cookie)).toEqual([mine.id]);
   });
 
   it("a team editor removing someone else's guest is still refused, and sees only their own invites", async () => {

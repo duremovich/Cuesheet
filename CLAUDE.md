@@ -249,7 +249,8 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   own role (`canGrant`, `src/shared/roles.ts`) or touches the owner (400); yourself: 400
   (adding your own email too); someone here only through the team: 409 "Manage this person
   in the team"; a role change applies only to the row as it was checked (role and
-  `invited_by` pinned in the WHERE), 409 when it changed meanwhile. Removing
+  `invited_by` pinned in the WHERE), 409 when it changed meanwhile; a removal pins the
+  same. Removing
   someone ends their open invites into the show; someone who still has team access is
   notified of their team role instead of disconnected (`refreshAccess`). `POST
   .../transfer {userId}` or `{email}` (owner, direct members only:
@@ -1523,14 +1524,16 @@ position is kept outside React.
   `POST /api/invites/:id/reissue` revokes and inserts a new row with a new token and 7
   days → `{id, path, expiresAt, emailed}`. Revoke: the inviter (always), the show's owner
   (and, for a team show, its team's owner/admins) or, for a team invite, the team's
-  owner/admins; reissue: the same managers (409 when neither the inviter nor the manager
-  could make the invite now, e.g. a team admin under an owner-only policy) and the inviter
-  only while `inviterMayGrant` holds (403 if you can see the target, else 404). A reissue keeps the
+  owner/admins; reissue: the show's owner and a team invite's team owner/admins; a team
+  show's team owner/admins only an invite they could make themselves (`canInviteToShow` +
+  `canGrant` on their show role: never under an owner-only policy, since the reissue
+  hands them the link); and the inviter only while `inviterMayGrant` holds (403 if you can see the target, else 404). A reissue keeps the
   inviter while they could still make it, else the reissuing manager becomes the inviter.
   Leaving or being removed ends that person's open invites into the show/team, and (for a
   team) into the team's shows they can no longer open; a show moved out of (or between)
   teams ends the invites of whoever lost access (`endInvitesWithoutAccess`); transferring
-  a show revokes the old owner's. Non-admins create at most 30 invites an
+  a show revokes the old owner's. (`endInvitesWithoutAccess` is one UPDATE … NOT EXISTS,
+  so removing someone from a team with many shows stays within D1's query limit.) Non-admins create at most 30 invites an
   hour and 100 a day (`inviteLimits`, `invite-send:user:<id>`; every invite counts, made
   or reissued; 429 "Too many invites"). `id` is the token's SHA-256 (the token is only in
   the link, shown once).
@@ -1555,8 +1558,8 @@ position is kept outside React.
 - **Effective role** = highest of the direct role and the team-derived one (team
   owner/admin → editor, else the same name); no show-level downgrade of a team member.
   Team owner/admins are never a show's owner, but they manage its direct guests (change
-  their role up to editor, remove them, see, reissue and revoke invites into the show)
-  alongside the show's
+  their role up to editor, remove them, see and revoke all invites into the show, reissue
+  only what they could invite themselves) alongside the show's
   owner; never the owner's row. Team members reach every show of the team, including later
   ones.
 - **`refreshAccess(env, db, {showIds, userIds})`** after anything that can move access:
@@ -1573,8 +1576,8 @@ position is kept outside React.
   existing account; 404 otherwise; 409 already in; 400 yourself), `PATCH/DELETE
   …/members/:userId` (owner/admins manage everyone but the owner, admins included; an
   editor who may add people manages the people they added, within their role; the owner:
-  400, yourself: 400, 403 otherwise; a role change pins the row's role and `invited_by` as
-  checked, 409 when it changed; removal ends their invites into the team and into its shows
+  400, yourself: 400, 403 otherwise; a role change or removal pins the row's role and
+  `invited_by` as checked, 409 when it changed; removal ends their invites into the team and into its shows
   they can no longer open), `POST …/leave` (not the owner; 409 when the row was gone or
   became the owner's meanwhile; ends invites the same way),
   `POST …/transfer {userId|email}` (owner: that member becomes owner, you admin;

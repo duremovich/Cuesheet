@@ -437,9 +437,17 @@ export const teamRoutes = new Hono<TeamEnv>()
     if (!canManage(team, c.var.user.id, target)) {
       return c.json({ error: "You can only manage the people you added" }, 403);
     }
+    // Only the row as checked above (role and inviter), like a role change.
     const removed = await c.var.db
       .delete(tm)
-      .where(and(eq(tm.teamId, team.id), eq(tm.userId, userId), ne(tm.role, "owner")))
+      .where(
+        and(
+          eq(tm.teamId, team.id),
+          eq(tm.userId, userId),
+          eq(tm.role, target.role),
+          target.invitedBy === null ? isNull(tm.invitedBy) : eq(tm.invitedBy, target.invitedBy),
+        ),
+      )
       .returning({ userId: tm.userId });
     if (removed.length === 0) {
       return c.json({ error: "The team's members changed meanwhile; reload and try again" }, 409);
@@ -447,9 +455,11 @@ export const teamRoutes = new Hono<TeamEnv>()
     await endInvites(c.var.db, { teamId: team.id }, userId);
     // Their tabs in the team's shows close, unless they're also direct members there; so
     // do their invites into the shows they can't open any more.
-    const showIds = await teamShowIds(c.var.db, team.id);
-    await endInvitesWithoutAccess(c.var.db, showIds, [userId]);
-    await refreshAccess(c.env, c.var.db, { showIds, userIds: [userId] });
+    await endInvitesWithoutAccess(c.var.db, { teamId: team.id, userId });
+    await refreshAccess(c.env, c.var.db, {
+      showIds: await teamShowIds(c.var.db, team.id),
+      userIds: [userId],
+    });
     return c.json({ ok: true });
   })
   .post("/teams/:id/leave", requireTeamMember, async (c) => {
@@ -467,9 +477,11 @@ export const teamRoutes = new Hono<TeamEnv>()
       return c.json({ error: "The team's members changed meanwhile; reload and try again" }, 409);
     }
     await endInvites(c.var.db, { teamId: team.id }, c.var.user.id);
-    const showIds = await teamShowIds(c.var.db, team.id);
-    await endInvitesWithoutAccess(c.var.db, showIds, [c.var.user.id]);
-    await refreshAccess(c.env, c.var.db, { showIds, userIds: [c.var.user.id] });
+    await endInvitesWithoutAccess(c.var.db, { teamId: team.id, userId: c.var.user.id });
+    await refreshAccess(c.env, c.var.db, {
+      showIds: await teamShowIds(c.var.db, team.id),
+      userIds: [c.var.user.id],
+    });
     return c.json({ ok: true });
   })
   // Hand the team to another member (owner only): they become the owner, you an admin.

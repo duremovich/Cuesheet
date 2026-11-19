@@ -270,6 +270,21 @@ describe("who manages whom", () => {
     // Someone else's invite: Revoke, but no Reissue (no new links past the owner-only policy).
     expect(byLabel(container, "Revoke the invite for someone@test.local")).not.toBeNull();
     expect(byLabel(container, "Reissue the invite for someone@test.local")).toBeNull();
+
+    // Under the normal policy a team admin reissues anyone's invite (up to editor), also one
+    // from someone who has left.
+    const departed: PendingInviteDTO = {
+      ...ownersInvite,
+      id: "inv-d",
+      email: "departed@test.local",
+      role: "commenter",
+      invitedBy: null,
+    };
+    const open = await mount("editor", { members, team, invites: [ownersInvite, departed] });
+    for (const email of ["someone@test.local", "departed@test.local"]) {
+      expect(byLabel(open.container, `Reissue the invite for ${email}`)).not.toBeNull();
+      expect(byLabel(open.container, `Revoke the invite for ${email}`)).not.toBeNull();
+    }
   });
 
   it("people with access through the team are managed in the team", async () => {

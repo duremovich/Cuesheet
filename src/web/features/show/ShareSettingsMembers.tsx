@@ -4,10 +4,10 @@
 // people and the pending invites, who may add people (owner), and leaving the show.
 //
 // Controls follow the API's rules (src/shared/roles.ts): the owner and the owner/admins of
-// the show's team manage every direct member and revoke any pending invite (only the
-// owner, or the invite's sender while they could still send it, reissues), an editor
-// allowed to invite manages the people they added; nobody grants above their own show role. People who are here through the show's team ("via <team>") are managed
-// in the team. Every confirmation is in-row (ConfirmStrip), never a native dialog.
+// the show's team manage every direct member and revoke any pending invite (reissuing:
+// teams/reissue.ts), an editor allowed to invite manages the people they added; nobody
+// grants above their own show role. People who are here through the show's team
+// ("via <team>") are managed in the team. Every confirmation is in-row (ConfirmStrip), never a native dialog.
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import {
@@ -33,6 +33,7 @@ import { useApiErrorHandler } from "../../lib/auth";
 import { AddPeople } from "../teams/AddPeople";
 import { MemberMeta } from "../teams/MemberMeta";
 import { PendingInvites } from "../teams/PendingInvites";
+import { canReissueShowInvite } from "../teams/reissue";
 import styles from "./ShareSettings.module.css";
 import wsStyles from "./ShowWorkspace.module.css";
 import { useWorkspace } from "./workspace";
@@ -272,14 +273,14 @@ export function MembersSection({
       )}
       <PendingInvites
         invites={invites}
-        // Anyone who sees an invite may revoke it (the owner and the team's owner/admins see
-        // them all). Reissue: the owner, or the sender while they could still send it; a
-        // team admin can't mint links past an owner-only policy.
+        // Anyone who sees an invite may revoke it (the owner and the team's owner/admins
+        // see them all); reissuing: teams/reissue.ts.
         canReissue={(inv) =>
-          isOwner ||
-          (inv.invitedBy?.id === ws.userId &&
-            canInviteToShow(ws.role, policy) &&
-            canGrant(ws.role, inv.role))
+          canReissueShowInvite(
+            { id: ws.userId, role: ws.role, teamRole: mine?.teamRole },
+            policy,
+            inv,
+          )
         }
         links={links}
         onReissued={(made) => setLinks((l) => ({ ...l, [made.id]: made.path }))}
