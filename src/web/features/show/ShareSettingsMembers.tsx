@@ -1,18 +1,37 @@
-// Show settings → Members (R23): what each role may do, the members (the owner changes
-// roles, removes people, hands the show over after an in-row confirmation), leaving a
-// show (anyone but the owner), and adding people: an existing account directly, or an
-// invite link that joins this show with the chosen role when accepted.
-import { type FormEvent, useId, useLayoutEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router";
+// Show settings → Members (R23): what each role may do, the show's team (the owner moves
+// it into one of their teams or back to Personal; the team's owner/admins may make it
+// personal), the members with their details (invited by, joined, last active), adding
+// people and the pending invites, who may add people (owner), and leaving the show.
+//
+// Controls follow the API's rules (src/shared/roles.ts): the owner manages every direct
+// member, an editor allowed to invite manages the people they added; nobody grants above
+// their own role. People who are here through the show's team ("via <team>") are managed
+// in the team. Every confirmation is in-row (ConfirmStrip), never a native dialog.
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router";
 import {
-  type CreateInviteResponse,
   GRANTABLE_ROLES,
+  type InvitePolicy,
   type MemberDTO,
+  type PendingInviteDTO,
   type Role,
+  type ShowInfoDTO,
+  type TeamDTO,
 } from "../../../shared/api";
+import {
+  canGrant,
+  canInviteToShow,
+  canManageShowMember,
+  isTeamEditor,
+  isTeamManager,
+} from "../../../shared/roles";
+import { ConfirmStrip } from "../../components/ConfirmStrip";
 import { EyeIcon } from "../../components/PresenceIndicator";
-import { ApiError, api } from "../../lib/api";
+import { api } from "../../lib/api";
 import { useApiErrorHandler } from "../../lib/auth";
+import { AddPeople } from "../teams/AddPeople";
+import { MemberMeta } from "../teams/MemberMeta";
+import { PendingInvites } from "../teams/PendingInvites";
 import styles from "./ShareSettings.module.css";
 import wsStyles from "./ShowWorkspace.module.css";
 import { useWorkspace } from "./workspace";
@@ -24,6 +43,25 @@ export const ROLE_DESCRIPTIONS: Record<Role, string> = {
   viewer: "Reads everything (shown with an eye in presence); only their own views.",
 };
 
+type ShowTeamInfo = Pick<ShowInfoDTO, "teamId" | "teamName" | "invitePolicy">;
+
+type Confirm = { kind: "owner" | "remove"; userId: string } | { kind: "leave" } | null;
+
+/** The show's team and invite policy, read fresh (another member may have changed them). */
+function useShowTeamInfo(showId: string): [ShowTeamInfo | null, () => void] {
+  const [info, setInfo] = useState<ShowTeamInfo | null>(null);
+  const load = useCallback(() => {
+    api
+      .getShow(showId)
+      .then(({ show }) =>
+        setInfo({ teamId: show.teamId, teamName: show.teamName, invitePolicy: show.invitePolicy }),
+      )
+      .catch(() => undefined);
+  }, [showId]);
+  useEffect(load, [load]);
+  return [info, load];
+}
+
 export function MembersSection({
   members,
   onMembersChanged,
@@ -34,63 +72,45 @@ export function MembersSection({
   const ws = useWorkspace();
   const navigate = useNavigate();
   const handleError = useApiErrorHandler();
+  const [info, reloadInfo] = useShowTeamInfo(ws.showId);
   const [error, setError] = useState<string | null>(null);
-  const [invite, setInvite] = useState<{ email: string; role: Role } | null>(null);
-  const [inviteLink, setInviteLink] = useState<CreateInviteResponse | null>(null);
-  /** The member whose "Make owner" is waiting for its in-row confirmation. */
-  const [confirmOwner, setConfirmOwner] = useState<string | null>(null);
+  const [invites, setInvites] = useState<PendingInviteDTO[]>([]);
+  /** One-time links of invites made or reissued here (invite id → path). */
+  const [links, setLinks] = useState<Record<string, string>>({});
+  const [confirm, setConfirm] = useState<Confirm>(null);
   const isOwner = ws.role === "owner";
+  const mayInvite = ws.role === "owner" || ws.role === "editor";
+
+  // Pending invites: the owner's list has everyone's, an editor's their own.
+  const loadInvites = useCallback(() => {
+    if (!mayInvite) {
+      setInvites([]);
+      return;
+    }
+    api
+      .showInvites(ws.showId)
+      .then((r) => setInvites(r.invites))
+      .catch(() => undefined);
+  }, [ws.showId, mayInvite]);
+  useEffect(loadInvites, [loadInvites]);
+
+  const refresh = () => {
+    onMembersChanged();
+    loadInvites();
+  };
 
   const run = async (fn: () => Promise<unknown>) => {
     setError(null);
     try {
       await fn();
-      onMembersChanged();
+      refresh();
     } catch (e) {
       setError(handleError(e));
     }
   };
 
-  const onAdd = (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const form = e.currentTarget;
-    const data = new FormData(form);
-    const email = String(data.get("email") ?? "").trim();
-    const role = String(data.get("role") ?? "editor") as Role;
-    if (!email) return;
-    setInvite(null);
-    setInviteLink(null);
-    setError(null);
-    api
-      .addMember(ws.showId, { email, role })
-      .then(() => {
-        form.reset();
-        onMembersChanged();
-      })
-      .catch((err: unknown) => {
-        // No account yet: offer an invite that joins this show.
-        if (err instanceof ApiError && err.status === 404) setInvite({ email, role });
-        else setError(handleError(err));
-      });
-  };
-
-  const makeInvite = async () => {
-    if (!invite) return;
-    setError(null);
-    try {
-      setInviteLink(
-        await api.createInvite({ email: invite.email, role: invite.role, showId: ws.showId }),
-      );
-      setInvite(null);
-    } catch (err) {
-      setError(handleError(err));
-    }
-  };
-
   const leave = async () => {
-    if (!window.confirm(`Leave ${ws.showName}? You'll need to be added again to come back.`)) {
-      return;
-    }
+    setConfirm(null);
     try {
       await api.leaveShow(ws.showId);
       navigate("/");
@@ -98,6 +118,16 @@ export function MembersSection({
       setError(handleError(err));
     }
   };
+
+  const mine = members?.find((m) => m.userId === ws.userId);
+  // The team page only opens for the team's members.
+  const inTeam = !!mine?.teamRole;
+  const policy = info?.invitePolicy ?? "editors";
+  const grantable = GRANTABLE_ROLES.filter((r) => canGrant(ws.role, r));
+  const memberEmails = useMemo(() => new Set((members ?? []).map((m) => m.email)), [members]);
+  const teamName = info?.teamName ?? "the team";
+  const teamLink =
+    info?.teamId && inTeam ? <Link to={`/teams/${info.teamId}`}>{teamName}</Link> : teamName;
 
   return (
     <section>
@@ -110,105 +140,180 @@ export function MembersSection({
           </div>
         ))}
       </dl>
+      {info && (
+        <ShowTeam
+          info={info}
+          isOwner={isOwner}
+          teamManager={isTeamManager(mine?.teamRole)}
+          teamLink={teamLink}
+          onMoved={() => {
+            reloadInfo();
+            refresh();
+          }}
+          onError={(e) => setError(handleError(e))}
+        />
+      )}
       {members === null && <p className="muted">Loading…</p>}
       {members && (
         <ul className={wsStyles.members} data-testid="members">
-          {members.map((m) => (
-            <li key={m.userId}>
-              <span className={wsStyles.memberName}>
-                {m.name} <span className="muted">{m.email}</span>
-              </span>
-              {isOwner && m.role !== "owner" ? (
-                <span className={styles.memberActions}>
-                  <select
-                    aria-label={`Role for ${m.name}`}
-                    value={m.role}
-                    onChange={(e) =>
-                      void run(() =>
-                        api.updateMember(ws.showId, m.userId, { role: e.target.value as Role }),
-                      )
-                    }
+          {members.map((m) => {
+            const me = m.userId === ws.userId;
+            const manages =
+              !me &&
+              m.source === "direct" &&
+              !!m.directRole &&
+              !!info &&
+              canManageShowMember({ id: ws.userId, role: ws.role }, policy, {
+                role: m.directRole,
+                invitedBy: m.invitedBy?.id ?? null,
+              });
+            return (
+              <li key={m.userId} data-source={m.source}>
+                <span className={wsStyles.memberName}>
+                  {m.name} <span className="muted">{m.email}</span>
+                  <MemberMeta
+                    invitedBy={m.invitedBy}
+                    joinedAt={m.joinedAt}
+                    lastActiveAt={m.lastActiveAt}
                   >
-                    {GRANTABLE_ROLES.map((r) => (
-                      <option key={r} value={r}>
-                        {r}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    aria-label={`Make ${m.name} the owner`}
-                    aria-expanded={confirmOwner === m.userId}
-                    onClick={() => setConfirmOwner(m.userId)}
-                  >
-                    Make owner
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Remove ${m.name}`}
-                    onClick={() => {
-                      if (window.confirm(`Remove ${m.name} from this show?`)) {
-                        void run(() => api.removeMember(ws.showId, m.userId));
+                    {m.source === "team" && <>via {teamLink}</>}
+                    {m.source === "direct" && m.teamRole && (
+                      <>
+                        also {m.teamRole} in {teamLink}
+                      </>
+                    )}
+                  </MemberMeta>
+                </span>
+                {manages ? (
+                  <span className={styles.memberActions}>
+                    <select
+                      aria-label={`Role for ${m.name}`}
+                      value={m.directRole ?? m.role}
+                      onChange={(e) =>
+                        void run(() =>
+                          api.updateMember(ws.showId, m.userId, { role: e.target.value as Role }),
+                        )
                       }
+                    >
+                      {grantable.map((r) => (
+                        <option key={r} value={r}>
+                          {r}
+                        </option>
+                      ))}
+                    </select>
+                    {isOwner && (
+                      <button
+                        type="button"
+                        aria-label={`Make ${m.name} the owner`}
+                        aria-expanded={confirm?.kind === "owner" && confirm.userId === m.userId}
+                        onClick={() => setConfirm({ kind: "owner", userId: m.userId })}
+                      >
+                        Make owner
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      data-destructive=""
+                      aria-label={`Remove ${m.name}`}
+                      aria-expanded={confirm?.kind === "remove" && confirm.userId === m.userId}
+                      onClick={() => setConfirm({ kind: "remove", userId: m.userId })}
+                    >
+                      Remove
+                    </button>
+                  </span>
+                ) : (
+                  <span className={styles.roleLabel} data-testid="member-role">
+                    {m.role === "viewer" && <EyeIcon />}
+                    {m.role}
+                  </span>
+                )}
+                {confirm?.kind === "owner" && confirm.userId === m.userId && (
+                  <ConfirmStrip
+                    text={`Make ${m.name} the owner of ${ws.showName}? You'll become an editor and can't undo this yourself.`}
+                    confirmLabel="Make owner"
+                    onCancel={() => setConfirm(null)}
+                    onConfirm={() => {
+                      setConfirm(null);
+                      void run(() => api.transferOwnership(ws.showId, m.userId));
                     }}
-                  >
-                    Remove
-                  </button>
-                </span>
-              ) : (
-                <span className={styles.roleLabel} data-testid="member-role">
-                  {m.role === "viewer" && <EyeIcon />}
-                  {m.role}
-                </span>
-              )}
-              {isOwner && confirmOwner === m.userId && (
-                <ConfirmOwner
-                  name={m.name}
-                  showName={ws.showName}
-                  onCancel={() => setConfirmOwner(null)}
-                  onConfirm={() => {
-                    setConfirmOwner(null);
-                    void run(() => api.transferOwnership(ws.showId, m.userId));
-                  }}
-                />
-              )}
-            </li>
-          ))}
+                  />
+                )}
+                {confirm?.kind === "remove" && confirm.userId === m.userId && (
+                  <ConfirmStrip
+                    text={
+                      m.teamRole
+                        ? `Remove ${m.name} from ${ws.showName}? They keep their access through the team.`
+                        : `Remove ${m.name} from ${ws.showName}? Their open tabs lose access at once.`
+                    }
+                    confirmLabel="Remove"
+                    onCancel={() => setConfirm(null)}
+                    onConfirm={() => {
+                      setConfirm(null);
+                      void run(() => api.removeMember(ws.showId, m.userId));
+                    }}
+                  />
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
-      {isOwner && (
-        <form className={wsStyles.addMember} onSubmit={onAdd} aria-label="Add member">
-          <input type="email" name="email" placeholder="Email" aria-label="Email" required />
-          <select name="role" aria-label="Role" defaultValue="editor">
-            {GRANTABLE_ROLES.map((r) => (
-              <option key={r} value={r}>
-                {r}
-              </option>
-            ))}
+      {info && canInviteToShow(ws.role, info.invitePolicy) && (
+        <AddPeople
+          roles={grantable}
+          add={(email, role) => api.addShowPeople(ws.showId, { email, role })}
+          targetPath={`/shows/${ws.showId}`}
+          exclude={memberEmails}
+          onDone={refresh}
+          onInvited={(inviteId, path) => setLinks((l) => ({ ...l, [inviteId]: path }))}
+        />
+      )}
+      <PendingInvites
+        invites={invites}
+        links={links}
+        onReissued={(made) => setLinks((l) => ({ ...l, [made.id]: made.path }))}
+        onChanged={loadInvites}
+      />
+      {info && isOwner && (
+        <label className={styles.policy}>
+          Who can add people
+          <select
+            value={info.invitePolicy}
+            onChange={(e) =>
+              void run(async () => {
+                await api.updateShow(ws.showId, { invitePolicy: e.target.value as InvitePolicy });
+                reloadInfo();
+              })
+            }
+          >
+            <option value="editors">Owner and editors</option>
+            <option value="owner">Only the owner</option>
           </select>
-          <button type="submit">Add</button>
-        </form>
+        </label>
       )}
-      {invite && (
-        <div className={styles.invite} data-testid="invite-offer">
-          <span>
-            {invite.email} has no account yet. Invite them? They'll join this show as {invite.role}.
-          </span>
-          <button type="button" onClick={() => void makeInvite()}>
-            Create invite link
+      {mine?.source === "direct" && !isOwner && (
+        <div className={styles.leaveRow}>
+          <button
+            type="button"
+            data-destructive=""
+            aria-expanded={confirm?.kind === "leave"}
+            onClick={() => setConfirm({ kind: "leave" })}
+          >
+            Leave this show
           </button>
+          {confirm?.kind === "leave" && (
+            <ConfirmStrip
+              text={
+                mine.teamRole
+                  ? `Leave ${ws.showName}? You keep your access through the team.`
+                  : `Leave ${ws.showName}? You'll need to be added again to come back.`
+              }
+              confirmLabel="Leave"
+              onCancel={() => setConfirm(null)}
+              onConfirm={() => void leave()}
+            />
+          )}
         </div>
-      )}
-      {inviteLink && (
-        <div className={styles.invite} data-testid="show-invite-link">
-          <span>Send this one-time link to {inviteLink.email} (valid 7 days):</span>
-          <code>{`${window.location.origin}${inviteLink.path}`}</code>
-        </div>
-      )}
-      {!isOwner && (
-        <button type="button" onClick={() => void leave()} data-destructive="">
-          Leave this show
-        </button>
       )}
       {error && (
         <p className="error" role="alert">
@@ -220,46 +325,122 @@ export function MembersSection({
 }
 
 /**
- * The in-row confirmation for handing the show over (no native dialog, like the grid's
- * delete strip). Focus starts on Cancel; Escape cancels.
+ * The show's team. The owner picks one of their teams (where they're an editor or up) or
+ * Personal; the team's owner/admins may make it personal. A move asks first, saying who
+ * gains or loses access.
  */
-function ConfirmOwner({
-  name,
-  showName,
-  onConfirm,
-  onCancel,
+function ShowTeam({
+  info,
+  isOwner,
+  teamManager,
+  teamLink,
+  onMoved,
+  onError,
 }: {
-  name: string;
-  showName: string;
-  onConfirm: () => void;
-  onCancel: () => void;
+  info: ShowTeamInfo;
+  isOwner: boolean;
+  teamManager: boolean;
+  teamLink: ReactNode;
+  onMoved: () => void;
+  onError: (e: unknown) => void;
 }) {
-  const cancelRef = useRef<HTMLButtonElement>(null);
-  const textId = useId();
-  useLayoutEffect(() => cancelRef.current?.focus(), []);
+  const ws = useWorkspace();
+  const [teams, setTeams] = useState<TeamDTO[]>([]);
+  /** The move waiting for its confirmation; `count`: how many people the target team has. */
+  const [pending, setPending] = useState<{ teamId: string | null; count: number | null } | null>(
+    null,
+  );
+
+  useEffect(() => {
+    if (!isOwner) return;
+    api
+      .listTeams()
+      .then((r) => setTeams(r.teams.filter((t) => isTeamEditor(t.role))))
+      .catch(() => undefined);
+  }, [isOwner]);
+
+  const choose = (teamId: string | null) => {
+    if (teamId === info.teamId) {
+      setPending(null);
+      return;
+    }
+    setPending({ teamId, count: null });
+    if (!teamId) return;
+    api
+      .teamMembers(teamId)
+      .then((r) =>
+        setPending((p) => (p?.teamId === teamId ? { teamId, count: r.members.length } : p)),
+      )
+      .catch(() => undefined);
+  };
+
+  const move = async (teamId: string | null) => {
+    setPending(null);
+    try {
+      await api.updateShow(ws.showId, { teamId });
+      onMoved();
+    } catch (e) {
+      onError(e);
+    }
+  };
+
+  const confirmText = () => {
+    if (!pending) return "";
+    const parts: string[] = [];
+    if (pending.teamId) {
+      const name = teams.find((t) => t.id === pending.teamId)?.name ?? "the team";
+      const n = pending.count;
+      const who =
+        n === null ? `The members of ${name}` : n === 1 ? "Its 1 member" : `All ${n} members`;
+      parts.push(`Move ${ws.showName} into ${name}? ${who} will get access.`);
+    } else {
+      parts.push(`Make ${ws.showName} personal?`);
+    }
+    if (info.teamId) {
+      parts.push(
+        `Members of ${info.teamName} lose access unless they were added to this show directly.`,
+      );
+    }
+    return parts.join(" ");
+  };
+
+  const showSelect = isOwner && (teams.length > 0 || info.teamId !== null);
   return (
-    <div
-      role="alertdialog"
-      aria-modal="false"
-      aria-labelledby={textId}
-      className={styles.confirmOwner}
-      onKeyDown={(e) => {
-        if (e.key === "Escape") {
-          e.preventDefault();
-          e.stopPropagation();
-          onCancel();
-        }
-      }}
-    >
-      <span id={textId}>
-        Make {name} the owner of {showName}? You'll become an editor and can't undo this yourself.
-      </span>
-      <button type="button" className="primary" onClick={onConfirm}>
-        Make owner
-      </button>
-      <button type="button" ref={cancelRef} onClick={onCancel}>
-        Cancel
-      </button>
+    <div className={styles.teamRow} data-testid="show-team">
+      {showSelect ? (
+        <label>
+          Team
+          <select
+            value={pending ? (pending.teamId ?? "") : (info.teamId ?? "")}
+            onChange={(e) => choose(e.target.value || null)}
+          >
+            <option value="">Personal</option>
+            {info.teamId && !teams.some((t) => t.id === info.teamId) && (
+              <option value={info.teamId}>{info.teamName}</option>
+            )}
+            {teams.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : (
+        <span>Team: {info.teamId ? teamLink : "Personal"}</span>
+      )}
+      {!isOwner && teamManager && info.teamId && (
+        <button type="button" aria-expanded={!!pending} onClick={() => choose(null)}>
+          Make personal
+        </button>
+      )}
+      {pending && (
+        <ConfirmStrip
+          text={confirmText()}
+          confirmLabel={pending.teamId ? "Move" : "Make personal"}
+          onCancel={() => setPending(null)}
+          onConfirm={() => void move(pending.teamId)}
+        />
+      )}
     </div>
   );
 }

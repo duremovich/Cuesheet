@@ -13,23 +13,26 @@
 // Worker on every request; it never resolves roles itself.
 import { and, desc, eq, inArray, or } from "drizzle-orm";
 import type { InvitePolicy, Role, ShowSummaryDTO, TeamRole } from "../shared/api";
+import { showRoleFromTeamRole } from "../shared/roles";
 import { type D1Db, schema } from "./db/d1/client";
+
+// The grant / invite / manage rules are pure and shared with the web client (which renders
+// only the controls they allow): src/shared/roles.ts is their one home, re-exported here
+// so Worker code keeps importing them from access.ts.
+export {
+  canGrant,
+  canInviteToShow,
+  canInviteToTeam,
+  canManageShowMember,
+  canManageTeamMember,
+  isTeamEditor,
+  isTeamManager,
+  type ManagedMember,
+  showRoleFromTeamRole,
+} from "../shared/roles";
 
 /** Show roles, highest first. */
 const SHOW_RANK: Record<Role, number> = { owner: 4, editor: 3, commenter: 2, viewer: 1 };
-/** Team and show roles on one scale, for capping grants (`canGrant`). */
-const GRANT_RANK: Record<TeamRole | Role, number> = {
-  owner: 5,
-  admin: 4,
-  editor: 3,
-  commenter: 2,
-  viewer: 1,
-};
-
-/** The show role a team role gives on every show of the team. */
-export function showRoleFromTeamRole(role: TeamRole): Role {
-  return role === "owner" || role === "admin" ? "editor" : role;
-}
 
 /** The higher of two show roles (null: none). */
 export function maxRole(a: Role | null | undefined, b: Role | null | undefined): Role | null {
@@ -44,83 +47,6 @@ export function resolveRole(
   team: TeamRole | null | undefined,
 ): Role | null {
   return maxRole(direct, team ? showRoleFromTeamRole(team) : null);
-}
-
-/**
- * Whether someone holding `actor` (a show or team role) may grant `role`. Nobody grants
- * `owner` (that's a transfer); commenters and viewers grant nothing; otherwise up to your
- * own level (team admins grant admin, editors editor, a show owner editor and below).
- * Invite policies are checked separately (`canInviteToTeam`).
- */
-export function canGrant(actor: TeamRole | Role, role: TeamRole | Role): boolean {
-  if (role === "owner") return false;
-  if (GRANT_RANK[actor] < GRANT_RANK.editor) return false;
-  return GRANT_RANK[role] <= GRANT_RANK[actor];
-}
-
-/** Team owner and admins manage every member but the owner. */
-export function isTeamManager(role: TeamRole | null | undefined): boolean {
-  return role === "owner" || role === "admin";
-}
-
-/** Team editors and up: may create shows in the team and move their shows into it. */
-export function isTeamEditor(role: TeamRole | null | undefined): boolean {
-  return !!role && GRANT_RANK[role] >= GRANT_RANK.editor;
-}
-
-/** Who may add people to a team: owner and admins always, editors unless the policy is `owner`. */
-export function canInviteToTeam(role: TeamRole | null | undefined, policy: InvitePolicy): boolean {
-  if (isTeamManager(role)) return true;
-  return role === "editor" && policy === "editors";
-}
-
-/**
- * Who may add people to a show: the owner always, members whose effective role is editor
- * unless the show's policy is `owner`.
- */
-export function canInviteToShow(role: Role | null | undefined, policy: InvitePolicy): boolean {
-  if (role === "owner") return true;
-  return role === "editor" && policy === "editors";
-}
-
-/** Someone whose membership is being changed or removed. */
-export interface ManagedMember {
-  role: TeamRole | Role;
-  invitedBy: string | null;
-}
-
-/**
- * Decision 4, "control over your invitees": whether `actor` may change or remove `target`
- * in a show. Never the owner; the show's owner everyone else; an editor allowed to invite,
- * the people they added (`invited_by`), while those hold a role within their own.
- */
-export function canManageShowMember(
-  actor: { id: string; role: Role },
-  policy: InvitePolicy,
-  target: ManagedMember,
-): boolean {
-  if (target.role === "owner") return false;
-  if (actor.role === "owner") return true;
-  return (
-    canInviteToShow(actor.role, policy) &&
-    target.invitedBy === actor.id &&
-    canGrant(actor.role, target.role)
-  );
-}
-
-/** The same in a team: owner and admins manage everyone but the owner (admins too). */
-export function canManageTeamMember(
-  actor: { id: string; role: TeamRole },
-  policy: InvitePolicy,
-  target: ManagedMember,
-): boolean {
-  if (target.role === "owner") return false;
-  if (isTeamManager(actor.role)) return true;
-  return (
-    canInviteToTeam(actor.role, policy) &&
-    target.invitedBy === actor.id &&
-    canGrant(actor.role, target.role)
-  );
 }
 
 export interface ShowAccess {

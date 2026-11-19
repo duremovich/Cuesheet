@@ -9,6 +9,9 @@ import type { ImportMapping } from "../../shared/airtable-columns";
 import type {
   AcceptInviteRequest,
   AddMemberRequest,
+  AddPeopleRequest,
+  AddShowPeopleResponse,
+  AddTeamPeopleResponse,
   CloneShowRequest,
   CloneShowResponse,
   CreateInviteRequest,
@@ -19,14 +22,24 @@ import type {
   MemberDTO,
   MembersResponse,
   MeResponse,
+  MyAccessResponse,
+  PendingInvitesResponse,
+  PeopleResponse,
+  ReissueInviteResponse,
   SessionResponse,
   ShowResponse,
   ShowSummaryDTO,
   ShowsResponse,
   StorageResponse,
+  TeamMembersResponse,
+  TeamResponse,
+  TeamRole,
+  TeamShowsResponse,
+  TeamsResponse,
   UpdateMemberRequest,
   UpdateShowRequest,
   UpdateShowResponse,
+  UpdateTeamRequest,
   UploadUrlRequest,
   UploadUrlResponse,
 } from "../../shared/api";
@@ -99,6 +112,7 @@ async function request<T>(
 }
 
 const showPath = (id: string, rest = "") => `/shows/${encodeURIComponent(id)}${rest}`;
+const teamPath = (id: string, rest = "") => `/teams/${encodeURIComponent(id)}${rest}`;
 
 export const api = {
   me: () => request<SessionResponse>("GET", "/me"),
@@ -187,6 +201,47 @@ export const api = {
     request<{ ok: true }>("POST", showPath(id, "/transfer"), { userId }),
   /** Leave a show (not the owner). */
   leaveShow: (id: string) => request<{ ok: true }>("POST", showPath(id, "/leave"), {}),
+  /** One step: an account is added now, an unknown email gets an invite (emailed if set up). */
+  addShowPeople: (id: string, body: AddPeopleRequest) =>
+    request<AddShowPeopleResponse>("POST", showPath(id, "/people"), body),
+  /** Pending invites into the show (the owner sees all, others their own). */
+  showInvites: (id: string) => request<PendingInvitesResponse>("GET", showPath(id, "/invites")),
+
+  // ---- teams ----
+  listTeams: () => request<TeamsResponse>("GET", "/teams"),
+  createTeam: (name: string) => request<TeamResponse>("POST", "/teams", { name }),
+  getTeam: (id: string) => request<TeamResponse>("GET", teamPath(id)),
+  /** Rename / invite policy (owner and admins). */
+  updateTeam: (id: string, body: UpdateTeamRequest) =>
+    request<TeamResponse>("PATCH", teamPath(id), body),
+  /** Owner; refused (409) while the team has shows. */
+  deleteTeam: (id: string) => request<{ ok: true }>("DELETE", teamPath(id)),
+  teamMembers: (id: string) => request<TeamMembersResponse>("GET", teamPath(id, "/members")),
+  updateTeamMember: (id: string, userId: string, role: TeamRole) =>
+    request<{ ok: true }>("PATCH", teamPath(id, `/members/${encodeURIComponent(userId)}`), {
+      role,
+    }),
+  removeTeamMember: (id: string, userId: string) =>
+    request<{ ok: true }>("DELETE", teamPath(id, `/members/${encodeURIComponent(userId)}`)),
+  leaveTeam: (id: string) => request<{ ok: true }>("POST", teamPath(id, "/leave"), {}),
+  /** Owner: make another member the owner (you become an admin). */
+  transferTeam: (id: string, userId: string) =>
+    request<{ ok: true }>("POST", teamPath(id, "/transfer"), { userId }),
+  teamShows: (id: string) => request<TeamShowsResponse>("GET", teamPath(id, "/shows")),
+  addTeamPeople: (id: string, body: AddPeopleRequest) =>
+    request<AddTeamPeopleResponse>("POST", teamPath(id, "/people"), body),
+  teamInvites: (id: string) => request<PendingInvitesResponse>("GET", teamPath(id, "/invites")),
+
+  // ---- invites, people, my access ----
+  /** Revoke a pending invite: its link stops working. */
+  revokeInvite: (inviteId: string) =>
+    request<{ ok: true }>("DELETE", `/invites/${encodeURIComponent(inviteId)}`),
+  /** A new link (and 7 days) for a pending invite; the old link stops working. */
+  reissueInvite: (inviteId: string) =>
+    request<ReissueInviteResponse>("POST", `/invites/${encodeURIComponent(inviteId)}/reissue`, {}),
+  /** Everyone you share a show or a team with (for the add-people autocomplete). */
+  people: () => request<PeopleResponse>("GET", "/people"),
+  myAccess: () => request<MyAccessResponse>("GET", "/me/access"),
 
   // ---- account security (R24) ----
   /** Ends every session of this account and closes its show sockets. */

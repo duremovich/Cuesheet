@@ -1,0 +1,244 @@
+/* Teams, people and invites: the team page, My access, and the add-people / pending-invite
+   pieces shared with Show settings → Members. */
+
+.meta {
+  display: block;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  font-weight: normal;
+}
+
+.actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  align-items: center;
+}
+
+.actions button,
+.actions select,
+.freshLink button,
+.result button {
+  padding: var(--space-1) var(--space-2);
+  font-size: 12px;
+}
+
+.actions select {
+  background: var(--color-bg-sunken);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+/* Add people */
+.addPeople {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.addForm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.addForm input {
+  flex: 1;
+  min-width: 160px;
+}
+
+.addForm select {
+  background: var(--color-bg-sunken);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-1) var(--space-2);
+}
+
+.result,
+.freshLink {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border: 1px solid var(--color-success);
+  background: var(--color-success-subtle);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+}
+
+.freshLink {
+  flex-basis: 100%;
+}
+
+.result p {
+  margin: 0;
+}
+
+.result code,
+.freshLink code {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.result button,
+.freshLink button {
+  align-self: flex-start;
+}
+
+/* Pending invites */
+.pending h4 {
+  margin: var(--space-3) 0 var(--space-2);
+  font-size: 13px;
+}
+
+.inviteList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
+.inviteList li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.inviteText {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.inviteList li[data-expired] .inviteText {
+  color: var(--color-text-muted);
+}
+
+/* Team page and My access: bordered lists like the show list. */
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  font-size: 14px;
+}
+
+.list > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface);
+}
+
+.list > li + li {
+  border-top: 1px solid var(--color-border);
+}
+
+/* Wide enough to read: when the controls don't fit beside it (phone width), they wrap
+   to their own line, on the right. */
+.rowMain {
+  flex: 1 1 240px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.list > li > .actions {
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
+.rowMain a {
+  color: var(--color-text);
+}
+
+.role {
+  color: var(--color-text-muted);
+}
+
+.list > li > .role {
+  margin-left: auto;
+}
+
+.roles {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px var(--space-2);
+  margin: 0 0 var(--space-3);
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.roles dt {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.roles dd {
+  margin: 0;
+}
+
+.cardSection + .cardSection {
+  margin-top: var(--space-4);
+}
+
+.settingRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 14px;
+}
+
+.settingRow > label {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.settingRow select {
+  background: var(--color-bg-sunken);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-1) var(--space-2);
+  max-width: 100%;
+}
+
+.titleRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.titleRow h1 {
+  font-size: 20px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.titleRow form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  flex: 1;
+}
+
+.titleRow form input {
+  flex: 1;
+  min-width: 160px;
+}
+
+.back {
+  font-size: 13px;
+}

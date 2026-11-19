@@ -6,24 +6,69 @@ import {
   GRANTABLE_ROLES,
   type Role,
   type ShowSummaryDTO,
+  type TeamDTO,
   type UserDTO,
 } from "../../shared/api";
+import { isTeamEditor } from "../../shared/roles";
 import { AppHeader } from "../components/AppHeader";
 import { api } from "../lib/api";
 import { useApiErrorHandler } from "../lib/auth";
 import styles from "./pages.module.css";
 
+/** The shows of one team, or (`team` null) the personal ones. */
+interface ShowGroup {
+  key: string;
+  /** `role` null: a team you're not in (you were added to some of its shows). */
+  team: { id: string; name: string; role: TeamDTO["role"] | null } | null;
+  shows: ShowSummaryDTO[];
+}
+
+/**
+ * A group per team you're in (even without shows), then one per other team whose shows
+ * you were added to as a guest (there's no team page for you there), then your personal
+ * shows.
+ */
+function groupShows(shows: ShowSummaryDTO[], teams: TeamDTO[]): ShowGroup[] {
+  const groups = new Map<string, ShowGroup>();
+  for (const t of teams) {
+    groups.set(t.id, { key: t.id, team: { id: t.id, name: t.name, role: t.role }, shows: [] });
+  }
+  const personal: ShowGroup = { key: "personal", team: null, shows: [] };
+  for (const s of shows) {
+    if (!s.teamId) {
+      personal.shows.push(s);
+      continue;
+    }
+    let g = groups.get(s.teamId);
+    if (!g) {
+      g = { key: s.teamId, team: { id: s.teamId, name: s.teamName ?? "", role: null }, shows: [] };
+      groups.set(s.teamId, g);
+    }
+    g.shows.push(s);
+  }
+  return [...groups.values(), personal];
+}
+
 export function ShowsPage({ user }: { user: UserDTO }) {
   const [shows, setShows] = useState<ShowSummaryDTO[] | null>(null);
+  const [teams, setTeams] = useState<TeamDTO[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [newTeam, setNewTeam] = useState(false);
   const handleError = useApiErrorHandler();
 
   useEffect(() => {
-    api
-      .listShows()
-      .then((r) => setShows(r.shows))
+    Promise.all([api.listShows(), api.listTeams()])
+      .then(([s, t]) => {
+        setShows(s.shows);
+        setTeams(t.teams);
+      })
       .catch((e: unknown) => setError(handleError(e)));
   }, [handleError]);
+
+  const regular = (shows ?? []).filter((s) => !s.isTemplate);
+  const groups = groupShows(regular, teams);
+  // Without teams the list looks as it always did: one list, no "Personal" heading.
+  const grouped = groups.length > 1;
 
   return (
     <>
@@ -32,37 +77,125 @@ export function ShowsPage({ user }: { user: UserDTO }) {
         <section className={styles.card}>
           <div className={styles.sectionHeader}>
             <h2>Shows</h2>
+            <button type="button" aria-expanded={newTeam} onClick={() => setNewTeam((o) => !o)}>
+              New team
+            </button>
           </div>
-          <NewShowForm />
+          {newTeam && <NewTeamForm onCancel={() => setNewTeam(false)} />}
+          <NewShowForm teams={teams.filter((t) => isTeamEditor(t.role))} />
           {error && <p className="error">{error}</p>}
           {shows === null && !error && <p className="muted">Loading…</p>}
-          {shows?.filter((s) => !s.isTemplate).length === 0 && (
+          {shows && regular.length === 0 && (
             <p className="muted">No shows yet. Create one above.</p>
           )}
-          {shows?.some((s) => !s.isTemplate) && (
-            <ul className={styles.showList} data-testid="show-list" style={{ marginTop: 16 }}>
-              {shows
-                .filter((s) => !s.isTemplate)
-                .map((s) => (
-                  <li key={s.id}>
-                    <Link to={`/shows/${s.id}`}>
-                      <span className={styles.showListName} title={s.name}>
-                        {s.name}
-                      </span>
-                      <span className={`muted ${styles.showListRole}`}>{s.role}</span>
-                    </Link>
-                  </li>
+          {shows && (regular.length > 0 || grouped) && (
+            <div className={styles.showGroups} data-testid="show-list" style={{ marginTop: 16 }}>
+              {groups
+                .filter((g) => g.shows.length > 0 || (g.team && grouped))
+                .map((g) => (
+                  <section key={g.key} aria-label={g.team ? g.team.name : "Personal"}>
+                    {grouped && <GroupHeader group={g} />}
+                    {g.shows.length === 0 ? (
+                      <p className="muted" style={{ margin: 0 }}>
+                        No shows in this team yet.
+                      </p>
+                    ) : (
+                      <ul className={styles.showList}>
+                        {g.shows.map((s) => (
+                          <li key={s.id}>
+                            <Link to={`/shows/${s.id}`}>
+                              <span className={styles.showListName} title={s.name}>
+                                {s.name}
+                              </span>
+                              <span className={`muted ${styles.showListRole}`}>{s.role}</span>
+                            </Link>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </section>
                 ))}
-            </ul>
+            </div>
           )}
         </section>
         {shows?.some((s) => s.isTemplate) && (
           <TemplatesSection templates={shows.filter((s) => s.isTemplate)} />
         )}
-        {user.isAdmin && <InviteForm shows={(shows ?? []).filter((s) => !s.isTemplate)} />}
+        {user.isAdmin && <InviteForm shows={regular} />}
         {user.isAdmin && <ResetLinkForm />}
       </main>
     </>
+  );
+}
+
+/** A team's name (linking to its page when you're in it) and your role there. */
+function GroupHeader({ group }: { group: ShowGroup }) {
+  const { team } = group;
+  return (
+    <div className={styles.groupHeader}>
+      <h3>
+        {team?.role ? (
+          <Link to={`/teams/${team.id}`}>{team.name}</Link>
+        ) : (
+          (team?.name ?? "Personal")
+        )}
+      </h3>
+      {team && <span className="muted">{team.role ? `team ${team.role}` : "guest"}</span>}
+    </div>
+  );
+}
+
+/** A new team (you're its owner); opens its page. */
+function NewTeamForm({ onCancel }: { onCancel: () => void }) {
+  const handleError = useApiErrorHandler();
+  const navigate = useNavigate();
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function onSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const name = String(new FormData(e.currentTarget).get("name") ?? "").trim();
+    if (!name) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const { team } = await api.createTeam(name);
+      navigate(`/teams/${team.id}`);
+    } catch (err) {
+      setError(handleError(err));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form
+      className={styles.inlineForm}
+      onSubmit={onSubmit}
+      aria-label="New team"
+      style={{ marginBottom: 16 }}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") onCancel();
+      }}
+    >
+      <label style={{ flex: 1 }}>
+        <span>Team name</span>
+        <input
+          name="name"
+          type="text"
+          required
+          maxLength={200}
+          // biome-ignore lint/a11y/noAutofocus: the form appears on request
+          autoFocus
+        />
+      </label>
+      <button type="submit" className="primary" disabled={busy}>
+        Create team
+      </button>
+      <button type="button" onClick={onCancel}>
+        Cancel
+      </button>
+      {error && <p className="error">{error}</p>}
+    </form>
   );
 }
 
@@ -148,7 +281,8 @@ function TemplatesSection({ templates }: { templates: ShowSummaryDTO[] }) {
   );
 }
 
-function NewShowForm() {
+/** A new show: personal, or in one of the teams where you're an editor (or up). */
+function NewShowForm({ teams }: { teams: TeamDTO[] }) {
   const handleError = useApiErrorHandler();
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
@@ -156,12 +290,14 @@ function NewShowForm() {
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const name = String(new FormData(e.currentTarget).get("name") ?? "").trim();
+    const data = new FormData(e.currentTarget);
+    const name = String(data.get("name") ?? "").trim();
+    const teamId = String(data.get("team") ?? "") || null;
     if (!name) return;
     setBusy(true);
     setError(null);
     try {
-      const { show } = await api.createShow({ name });
+      const { show } = await api.createShow(teamId ? { name, teamId } : { name });
       navigate(`/shows/${show.id}`);
     } catch (err) {
       setError(handleError(err));
@@ -175,6 +311,19 @@ function NewShowForm() {
         <span>Show name</span>
         <input name="name" type="text" placeholder="Some Like It Hot" required maxLength={200} />
       </label>
+      {teams.length > 0 && (
+        <label>
+          <span>Team</span>
+          <select name="team" defaultValue="" className={styles.fieldSelect}>
+            <option value="">Personal</option>
+            {teams.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <button type="submit" className="primary" disabled={busy}>
         New show
       </button>

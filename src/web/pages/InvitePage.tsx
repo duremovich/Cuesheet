@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { type InviteInfoResponse, MIN_PASSWORD_LENGTH } from "../../shared/api";
+import { withArticle } from "../features/teams/roleText";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import styles from "./pages.module.css";
@@ -61,7 +62,14 @@ export function InvitePage() {
                 <>
                   {" "}
                   You'll join <strong data-testid="invite-show">{invite.showName}</strong> as{" "}
-                  {invite.role === "editor" ? "an editor" : `a ${invite.role ?? "member"}`}.
+                  {withArticle(invite.role ?? "member")}.
+                </>
+              )}
+              {invite?.teamName && (
+                <>
+                  {" "}
+                  You'll join the team <strong data-testid="invite-team">{invite.teamName}</strong>{" "}
+                  as {withArticle(invite.teamRole ?? "member")}.
                 </>
               )}
             </p>

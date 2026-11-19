@@ -25,12 +25,14 @@ import { SurfaceGrid } from "./features/surfaces/SurfaceGrid";
 import { TechPage } from "./features/tech/TechPage";
 import { AuthProvider, RequireAuth } from "./lib/auth";
 import { installStaleBuildRecovery } from "./lib/staleBuild";
+import { AccountPage } from "./pages/AccountPage";
 import { devRoutes } from "./pages/dev/routes";
 import { InvitePage } from "./pages/InvitePage";
 import { LoginPage } from "./pages/LoginPage";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { ShowPage } from "./pages/ShowPage";
 import { ShowsPage } from "./pages/ShowsPage";
+import { TeamPage } from "./pages/TeamPage";
 import "./styles/global.css";
 
 /** Each table tab's component (also rendered in print mode by /print/<tab>). */
@@ -59,6 +61,14 @@ const router = createBrowserRouter([
       // Read-only share links (R23): no sign-in.
       { path: "/s/:token", element: <SharePage grids={GRIDS} /> },
       { path: "/", element: <RequireAuth>{(user) => <ShowsPage user={user} />}</RequireAuth> },
+      {
+        path: "/teams/:id",
+        element: <RequireAuth>{(user) => <TeamPage user={user} />}</RequireAuth>,
+      },
+      {
+        path: "/account",
+        element: <RequireAuth>{(user) => <AccountPage user={user} />}</RequireAuth>,
+      },
       {
         path: "/shows/:id",
         element: <RequireAuth>{() => <ShowPage />}</RequireAuth>,

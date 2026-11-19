@@ -126,27 +126,14 @@
   margin: 0;
 }
 
+/* A member's controls get their own line under the name (the popover is narrow), on the right. */
 .memberActions {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-  align-items: center;
-}
-
-/* "Make owner" confirmation: a strip under the member's row. */
-.confirmOwner {
   flex-basis: 100%;
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-1);
   align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2);
-  border-left: 3px solid var(--color-warning);
-  background: var(--color-warning-subtle);
-}
-
-.confirmOwner > span {
-  flex: 1 1 200px;
 }
 
 .roleLabel {
@@ -156,21 +143,46 @@
   color: var(--color-text-muted);
 }
 
-.invite {
+/* The show's team (owner: a picker) and who may add people (owner). */
+.teamRow,
+.leaveRow {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  margin-top: var(--space-2);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
   font-size: 13px;
 }
 
-.invite code {
-  overflow-wrap: anywhere;
-  font-size: 12px;
+.leaveRow {
+  margin: var(--space-3) 0 0;
 }
 
-.invite button {
-  align-self: flex-start;
+.teamRow label,
+.policy {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
+.policy {
+  margin-top: var(--space-3);
+}
+
+.teamRow select,
+.policy select {
+  min-width: 0;
+  max-width: 100%;
+  background: var(--color-bg-sunken);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-1) var(--space-2);
+}
+
+.teamRow button {
+  padding: var(--space-1) var(--space-2);
+  font-size: 12px;
 }
 
 .scopeNote {

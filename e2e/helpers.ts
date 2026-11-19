@@ -143,6 +143,25 @@ export async function addMember(browser: Browser, admin: Page, showId: string, r
   return { page, userId: user.id };
 }
 
+/**
+ * A new account (unique name and email) made through an invite from `admin`'s session, in
+ * no show or team; `page` is its own browser context, signed in.
+ */
+export async function newUser(browser: Browser, admin: Page, label: string) {
+  const name = uniqueName(label);
+  const email = `${name.replace(/\s+/g, "-")}@cuesheet.test`.toLowerCase();
+  const invite = await admin.request.post("/api/invites", { data: { email } });
+  expect(invite.status()).toBe(200);
+  const { path: invitePath } = (await invite.json()) as { path: string };
+  const page = await (await browser.newContext()).newPage();
+  const accepted = await page.request.post(`/api/invites/${invitePath.split("/").at(-1)}/accept`, {
+    data: { name, password: "a-long-password" },
+  });
+  expect(accepted.status()).toBe(201);
+  const { user } = (await accepted.json()) as { user: { id: string } };
+  return { page, name, email, userId: user.id };
+}
+
 /** Collects console errors and uncaught exceptions of a page (assert it's empty at the end). */
 export function trackErrors(page: Page, into: string[] = []): string[] {
   page.on("console", (m) => {

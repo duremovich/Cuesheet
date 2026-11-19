@@ -1,5 +1,6 @@
-// The header's account menu (R24): change password, sign out everywhere (every session of
-// this account ends and its open shows disconnect, this browser included).
+// The header's account menu (R24): My access (/account: your teams and shows), change
+// password, sign out everywhere (every session of this account ends and its open shows
+// disconnect, this browser included).
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { MIN_PASSWORD_LENGTH } from "../../shared/api";
@@ -65,6 +66,16 @@ export function AccountMenu() {
             role="menuitem"
             onClick={() => {
               setOpen(false);
+              navigate("/account");
+            }}
+          >
+            My access
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
               setChanging(true);
             }}
           >
@@ -75,12 +86,13 @@ export function AccountMenu() {
           </button>
         </div>
       )}
-      {changing && <ChangePassword onClose={() => setChanging(false)} />}
+      {changing && <ChangePasswordDialog onClose={() => setChanging(false)} />}
     </div>
   );
 }
 
-function ChangePassword({ onClose }: { onClose: () => void }) {
+/** The change-password dialog (also opened from My access). */
+export function ChangePasswordDialog({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
