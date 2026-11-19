@@ -41,3 +41,8 @@ pnpm exec wrangler secret put ADMIN_PASSWORD --env production --config wrangler.
    `wrangler.jsonc`, commit, let it deploy.
 9. Backups: show data is in Durable Objects, not in the weekly D1 dump. Owners: Show
    settings → Backup → **Download backup**, weekly per active show.
+10. Invite email (optional; without it invite links are copied by hand): a Resend API key
+    with Sending access for easyschematic.live →
+    `pnpm exec wrangler secret put RESEND_API_KEY --env production --config wrangler.jsonc`,
+    and `APP_ORIGIN` = the production URL under `env.production.vars`. Details:
+    docs/deploy.md, "Email (optional)".

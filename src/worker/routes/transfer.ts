@@ -23,6 +23,8 @@
 import type { Context } from "hono";
 import { Hono } from "hono";
 import {
+  importedMembership,
+  importedShow,
   MAX_TRANSFER_BODY_BYTES,
   MAX_TRANSFER_FILE_BYTES,
   R2_METADATA_HEADER,
@@ -316,8 +318,6 @@ export const transferRoutes = new Hono<AppEnv>()
     if (!users.has(String(show.created_by))) {
       return c.json({ error: `show.created_by ${show.created_by} is not a user here` }, 400);
     }
-    // The source's team isn't here (teams don't move): the show arrives personal.
-    if ("team_id" in show) show.team_id = null;
     const skipped = { memberships: [] as string[], shareLinks: [] as string[] };
     const keepMembers = memberships
       .filter((m) => {
@@ -326,9 +326,7 @@ export const transferRoutes = new Hono<AppEnv>()
         return ok;
       })
       // Who added them may have no account here.
-      .map((m) =>
-        m.invited_by != null && !users.has(String(m.invited_by)) ? { ...m, invited_by: null } : m,
-      );
+      .map((m) => importedMembership(m, users));
     const keepLinks = shareLinks.filter((l) => {
       const ok = l.show_id === showId && users.has(String(l.created_by));
       if (!ok) skipped.shareLinks.push(String(l.id));
@@ -343,7 +341,8 @@ export const transferRoutes = new Hono<AppEnv>()
       ]);
       statements = [
         c.env.DB.prepare("DELETE FROM shows WHERE id = ?").bind(showId),
-        insertStmt(c.env, "shows", show, showCols),
+        // The source's team isn't here (teams don't move): the show arrives personal.
+        insertStmt(c.env, "shows", importedShow(show), showCols),
         ...keepMembers.map((m) => insertStmt(c.env, "memberships", m, memberCols)),
         ...keepLinks.map((l) => insertStmt(c.env, "share_links", l, linkCols)),
       ];

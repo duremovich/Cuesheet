@@ -17,6 +17,8 @@ import {
   canonicalJson,
   chunkRows,
   diffDigests,
+  importedMembership,
+  importedShow,
   mapMemberships,
   parseCreds,
   R2_METADATA_HEADER,
@@ -357,13 +359,16 @@ async function main(): Promise<number> {
       );
     }
 
-    // D1.
+    // D1, the source as the import stores it (a team show arrives personal; an inviter
+    // without an account on the target is cleared).
     const d1 = mapJson(s.d1, ids);
+    const targetUsers = new Set(dstUsers.map((u) => u.id));
     const same = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
-    if (!same(d1.show, t.d1.show)) problems.push("D1 show row differs");
-    if (!same(mapMemberships(d1.memberships, new Map()), t.d1.memberships)) {
-      problems.push("D1 memberships differ");
-    }
+    if (!same(d1.show && importedShow(d1.show), t.d1.show)) problems.push("D1 show row differs");
+    const members = mapMemberships(d1.memberships, new Map()).map((m) =>
+      importedMembership(m, targetUsers),
+    );
+    if (!same(members, t.d1.memberships)) problems.push("D1 memberships differ");
     if (!same(d1.shareLinks, t.d1.shareLinks)) problems.push("D1 share links differ");
 
     // R2.

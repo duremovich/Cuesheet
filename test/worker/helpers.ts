@@ -150,6 +150,8 @@ export function rewindMigrations(sql: SqlStorage, tag: string): void {
 export interface SentEmail {
   url: string;
   authorization: string | null;
+  /** Whether the request carried an AbortSignal (the send timeout). */
+  hasSignal: boolean;
   body: {
     from: string;
     to: string | string[];
@@ -176,6 +178,7 @@ export function stubResend(opts: { fail?: "status" | "throw" } = {}) {
     sent.push({
       url: req.url,
       authorization: req.headers.get("Authorization"),
+      hasSignal: init?.signal instanceof AbortSignal,
       body: (await req.json()) as SentEmail["body"],
     });
     // Responses are made inside the call: workerd ties I/O objects to the request.

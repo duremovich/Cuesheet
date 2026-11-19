@@ -5,7 +5,7 @@
 // - Any signed-in user can create a team (they're its owner). A team is visible to its
 //   members only: 404 otherwise, like shows.
 // - Owner and admins rename it and set its invite policy; only the owner deletes it, and
-//   only once it has no shows (409; `shows.team_id` would block it anyway).
+//   only once it has no shows (409; `shows.team_id` restricts it anyway).
 // - Adding people: owner and admins always, editors too unless the invite policy is
 //   `owner`; nobody grants above their own role or grants owner (that's a transfer).
 // - Managing members: owner and admins manage everyone but the owner (admins other admins
@@ -17,7 +17,7 @@
 //   others their own).
 // - Transfer (owner): that member becomes the owner, the old owner an admin, in one D1
 //   batch that re-checks both sides (`transferTeam`), so a team always has one owner.
-import { and, eq, exists, ne, notExists, sql } from "drizzle-orm";
+import { and, eq, exists, isNull, ne, notExists, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
@@ -59,6 +59,7 @@ import {
   createInvite,
   emailInvite,
   endInvites,
+  endInvitesWithoutAccess,
   inviteLimited,
   pendingInvites,
 } from "./invites";
@@ -285,20 +286,18 @@ export const teamRoutes = new Hono<TeamEnv>()
     await c.var.db.update(schema.teams).set(set).where(eq(schema.teams.id, c.var.team.id));
     return c.json({ team: { ...c.var.team, ...set } } satisfies TeamResponse);
   })
-  // Only an empty team (no shows). Its pending invites go with it; memberships cascade.
+  // Only an empty team (no shows; `shows.team_id` restricts it anyway). Its memberships and
+  // invites cascade.
   .delete("/teams/:id", requireTeamMember, requireTeamOwner, async (c) => {
     const db = c.var.db;
     const teamId = c.var.team.id;
     const empty = notExists(
       db.select({ one: sql`1` }).from(schema.shows).where(eq(schema.shows.teamId, teamId)),
     );
-    const [, deleted] = await db.batch([
-      db.delete(schema.invites).where(and(eq(schema.invites.teamId, teamId), empty)),
-      db
-        .delete(schema.teams)
-        .where(and(eq(schema.teams.id, teamId), empty))
-        .returning({ id: schema.teams.id }),
-    ]);
+    const deleted = await db
+      .delete(schema.teams)
+      .where(and(eq(schema.teams.id, teamId), empty))
+      .returning({ id: schema.teams.id });
     if (deleted.length === 0) {
       return c.json({ error: "Move the team's shows out (or delete them) first" }, 409);
     }
@@ -324,6 +323,7 @@ export const teamRoutes = new Hono<TeamEnv>()
       .where(eq(schema.users.email, normalizeEmail(str(body?.email))))
       .get();
     if (!user) return c.json({ error: "No account with that email; invite them first" }, 404);
+    if (user.id === c.var.user.id) return c.json({ error: "That's you" }, 400);
     const member = await addTeamMember(c.env, c.var.db, team.id, user.id, role, c.var.user.id);
     if (!member) return c.json({ error: "Already a member of this team" }, 409);
     return c.json({ member }, 201);
@@ -344,6 +344,7 @@ export const teamRoutes = new Hono<TeamEnv>()
       .from(schema.users)
       .where(eq(schema.users.email, email))
       .get();
+    if (user?.id === c.var.user.id) return c.json({ error: "That's you" }, 400);
     if (user) {
       const member = await addTeamMember(c.env, c.var.db, team.id, user.id, role, c.var.user.id);
       if (!member) return c.json({ error: "Already a member of this team" }, 409);
@@ -401,11 +402,19 @@ export const teamRoutes = new Hono<TeamEnv>()
     if (!canGrant(team.role, role)) {
       return c.json({ error: "You can't give a role above your own" }, 403);
     }
-    // Never touches an owner (a transfer may have made them one meanwhile).
+    // Only the row as checked above: a concurrent change (a transfer making them owner,
+    // another role change, a new inviter) makes this a 409.
     const updated = await c.var.db
       .update(tm)
       .set({ role })
-      .where(and(eq(tm.teamId, team.id), eq(tm.userId, userId), ne(tm.role, "owner")))
+      .where(
+        and(
+          eq(tm.teamId, team.id),
+          eq(tm.userId, userId),
+          eq(tm.role, target.role),
+          target.invitedBy === null ? isNull(tm.invitedBy) : eq(tm.invitedBy, target.invitedBy),
+        ),
+      )
       .returning({ userId: tm.userId });
     if (updated.length === 0) {
       return c.json({ error: "The team's members changed meanwhile; reload and try again" }, 409);
@@ -436,11 +445,11 @@ export const teamRoutes = new Hono<TeamEnv>()
       return c.json({ error: "The team's members changed meanwhile; reload and try again" }, 409);
     }
     await endInvites(c.var.db, { teamId: team.id }, userId);
-    // Their tabs in the team's shows close, unless they're also direct members there.
-    await refreshAccess(c.env, c.var.db, {
-      showIds: await teamShowIds(c.var.db, team.id),
-      userIds: [userId],
-    });
+    // Their tabs in the team's shows close, unless they're also direct members there; so
+    // do their invites into the shows they can't open any more.
+    const showIds = await teamShowIds(c.var.db, team.id);
+    await endInvitesWithoutAccess(c.var.db, showIds, [userId]);
+    await refreshAccess(c.env, c.var.db, { showIds, userIds: [userId] });
     return c.json({ ok: true });
   })
   .post("/teams/:id/leave", requireTeamMember, async (c) => {
@@ -448,12 +457,19 @@ export const teamRoutes = new Hono<TeamEnv>()
     if (team.role === "owner") {
       return c.json({ error: "Transfer the team to someone else before leaving" }, 400);
     }
-    await c.var.db.delete(tm).where(and(eq(tm.teamId, team.id), eq(tm.userId, c.var.user.id)));
+    // Never the owner (a transfer may have made them one meanwhile); a concurrent leave
+    // or removal leaves nothing to delete.
+    const left = await c.var.db
+      .delete(tm)
+      .where(and(eq(tm.teamId, team.id), eq(tm.userId, c.var.user.id), ne(tm.role, "owner")))
+      .returning({ userId: tm.userId });
+    if (left.length === 0) {
+      return c.json({ error: "The team's members changed meanwhile; reload and try again" }, 409);
+    }
     await endInvites(c.var.db, { teamId: team.id }, c.var.user.id);
-    await refreshAccess(c.env, c.var.db, {
-      showIds: await teamShowIds(c.var.db, team.id),
-      userIds: [c.var.user.id],
-    });
+    const showIds = await teamShowIds(c.var.db, team.id);
+    await endInvitesWithoutAccess(c.var.db, showIds, [c.var.user.id]);
+    await refreshAccess(c.env, c.var.db, { showIds, userIds: [c.var.user.id] });
     return c.json({ ok: true });
   })
   // Hand the team to another member (owner only): they become the owner, you an admin.

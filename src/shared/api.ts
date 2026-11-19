@@ -147,7 +147,11 @@ export interface ShowMetaDTO {
 export interface ShowInfoDTO extends ShowMetaDTO {
   /** The session new notes are stamped with ("Tech 2"); null when unset. */
   currentSession: string | null;
-  /** The team the show belongs to (null: personal). */
+  /**
+   * The team the show belongs to (null: personal). This and the next two are **absent**
+   * when a share link's viewer asks (`GET /api/shows/:id` with a share cookie): they're for
+   * members only.
+   */
   teamId: string | null;
   teamName: string | null;
   /** Who may add people besides the owner: editors (`editors`) or nobody (`owner`). */

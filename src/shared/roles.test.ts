@@ -43,6 +43,27 @@ describe("roles", () => {
     expect(
       canManageShowMember({ id: "o", role: "owner" }, "owner", { role: "editor", invitedBy: null }),
     ).toBe(true);
+    // The show's team owner/admins manage its direct guests too (never the show's owner);
+    // a team editor only their own.
+    const teamAdmin = { id: "ta", role: "editor" as const, teamRole: "admin" as const };
+    expect(canManageShowMember(teamAdmin, "owner", { role: "editor", invitedBy: "gone" })).toBe(
+      true,
+    );
+    expect(canManageShowMember(teamAdmin, "editors", { role: "owner", invitedBy: null })).toBe(
+      false,
+    );
+    expect(
+      canManageShowMember({ id: "to", role: "editor", teamRole: "owner" }, "editors", {
+        role: "viewer",
+        invitedBy: null,
+      }),
+    ).toBe(true);
+    expect(
+      canManageShowMember({ id: "te", role: "editor", teamRole: "editor" }, "editors", {
+        role: "viewer",
+        invitedBy: "x",
+      }),
+    ).toBe(false);
     const admin = { id: "a", role: "admin" as const };
     expect(canManageTeamMember(admin, "owner", { role: "admin", invitedBy: null })).toBe(true);
     expect(canManageTeamMember(admin, "owner", { role: "owner", invitedBy: null })).toBe(false);

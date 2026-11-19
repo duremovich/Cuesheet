@@ -36,7 +36,16 @@ same people to every show by hand, and the owner was a bottleneck for every new 
   who isn't the show's owner or a team owner/admin may change the role of (within their
   cap) and remove the people they added, and revoke or reissue their own pending invites,
   for as long as they may still invite. Show owners manage every direct member; team
-  owners and admins manage every team member except the owner, admins included.
+  owners and admins manage every team member except the owner, admins included, and
+  (decided 2026-11-19) also the direct guests of their team's shows: they change a guest's
+  role (up to editor, their own show role) and remove them, alongside the show's owner, and
+  see, reissue and revoke every pending invite into those shows. They never touch the show owner's
+  row, so a guest added by an editor who has since left is never orphaned.
+- **An invite never outlives its inviter's rights.** Accepting (and reissuing, by its
+  inviter) re-checks that the inviter could still make that invite today: a demotion, a
+  removal or the invite policy switched to owner makes their open invites unusable (a
+  manager can reissue one, becoming its inviter). Losing access to a show or team also
+  ends the invites you made into it.
 - **Invites can be listed, revoked and reissued.** Revoking sets `revoked_at` (rows are
   kept). Reissuing revokes the old row and inserts a new one with a new token and 7 days
   (the id is the token's hash, so a new token is a new row); the inviter stays the
@@ -74,11 +83,10 @@ same people to every show by hand, and the owner was a bottleneck for every new 
   rows are managed in the team (the show routes answer 409).
 - A team with shows can't be deleted (409; move or delete its shows first).
 - **ON DELETE on added columns.** drizzle-kit drops `ON DELETE` from the SQL it generates
-  for `ALTER TABLE … ADD` on SQLite, so `shows.team_id`, `memberships.invited_by` and
-  `invites.team_id` are plain `NO ACTION` foreign keys and the schema doesn't claim more.
-  The code handles dependents itself (deleting a team deletes its invites in the same
-  batch; users are never deleted), and `NO ACTION` on `shows.team_id` still blocks
-  deleting a team that has shows. Any future column added to an existing table needs the
-  same care.
+  for `ALTER TABLE … ADD` on SQLite; migration 0006 appends the clauses by hand
+  (`shows.team_id` restrict, `memberships.invited_by` set null, `invites.team_id`
+  cascade), so the SQL, the schema and the snapshot agree. A team with shows can't be
+  deleted, and its invites go with it. Any future column added to an existing table needs
+  the same hand edit.
 - Email depends on a third-party service and a verified domain owned by another project;
   if that changes, set `EMAIL_FROM` to a sender on the new domain.

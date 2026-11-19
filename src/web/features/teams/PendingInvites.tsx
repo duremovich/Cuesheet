@@ -1,8 +1,9 @@
 // Pending invites into a show or team (GET /shows/:id/invites, /teams/:id/invites): who,
 // as what, invited by whom, when it expires (or that it did: listed 30 days more so it can
-// be reissued). Everything listed is yours to manage (managers see all, others their own),
-// so every row offers Reissue (a new link and 7 days; the old link dies) and Revoke (after
-// an in-row confirm). The link itself is shown only right after the invite was made or
+// be reissued). Everything listed is yours to revoke (managers see all, others their own;
+// Revoke asks in-row first). Reissue (a new link and 7 days; the old link dies) only where
+// you could still make that invite (`canReissue`): an inviter who was demoted, removed from
+// the team or shut out by the invite policy can only revoke. The link itself is shown only right after the invite was made or
 // reissued (`links`), since the server keeps only its hash.
 import { useState } from "react";
 import type { PendingInviteDTO, ReissueInviteResponse } from "../../../shared/api";
@@ -16,10 +17,13 @@ import styles from "./Teams.module.css";
 export function PendingInvites({
   invites,
   links,
+  canReissue,
   onReissued,
   onChanged,
 }: {
   invites: PendingInviteDTO[];
+  /** Whether the viewer may reissue this invite (managers always; inviters while they could invite it). */
+  canReissue: (invite: PendingInviteDTO) => boolean;
   /** Invite id → its one-time link path, for invites made or reissued in this page. */
   links: Readonly<Record<string, string>>;
   onReissued: (made: ReissueInviteResponse) => void;
@@ -78,14 +82,16 @@ export function PendingInvites({
                 </span>
               </div>
               <span className={styles.actions}>
-                <button
-                  type="button"
-                  aria-label={`Reissue the invite for ${inv.email}`}
-                  title="A new link, valid 7 days; the current one stops working"
-                  onClick={() => void reissue(inv)}
-                >
-                  Reissue
-                </button>
+                {canReissue(inv) && (
+                  <button
+                    type="button"
+                    aria-label={`Reissue the invite for ${inv.email}`}
+                    title="A new link, valid 7 days; the current one stops working"
+                    onClick={() => void reissue(inv)}
+                  >
+                    Reissue
+                  </button>
+                )}
                 <button
                   type="button"
                   data-destructive=""

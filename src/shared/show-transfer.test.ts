@@ -3,6 +3,8 @@ import {
   canonicalJson,
   chunkRows,
   diffDigests,
+  importedMembership,
+  importedShow,
   mapMemberships,
   parseCreds,
   referencedIds,
@@ -96,6 +98,29 @@ describe("mapMemberships", () => {
   it("keeps unmapped users as they are", () => {
     const rows = [{ show_id: "s", user_id: A, role: "editor", created_at: 1 }];
     expect(mapMemberships(rows, new Map())).toEqual(rows);
+  });
+});
+
+describe("importedShow / importedMembership (what the target stores)", () => {
+  it("a team show arrives personal; other rows unchanged", () => {
+    expect(importedShow({ id: "s", name: "N", team_id: "t1" })).toEqual({
+      id: "s",
+      name: "N",
+      team_id: null,
+    });
+    // A source from before teams has no column: nothing added.
+    expect(importedShow({ id: "s", name: "N" })).toEqual({ id: "s", name: "N" });
+  });
+
+  it("clears invited_by only when that user isn't on the target", () => {
+    const here = new Set([A, ADMIN]);
+    const row = { show_id: "s", user_id: A, role: "editor", invited_by: B };
+    expect(importedMembership(row, here)).toEqual({ ...row, invited_by: null });
+    expect(importedMembership({ ...row, invited_by: ADMIN }, here)).toEqual({
+      ...row,
+      invited_by: ADMIN,
+    });
+    expect(importedMembership({ ...row, invited_by: null }, here).invited_by).toBeNull();
   });
 });
 

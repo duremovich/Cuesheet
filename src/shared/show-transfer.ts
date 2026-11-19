@@ -232,6 +232,28 @@ export function mapMemberships(
   return [...byUser.values()].sort((a, b) => String(a.user_id).localeCompare(String(b.user_id)));
 }
 
+/**
+ * The show row as an import stores it: teams don't move between instances, so the show
+ * arrives personal (`team_id` cleared). The target's `finish` applies it, and the CLI's
+ * verify applies it to the source before comparing.
+ */
+export function importedShow(show: Record<string, TransferValue>): Record<string, TransferValue> {
+  return "team_id" in show ? { ...show, team_id: null } : show;
+}
+
+/**
+ * A membership as an import stores it: `invited_by` is cleared when that user has no
+ * account on the target (`targetUsers`: its user ids).
+ */
+export function importedMembership(
+  row: Record<string, TransferValue>,
+  targetUsers: ReadonlySet<string>,
+): Record<string, TransferValue> {
+  return row.invited_by != null && !targetUsers.has(String(row.invited_by))
+    ? { ...row, invited_by: null }
+    : row;
+}
+
 /** The ids of `users` that occur anywhere in `text`. */
 export function referencedIds(text: string, ids: Iterable<string>): Set<string> {
   const out = new Set<string>();

@@ -260,6 +260,10 @@ export function TeamPage({ user }: { user: UserDTO }) {
             )}
             <PendingInvites
               invites={invites}
+              canReissue={(inv) =>
+                manager ||
+                (canInviteToTeam(team.role, team.invitePolicy) && canGrant(team.role, inv.role))
+              }
               links={links}
               onReissued={(made) => setLinks((l) => ({ ...l, [made.id]: made.path }))}
               onChanged={load}

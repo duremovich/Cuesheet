@@ -58,17 +58,21 @@ export interface ManagedMember {
 }
 
 /**
- * Whether `actor` may change or remove `target` in a show (`target.role` is their direct
- * role). Never the owner; the show's owner everyone else; an editor allowed to invite, the
- * people they added, while those hold a role within their own.
+ * Whether `actor` may change or remove `target`, a direct member of a show (`target.role`
+ * is their direct role). Never the show's owner. The show's owner manages everyone else,
+ * and so do the owner and admins of the show's team (`actor.teamRole`: the actor's role in
+ * the show's team, if any; their show role is editor, which caps what they grant). An
+ * editor allowed to invite manages the people they added, while those hold a role within
+ * their own.
  */
 export function canManageShowMember(
-  actor: { id: string; role: Role },
+  actor: { id: string; role: Role; teamRole?: TeamRole | null },
   policy: InvitePolicy,
   target: ManagedMember,
 ): boolean {
   if (target.role === "owner") return false;
   if (actor.role === "owner") return true;
+  if (isTeamManager(actor.teamRole)) return true;
   return (
     canInviteToShow(actor.role, policy) &&
     target.invitedBy === actor.id &&

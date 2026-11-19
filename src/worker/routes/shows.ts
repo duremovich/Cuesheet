@@ -15,9 +15,11 @@ import {
   type MembersResponse,
   type PendingInvitesResponse,
   type Role,
+  type ShowInfoDTO,
   type ShowResponse,
   type ShowSummaryDTO,
   type ShowsResponse,
+  type TeamRole,
   type TransferOwnershipRequest,
   type UpdateShowResponse,
 } from "../../shared/api";
@@ -66,6 +68,7 @@ import {
   createInvite,
   emailInvite,
   endInvites,
+  endInvitesWithoutAccess,
   type InviteRole,
   inviteLimited,
   pendingInvites,
@@ -101,6 +104,8 @@ export type ShowEnv = AppEnv & {
     role: Role;
     /** The caller's direct membership role (null: access only through the show's team). */
     directRole: Role | null;
+    /** The caller's role in the show's team (null: none, or a personal show). */
+    teamRole: TeamRole | null;
   };
 };
 
@@ -120,12 +125,14 @@ export const requireMembership = createMiddleware<ShowEnv>(async (c, next) => {
     c.set("show", access.show);
     c.set("role", access.role);
     c.set("directRole", access.direct);
+    c.set("teamRole", access.teamRole);
     return next();
   }
   if (access && share && share.showId === showId) {
     c.set("show", access.show);
     c.set("role", "viewer");
     c.set("directRole", null);
+    c.set("teamRole", null);
     return next();
   }
   // Same response for "no such show" and "not a member": don't leak show IDs.
@@ -474,13 +481,17 @@ export const showRoutes = new Hono<ShowEnv>()
     // (and creates it if the DO init failed after the D1 insert).
     const meta = await showStub(c.env, c.var.show.id).sync(c.var.show.id, c.var.show.name);
     return c.json({
-      show: {
-        ...meta,
-        currentSession: c.var.show.currentSession,
-        teamId: c.var.show.teamId,
-        teamName: c.var.show.teamName,
-        invitePolicy: c.var.show.invitePolicy,
-      },
+      // A share link's viewer isn't a member: nothing about the team or who may invite
+      // (ShowInfoDTO documents the three as absent then; the share page never reads them).
+      show: c.var.share
+        ? ({ ...meta, currentSession: c.var.show.currentSession } as unknown as ShowInfoDTO)
+        : {
+            ...meta,
+            currentSession: c.var.show.currentSession,
+            teamId: c.var.show.teamId,
+            teamName: c.var.show.teamName,
+            invitePolicy: c.var.show.invitePolicy,
+          },
       role: c.var.role,
     } satisfies ShowResponse);
   })
@@ -561,6 +572,8 @@ export const showRoutes = new Hono<ShowEnv>()
       // The old team's members may have lost access, the new team's gained it.
       const before = c.var.show.teamId ? await teamMemberIds(c.var.db, c.var.show.teamId) : [];
       const after = set.teamId ? await teamMemberIds(c.var.db, set.teamId) : [];
+      // Whoever lost access also loses the invites they made into the show.
+      await endInvitesWithoutAccess(c.var.db, [c.var.show.id], before);
       await refreshAccess(c.env, c.var.db, {
         showIds: [c.var.show.id],
         userIds: [...before, ...after],
@@ -765,6 +778,7 @@ export const showRoutes = new Hono<ShowEnv>()
     const user = await userByEmail(c.var.db, email);
     // Accounts are created through invites; adding a member never creates one.
     if (!user) return c.json({ error: "No account with that email; invite them first" }, 404);
+    if (user.id === c.var.user.id) return c.json({ error: "That's you" }, 400);
     const member = await addDirectMember(c, user.id, role);
     if (!member) return c.json({ error: "Already a member of this show" }, 409);
     return c.json({ member }, 201);
@@ -784,6 +798,7 @@ export const showRoutes = new Hono<ShowEnv>()
     if (!isPlausibleEmail(email)) return c.json({ error: "Enter a valid email address" }, 400);
     const show = c.var.show;
     const user = await userByEmail(c.var.db, email);
+    if (user?.id === c.var.user.id) return c.json({ error: "That's you" }, 400);
     if (user) {
       const member = await addDirectMember(c, user.id, role);
       if (!member) return c.json({ error: "Already a member of this show" }, 409);
@@ -813,12 +828,14 @@ export const showRoutes = new Hono<ShowEnv>()
     const invited = { id: made.id, email, role, path: made.path, expiresAt: made.expiresAt };
     return c.json({ invited, emailed } satisfies AddShowPeopleResponse, 201);
   })
-  // Pending invites into the show: the owner sees all, everyone else their own.
+  // Pending invites into the show: the owner and the show's team owner/admins see all,
+  // everyone else their own.
   .get("/shows/:id/invites", requireMembership, async (c) => {
+    const manager = c.var.role === "owner" || isTeamManager(c.var.teamRole);
     const invites = await pendingInvites(
       c.var.db,
       { showId: c.var.show.id },
-      c.var.role === "owner" ? undefined : c.var.user.id,
+      manager ? undefined : c.var.user.id,
     );
     return c.json({ invites } satisfies PendingInvitesResponse);
   })
@@ -840,22 +857,25 @@ export const showRoutes = new Hono<ShowEnv>()
     if (target.role === "owner") {
       return c.json({ error: "The owner's role can't change; transfer the show instead" }, 400);
     }
-    const actor = { id: c.var.user.id, role: c.var.role };
+    const actor = { id: c.var.user.id, role: c.var.role, teamRole: c.var.teamRole };
     if (!canManageShowMember(actor, c.var.show.invitePolicy, target)) {
       return c.json({ error: "You can only manage the people you added" }, 403);
     }
     if (!canGrant(c.var.role, role)) {
       return c.json({ error: "You can't give a role above your own" }, 403);
     }
-    // Never touches an owner (a transfer may have made them one meanwhile).
+    // Only the row as checked above: a concurrent change (a transfer making them owner,
+    // another role change) makes this a 409.
+    const m = schema.memberships;
     const updated = await c.var.db
-      .update(schema.memberships)
+      .update(m)
       .set({ role })
       .where(
         and(
-          eq(schema.memberships.showId, c.var.show.id),
-          eq(schema.memberships.userId, userId),
-          ne(schema.memberships.role, "owner"),
+          eq(m.showId, c.var.show.id),
+          eq(m.userId, userId),
+          eq(m.role, target.role),
+          target.invitedBy === null ? isNull(m.invitedBy) : eq(m.invitedBy, target.invitedBy),
         ),
       )
       .returning({ userId: schema.memberships.userId });
@@ -878,7 +898,7 @@ export const showRoutes = new Hono<ShowEnv>()
     const target = await directMember(c.var.db, c.var.show.id, userId);
     if (!target) return notADirectMember(c, userId);
     if (target.role === "owner") return c.json({ error: "The owner can't be removed" }, 400);
-    const actor = { id: c.var.user.id, role: c.var.role };
+    const actor = { id: c.var.user.id, role: c.var.role, teamRole: c.var.teamRole };
     if (!canManageShowMember(actor, c.var.show.invitePolicy, target)) {
       return c.json({ error: "You can only manage the people you added" }, 403);
     }
@@ -947,14 +967,21 @@ export const showRoutes = new Hono<ShowEnv>()
     if (!c.var.directRole) {
       return c.json({ error: "You have access through the show's team; leave the team" }, 400);
     }
-    await c.var.db
+    // Never the owner (a transfer may have made them one meanwhile); a concurrent leave or
+    // removal leaves nothing to delete.
+    const left = await c.var.db
       .delete(schema.memberships)
       .where(
         and(
           eq(schema.memberships.showId, c.var.show.id),
           eq(schema.memberships.userId, c.var.user.id),
+          ne(schema.memberships.role, "owner"),
         ),
-      );
+      )
+      .returning({ userId: schema.memberships.userId });
+    if (left.length === 0) {
+      return c.json({ error: "The show's members changed meanwhile; reload and try again" }, 409);
+    }
     await endInvites(c.var.db, { showId: c.var.show.id }, c.var.user.id);
     // Still in the show's team: their tabs stay open with the team role.
     await refreshAccess(c.env, c.var.db, { showIds: [c.var.show.id], userIds: [c.var.user.id] });

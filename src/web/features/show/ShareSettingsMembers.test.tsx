@@ -154,6 +154,8 @@ const makeOwnerButton = (root: HTMLElement) =>
 const dialog = () => document.querySelector('[role="alertdialog"]') as HTMLElement | null;
 const buttonIn = (el: HTMLElement, text: string) =>
   [...el.querySelectorAll("button")].find((b) => b.textContent === text) as HTMLButtonElement;
+const options = (el: HTMLElement | null) =>
+  [...(el as HTMLSelectElement).options].map((o) => o.value);
 const row = (root: HTMLElement, name: string) =>
   [...root.querySelectorAll('[data-testid="members"] > li')].find((li) =>
     li.textContent?.startsWith(name),
@@ -229,6 +231,45 @@ describe("who manages whom", () => {
     expect(byLabel(container, "Role for Owner")).toBeNull();
     expect(byLabel(container, "Role for Dylan")).toBeNull();
     expect(row(container, "Guest").textContent).toContain("Invited by Dylan");
+  });
+
+  it("a team admin manages every guest of the team's shows, up to editor, and revokes any invite", async () => {
+    // Dylan is here only through the team, as its admin (show role editor).
+    const members = TEAM_SHOW_MEMBERS.map((m) =>
+      m.userId === "u-dylan"
+        ? { ...m, source: "team" as const, directRole: null, teamRole: "admin" as const }
+        : m,
+    );
+    const ownersInvite: PendingInviteDTO = {
+      id: "inv-o",
+      email: "someone@test.local",
+      role: "editor",
+      invitedBy: { id: "u-owner", name: "Owner" },
+      createdAt: 0,
+      expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+      expired: false,
+    };
+    const { container } = await mount("editor", {
+      members,
+      team,
+      policy: "owner",
+      invites: [ownersInvite],
+    });
+    // Other was added by the owner: a team admin still manages them.
+    expect(byLabel(container, "Remove Other")).not.toBeNull();
+    expect(options(byLabel(container, "Role for Other"))).toEqual([
+      "editor",
+      "commenter",
+      "viewer",
+    ]);
+    expect(byLabel(container, "Remove Guest")).not.toBeNull();
+    // Never the show's owner, no handover, and team rows stay with the team.
+    expect(byLabel(container, "Remove Owner")).toBeNull();
+    expect(byLabel(container, "Make Other the owner")).toBeNull();
+    expect(row(container, "Crew").querySelector("select, button")).toBeNull();
+    // Someone else's invite: Revoke, but no Reissue (no new links past the owner-only policy).
+    expect(byLabel(container, "Revoke the invite for someone@test.local")).not.toBeNull();
+    expect(byLabel(container, "Reissue the invite for someone@test.local")).toBeNull();
   });
 
   it("people with access through the team are managed in the team", async () => {
@@ -322,6 +363,26 @@ describe("adding people and pending invites", () => {
       `${window.location.origin}/shows/show-1`,
     );
     expect(changed).toHaveBeenCalled();
+  });
+
+  it("an inviter who can no longer invite that role keeps Revoke but loses Reissue", async () => {
+    const reissueOf = (root: HTMLElement) => byLabel(root, "Reissue the invite for new@test.local");
+    const revokeOf = (root: HTMLElement) => byLabel(root, "Revoke the invite for new@test.local");
+    // Demoted to viewer: the list is still fetched and shows their own invite.
+    const demoted = await mount("viewer", { invites: [invite] });
+    expect(api.showInvites).toHaveBeenCalledWith("show-1");
+    expect(revokeOf(demoted.container)).not.toBeNull();
+    expect(reissueOf(demoted.container)).toBeNull();
+    // Still an editor, but the owner now invites alone.
+    const policy = await mount("editor", { invites: [invite], policy: "owner" });
+    expect(revokeOf(policy.container)).not.toBeNull();
+    expect(reissueOf(policy.container)).toBeNull();
+    // An editor allowed to invite keeps both; so does the owner, whatever the policy.
+    const editor = await mount("editor", { invites: [invite] });
+    expect(reissueOf(editor.container)).not.toBeNull();
+    const owner = await mount("owner", { invites: [invite], policy: "owner" });
+    expect(reissueOf(owner.container)).not.toBeNull();
+    expect(revokeOf(owner.container)).not.toBeNull();
   });
 
   it("Revoke asks in the row; Reissue shows the new link", async () => {

@@ -9,8 +9,11 @@
 //
 // Invites are revoked (`revoked_at`), never deleted, by their inviter, the show's owner or
 // the team's owner/admins; a reissue revokes the old row and makes a new one (the id is
-// the token's hash, so a new token is a new row). Leaving or being removed from a show or
-// team ends the invites you made into it; a show transfer ends the old owner's.
+// the token's hash, so a new token is a new row). An invite never outlives its inviter's
+// rights: reissuing it (as its inviter) and accepting it re-check that the inviter could
+// still make it (`inviterMayGrant`). Leaving or being removed from a show or team ends the
+// invites you made into it (and into the team's shows you can no longer open); a show
+// leaving a team ends those of whoever lost access; a show transfer ends the old owner's.
 // Non-admins may create 30 invites an hour, 100 a day (`inviteLimits`). Bad tokens are
 // rate-limited per IP (auth/rate-limit.ts).
 import { and, desc, eq, gt, isNull } from "drizzle-orm";
@@ -222,39 +225,62 @@ export async function pendingInvites(
 type InviteRow = typeof inv.$inferSelect;
 
 /**
- * Whether the caller may revoke or reissue an invite: its inviter, the show's owner, the
- * team's owner/admins. `hidden` when they can't see the show or team at all (404).
+ * Whether the caller may revoke or reissue an invite. The show's owner (and a team show's
+ * team owner/admins) and, for a team invite, the team's owner/admins always may. Its inviter may always revoke it, but reissue it only while
+ * they could still make it (`inviterMayGrant`: same target, same role). `hidden` when the
+ * caller can't see the show or team at all (404).
  */
 async function inviteControl<E extends AppEnv>(
   c: Context<E>,
   invite: InviteRow,
+  action: "revoke" | "reissue",
 ): Promise<"allowed" | "forbidden" | "hidden"> {
   const me = c.var.user.id;
-  if (invite.invitedBy === me) return "allowed";
+  const mine = invite.invitedBy === me;
+  const asInviter = async () =>
+    action === "revoke" || (await inviterMayGrant(c.var.db, invite, c.var.user.isAdmin));
   if (invite.showId) {
-    const role = (await showAccess(c.var.db, invite.showId, me))?.role;
+    const access = await showAccess(c.var.db, invite.showId, me);
+    const role = access?.role;
     if (role === "owner") return "allowed";
+    // The show's team owner/admins manage every invite into it, like the show's owner.
+    if (isTeamManager(access?.teamRole)) return "allowed";
+    if (mine && (await asInviter())) return "allowed";
     return role ? "forbidden" : "hidden";
   }
   if (invite.teamId) {
     const role = await teamRoleOf(c.var.db, invite.teamId, me);
     if (isTeamManager(role)) return "allowed";
+    if (mine && (await asInviter())) return "allowed";
     return role ? "forbidden" : "hidden";
   }
-  return "hidden";
+  // A plain sign-up (admins only).
+  if (mine && (await asInviter())) return "allowed";
+  return mine ? "forbidden" : "hidden";
 }
 
-/** The pending invite named in the path, if the caller may manage it; else the error. */
-async function managedInvite<E extends AppEnv>(c: Context<E>): Promise<InviteRow | Response> {
+/** The pending invite named in the path, if the caller may do `action` to it; else the error. */
+async function managedInvite<E extends AppEnv>(
+  c: Context<E>,
+  action: "revoke" | "reissue",
+): Promise<InviteRow | Response> {
   const invite = await c.var.db
     .select()
     .from(inv)
     .where(pendingInvite(c.req.param("id") ?? ""))
     .get();
-  const control = invite ? await inviteControl(c, invite) : "hidden";
+  const control = invite ? await inviteControl(c, invite, action) : "hidden";
   if (!invite || control === "hidden") return c.json({ error: "Invite not found" }, 404);
   if (control === "forbidden") {
-    return c.json({ error: "Only whoever sent it or a manager can do that" }, 403);
+    return c.json(
+      {
+        error:
+          action === "revoke"
+            ? "Only whoever sent it or a manager can do that"
+            : "Only a manager, or whoever sent it while they may still invite, can do that",
+      },
+      403,
+    );
   }
   return invite;
 }
@@ -282,14 +308,14 @@ async function targetOf(db: D1Db, invite: InviteRow) {
   return null;
 }
 
-/** May the (non-admin) caller invite into this show / team with this role? */
-async function mayInvite<E extends AppEnv>(
-  c: Context<E>,
+/** May (non-admin) `userId` invite into this show / team with this role (decision 4)? */
+async function mayInvite(
+  db: D1Db,
+  userId: string,
   target: { showId: string; role: InviteRole } | { teamId: string; role: TeamRole },
 ): Promise<boolean> {
-  const db = c.var.db;
   if ("showId" in target) {
-    const access = await showAccess(db, target.showId, c.var.user.id);
+    const access = await showAccess(db, target.showId, userId);
     return (
       !!access?.role &&
       canInviteToShow(access.role, access.show.invitePolicy) &&
@@ -303,11 +329,63 @@ async function mayInvite<E extends AppEnv>(
     .where(
       and(
         eq(schema.teamMemberships.teamId, target.teamId),
-        eq(schema.teamMemberships.userId, c.var.user.id),
+        eq(schema.teamMemberships.userId, userId),
       ),
     )
     .get();
   return !!row && canInviteToTeam(row.role, row.policy) && canGrant(row.role, target.role);
+}
+
+/**
+ * Could the invite's inviter still make it now (same target, same role)? Admins always;
+ * a plain sign-up (no target) only an admin. Checked on reissue (by the inviter) and on
+ * accept, so an invite never outlives its inviter's rights (a demotion, a removal, the
+ * invite policy switched to owner). `inviterIsAdmin`: when the caller already knows.
+ */
+export async function inviterMayGrant(
+  db: D1Db,
+  invite: Pick<InviteRow, "invitedBy" | "showId" | "role" | "teamId" | "teamRole">,
+  inviterIsAdmin?: boolean,
+): Promise<boolean> {
+  const admin =
+    inviterIsAdmin ??
+    (
+      await db
+        .select({ isAdmin: schema.users.isAdmin })
+        .from(schema.users)
+        .where(eq(schema.users.id, invite.invitedBy))
+        .get()
+    )?.isAdmin ??
+    false;
+  if (admin) return true;
+  if (invite.showId) {
+    return mayInvite(db, invite.invitedBy, {
+      showId: invite.showId,
+      role: invite.role ?? "editor",
+    });
+  }
+  if (invite.teamId) {
+    const role = invite.teamRole && invite.teamRole !== "owner" ? invite.teamRole : "editor";
+    return mayInvite(db, invite.invitedBy, { teamId: invite.teamId, role });
+  }
+  return false;
+}
+
+/**
+ * End the open invites each of `userIds` made into each of `showIds` where they can no
+ * longer open the show (they left or were removed from its team, or it left their team).
+ */
+export async function endInvitesWithoutAccess(
+  db: D1Db,
+  showIds: Iterable<string>,
+  userIds: Iterable<string>,
+): Promise<void> {
+  const users = [...new Set(userIds)];
+  for (const showId of new Set(showIds)) {
+    for (const userId of users) {
+      if (!(await showAccess(db, showId, userId))?.role) await endInvites(db, { showId }, userId);
+    }
+  }
 }
 
 export const inviteRoutes = new Hono<AppEnv>()
@@ -332,7 +410,7 @@ export const inviteRoutes = new Hono<AppEnv>()
     const db = c.var.db;
     if (!c.var.user.isAdmin) {
       const target = show ?? team;
-      if (!target || !(await mayInvite(c, target))) {
+      if (!target || !(await mayInvite(db, c.var.user.id, target))) {
         return c.json(
           { error: "Only admins, or people who may add people to that show or team, can invite" },
           403,
@@ -378,7 +456,7 @@ export const inviteRoutes = new Hono<AppEnv>()
   })
   // Revoke (inviter, show owner, team owner/admins): the link stops working.
   .delete("/invites/:id", requireAuth, async (c) => {
-    const invite = await managedInvite(c);
+    const invite = await managedInvite(c, "revoke");
     if (invite instanceof Response) return invite;
     const revoked = await c.var.db
       .update(inv)
@@ -389,13 +467,30 @@ export const inviteRoutes = new Hono<AppEnv>()
     return c.json({ ok: true });
   })
   // A new link (and 7 days) for a pending invite, expired or not; the old link dies. The
-  // invite keeps its inviter (and so who manages it). Re-sends the email.
+  // invite keeps its inviter (and so who manages it) while they may still make it;
+  // otherwise whoever reissues it (a manager) becomes its inviter, so it can be accepted.
+  // Re-sends the email.
   .post("/invites/:id/reissue", requireAuth, async (c) => {
-    const invite = await managedInvite(c);
+    const invite = await managedInvite(c, "reissue");
     if (invite instanceof Response) return invite;
     const limited = await inviteLimited(c);
     if (limited) return limited;
     const db = c.var.db;
+    // The new invite must be acceptable: it keeps its inviter while they could still make
+    // it, else the reissuer becomes its inviter, which they must be able to be (a team
+    // admin can't take over an invite under the show's owner-only policy).
+    const keepInviter = invite.invitedBy === c.var.user.id || (await inviterMayGrant(db, invite));
+    if (
+      !keepInviter &&
+      !(await inviterMayGrant(db, { ...invite, invitedBy: c.var.user.id }, c.var.user.isAdmin))
+    ) {
+      return c.json(
+        {
+          error: "Whoever sent it can't invite there any more, and you can't either; ask the owner",
+        },
+        409,
+      );
+    }
     const revoked = await db
       .update(inv)
       .set({ revokedAt: Date.now() })
@@ -404,7 +499,7 @@ export const inviteRoutes = new Hono<AppEnv>()
     if (revoked.length === 0) return c.json({ error: "Invite not found" }, 404);
     const made = await createInvite(db, {
       email: invite.email,
-      invitedBy: invite.invitedBy,
+      invitedBy: keepInviter ? invite.invitedBy : c.var.user.id,
       ...(invite.showId ? { show: { id: invite.showId, role: invite.role ?? "editor" } } : {}),
       ...(invite.teamId ? { team: { id: invite.teamId, role: invite.teamRole ?? "editor" } } : {}),
     });
@@ -428,6 +523,8 @@ export const inviteRoutes = new Hono<AppEnv>()
         email: inv.email,
         role: inv.role,
         showName: schema.shows.name,
+        showId: inv.showId,
+        invitedBy: inv.invitedBy,
         teamId: inv.teamId,
         teamRole: inv.teamRole,
         teamName: schema.teams.name,
@@ -441,6 +538,8 @@ export const inviteRoutes = new Hono<AppEnv>()
       await recordFailure(c.env.DB, keys, now);
       return c.json({ error: BAD_INVITE }, 404);
     }
+    // Its inviter can't make it any more: dead, but not the visitor's fault (no failure).
+    if (!(await inviterMayGrant(c.var.db, invite))) return c.json({ error: BAD_INVITE }, 404);
     return c.json({
       email: invite.email,
       showName: invite.showName,
@@ -464,6 +563,13 @@ export const inviteRoutes = new Hono<AppEnv>()
     const wait = await retryAfter(c.env.DB, keys, now);
     if (wait > 0) return tooMany(c, wait);
     const inviteId = await sha256Hex(c.req.param("token"));
+    // An invite whose inviter can no longer make it (demoted, removed, the invite policy
+    // switched to owner) is refused like a used one, but isn't counted as a bad token:
+    // the invitee did nothing wrong. It stays pending, so a manager can reissue it.
+    const pending = await c.var.db.select().from(inv).where(openInvite(inviteId)).get();
+    if (pending && !(await inviterMayGrant(c.var.db, pending))) {
+      return c.json({ error: BAD_INVITE }, 404);
+    }
     const passwordHash = await hashPassword(password);
 
     // Claim the invite atomically so a link can only be used once.
@@ -497,8 +603,8 @@ export const inviteRoutes = new Hono<AppEnv>()
       .onConflictDoNothing()
       .returning({ id: schema.users.id });
     if (inserted.length === 0) return c.json({ error: "That email already has an account" }, 409);
-    // Joins with the invite's inviter as `invited_by` (so they manage the new member). The
-    // show or team may have gone since; then there's nothing to join.
+    // Joins with the invite's inviter as `invited_by` (so they manage the new member). An
+    // admin's invite into a show or team gone since joins nothing.
     if (claimed.showId) {
       const show = await c.var.db
         .select({ id: schema.shows.id })

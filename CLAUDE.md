@@ -116,11 +116,12 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   4. Add or extend a test in `test/worker/`.
   D1 changes that drizzle can't see (e.g. a new enum value, a data fix) go in a custom
   migration: `pnpm exec drizzle-kit generate --config drizzle.d1.config.ts --custom --name <what>`.
-  **A foreign key on a column added to an existing table gets no `ON DELETE`**: drizzle-kit
-  drops it from the `ALTER TABLE … ADD` it generates for SQLite. Don't declare one in
-  `schema.ts` for such a column (it would claim what the database doesn't do); it's `NO
-  ACTION`, and the code deletes or clears dependents itself (0006: `shows.team_id`,
-  `memberships.invited_by`, `invites.team_id`; decision 0010). New tables keep theirs.
+  **drizzle-kit drops `ON DELETE` on `ADD COLUMN`**: for a foreign key with an action on a
+  column added to an existing table, the generated `ALTER TABLE … ADD … REFERENCES t(id)`
+  has no clause; append it by hand (`… ON DELETE cascade;`, SQLite accepts it when the
+  column's default is NULL) so the SQL, `schema.ts` and the snapshot agree (0006 does for
+  `shows.team_id` restrict, `memberships.invited_by` set null, `invites.team_id` cascade).
+  New tables keep theirs. D1 enforces foreign keys.
 - **Adding an API route.** Add a handler in the relevant `src/worker/routes/*.ts` (or a new
   file mounted in `app.ts`). Put request/response types in `src/shared/api.ts`, add a method
   to `src/web/lib/api.ts`, and cover it in `test/worker/api.test.ts`. Protect it with
@@ -241,11 +242,14 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   `direct`/`team`, `directRole`, `teamRole`, `invitedBy`, `joinedAt`, `lastActiveAt`),
   `POST /api/shows/:id/members {email, role}` (an existing account; 404 otherwise) and
   `PATCH/DELETE .../members/:userId` follow decision 0010's delegation rules: the owner manages every
-  direct member; members whose effective role is editor may add people unless the show's
+  direct member, and so do the owner and admins of the show's team (`canManageShowMember`
+  with the caller's `teamRole`, `c.var.teamRole`; up to editor, their show role); members whose effective role is editor may add people unless the show's
   `invite_policy` is `owner` (`PATCH /api/shows/:id {invitePolicy}`, owner) and manage the
   people they added (`invited_by`) while they may still invite; nobody grants above their
-  own role (`canGrant`, `src/shared/roles.ts`) or touches the owner (400); yourself: 400;
-  someone here only through the team: 409 "Manage this person in the team". Removing
+  own role (`canGrant`, `src/shared/roles.ts`) or touches the owner (400); yourself: 400
+  (adding your own email too); someone here only through the team: 409 "Manage this person
+  in the team"; a role change applies only to the row as it was checked (role and
+  `invited_by` pinned in the WHERE), 409 when it changed meanwhile. Removing
   someone ends their open invites into the show; someone who still has team access is
   notified of their team role instead of disconnected (`refreshAccess`). `POST
   .../transfer {userId}` or `{email}` (owner, direct members only:
@@ -254,8 +258,10 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   non-owner, 404 not a member, 409 when a concurrent change won. The swap is one D1 batch
   in `transferOwnership()` that re-checks both sides, so a show always has exactly one
   owner; it also revokes the old owner's open invites into the show), `POST .../leave`
-  (anyone but the owner, direct members only (400 "leave the team" otherwise); closes their
-  sockets unless the team still gives access). **Presence** (R22): the DO keeps each socket's name
+  (anyone but the owner, direct members only (400 "leave the team" otherwise; 409 when the
+  row was gone or became the owner's meanwhile); closes their sockets unless the team still
+  gives access). `GET /api/shows/:id` adds `teamId`/`teamName`/`invitePolicy` for members
+  only: a share link's viewer gets the show without them. **Presence** (R22): the DO keeps each socket's name
   (`X-Cuesheet-Name`, URI-encoded; share visitors "Guest (read-only)") and sends
   `hello`/`presence` with `{clients, readOnly, users: [{id, name, readOnly}]}` (one entry
   per user or share link; members by name, guests last). Share visitors get the counts
@@ -1505,15 +1511,26 @@ position is kept outside React.
   where they may add people, up to their own role (403 otherwise, also for a show or team
   they can't see). It answers the same **200** whether or not the email has an account
   (accepting one for an existing account is refused); the one-step `…/people` routes do
-  tell (see "Teams"). Accepting joins the show or team with `invited_by` = the invite's
-  inviter (a target gone meanwhile: nothing to join); `GET /api/invites/:token` returns
+  tell (see "Teams"). **An invite never outlives its inviter's rights**: `GET` and accept
+  re-check that the inviter could still make it (`inviterMayGrant`: same target and role
+  under today's roles and invite policy; admins always) and answer the same 404 "invalid
+  or used" otherwise, without counting a bad-token failure (the invite stays pending; a
+  manager can reissue it). Accepting joins the show or team with `invited_by` = the
+  invite's inviter (an admin's invite into a target gone meanwhile: nothing to join);
+  `GET /api/invites/:token` returns
   `showName`/`role`, and `teamName`/`teamRole` for team invites. Open = not accepted, not
   revoked, not expired. `DELETE /api/invites/:id` revokes (`revoked_at`; the row stays) and
   `POST /api/invites/:id/reissue` revokes and inserts a new row with a new token and 7
-  days, keeping the inviter → `{id, path, expiresAt, emailed}`; both for the inviter, the
-  show's owner or the team's owner/admins (403 if you can see the target, else 404).
-  Leaving or being removed ends that person's open invites into the show/team;
-  transferring a show revokes the old owner's. Non-admins create at most 30 invites an
+  days → `{id, path, expiresAt, emailed}`. Revoke: the inviter (always), the show's owner
+  (and, for a team show, its team's owner/admins) or, for a team invite, the team's
+  owner/admins; reissue: the same managers (409 when neither the inviter nor the manager
+  could make the invite now, e.g. a team admin under an owner-only policy) and the inviter
+  only while `inviterMayGrant` holds (403 if you can see the target, else 404). A reissue keeps the
+  inviter while they could still make it, else the reissuing manager becomes the inviter.
+  Leaving or being removed ends that person's open invites into the show/team, and (for a
+  team) into the team's shows they can no longer open; a show moved out of (or between)
+  teams ends the invites of whoever lost access (`endInvitesWithoutAccess`); transferring
+  a show revokes the old owner's. Non-admins create at most 30 invites an
   hour and 100 a day (`inviteLimits`, `invite-send:user:<id>`; every invite counts, made
   or reissued; 429 "Too many invites"). `id` is the token's SHA-256 (the token is only in
   the link, shown once).
@@ -1537,8 +1554,11 @@ position is kept outside React.
   re-exports them; change them there only.
 - **Effective role** = highest of the direct role and the team-derived one (team
   owner/admin → editor, else the same name); no show-level downgrade of a team member.
-  Team owner/admins are never a show's owner. Team members reach every show of the team,
-  including later ones.
+  Team owner/admins are never a show's owner, but they manage its direct guests (change
+  their role up to editor, remove them, see, reissue and revoke invites into the show)
+  alongside the show's
+  owner; never the owner's row. Team members reach every show of the team, including later
+  ones.
 - **`refreshAccess(env, db, {showIds, userIds})`** after anything that can move access:
   for each pair, the effective role → `ShowDO.notifyRole`, none → `disconnectUser`. Called
   by team member add / role change / removal / leave, team transfer, moving a show in or
@@ -1547,12 +1567,16 @@ position is kept outside React.
 - **Routes** (`routes/teams.ts`; 404 "Team not found" for non-members, like shows):
   `GET/POST /api/teams` (create: any user, you're the owner), `GET/PATCH/DELETE
   /api/teams/:id` (`PATCH {name?, invitePolicy?}`: owner/admins; `DELETE`: owner, 409
-  while it has shows, its invites go with it), `GET /api/teams/:id/members` (`TeamMemberDTO`:
+  while it has shows (`shows.team_id` is `ON DELETE restrict`), its memberships and invites
+  cascade), `GET /api/teams/:id/members` (`TeamMemberDTO`:
   role, `invitedBy`, `joinedAt`, `lastActiveAt`), `POST …/members {email, role}` (an
-  existing account; 404 otherwise; 409 already in), `PATCH/DELETE …/members/:userId`
-  (owner/admins manage everyone but the owner, admins included; an editor who may add
-  people manages the people they added, within their role; the owner: 400, yourself: 400,
-  403 otherwise; removal ends their invites into the team), `POST …/leave` (not the owner),
+  existing account; 404 otherwise; 409 already in; 400 yourself), `PATCH/DELETE
+  …/members/:userId` (owner/admins manage everyone but the owner, admins included; an
+  editor who may add people manages the people they added, within their role; the owner:
+  400, yourself: 400, 403 otherwise; a role change pins the row's role and `invited_by` as
+  checked, 409 when it changed; removal ends their invites into the team and into its shows
+  they can no longer open), `POST …/leave` (not the owner; 409 when the row was gone or
+  became the owner's meanwhile; ends invites the same way),
   `POST …/transfer {userId|email}` (owner: that member becomes owner, you admin;
   `transferTeam()`, one batch re-checking both sides, 409 on a race), `GET …/shows`,
   `GET …/invites`.
@@ -1565,14 +1589,16 @@ position is kept outside React.
   `null` (personal) the owner or the team's owner/admins. `POST /api/shows {name, teamId?}`:
   a team editor+ (404/403 as above). A clone is always personal.
 - **Add people in one step**: `POST /api/shows/:id/people` and `POST
-  /api/teams/:id/people {email, role}` (the add rules above; 400 bad email). An account
+  /api/teams/:id/people {email, role}` (the add rules above; 400 bad email or your own).
+  An account
   is added now (`invited_by` = you; "you were added" email) → 201 `{added: MemberDTO |
   TeamMemberDTO, emailed}`; 409 already a (direct / team) member. No account → an invite
   (invite email) → 201 `{invited: {id, email, role, path, expiresAt}, emailed}`, 429 over
   the inviter's limit. This tells the caller whether an email has an account (accepted;
   decision 0010). `POST /shows/:id/members` and `/teams/:id/members` stay (existing
   accounts only, no email).
-- **Pending invites**: `GET /api/shows/:id/invites` (owner: all; others: their own) and
+- **Pending invites**: `GET /api/shows/:id/invites` (the show's owner and its team's
+  owner/admins: all; others: their own) and
   `GET /api/teams/:id/invites` (owner/admins: all; others: their own) →
   `PendingInviteDTO {id, email, role (the team role for team invites), invitedBy,
   createdAt, expiresAt, expired}`, newest first; expired ones for 30 days. Revoke and
@@ -1584,9 +1610,10 @@ position is kept outside React.
   is stamped by `sessionOf` when unset or over an hour old (read with the session; one
   conditional UPDATE).
 - **Email** (`src/worker/email.ts`, Resend; docs/deploy.md "Email (optional)"):
-  `sendEmail(env, message)` → true when Resend took it; no `RESEND_API_KEY` → false, no
-  request; non-2xx or a thrown fetch → false + `logError` (status and Resend's error,
-  never the message). Callers answer `emailed: false` and still succeed. Body `{from
+  `sendEmail(env, message, {timeoutMs?})` → true when Resend took it; no `RESEND_API_KEY`
+  → false, no request; non-2xx, a thrown fetch or the 5 s timeout (`EMAIL_TIMEOUT_MS`,
+  `AbortSignal.timeout`) → false + `logError` (status and Resend's error, never the
+  message). Callers answer `emailed: false` and still succeed. Body `{from
   (EMAIL_FROM, default "Cuesheet <cuesheet@easyschematic.live>"), to, reply_to (the
   inviter), subject, headers: {"X-Entity-Ref-ID": invite id, or a UUID for "added"},
   text, html}`. Templates `inviteEmail` / `addedEmail`: who, what (show/team), role,
@@ -1596,7 +1623,8 @@ position is kept outside React.
   access" (`pages/AccountPage.tsx`, from the account menu), the invite page names the team.
   `features/teams/` (`AddPeople`, `PendingInvites`, `MemberMeta`, `roleText`),
   `components/ConfirmStrip.tsx` (in-row confirms), `lib/relativeTime.ts`. e2e:
-  `e2e/teams.spec.ts`; worker: `test/worker/teams.test.ts`, `test/worker/people.test.ts`.
+  `e2e/teams.spec.ts`; worker: `test/worker/teams.test.ts`, `test/worker/people.test.ts`,
+  `test/worker/access-hardening.test.ts`.
 
 ## Deploy and security headers (M5b; docs/deploy.md)
 
@@ -1928,8 +1956,8 @@ position is kept outside React.
   `src/worker/do/transfer.ts` (raw SQL in the ShowDO) + `ShowDO.transfer*` RPCs.
 - **Teams don't move.** `finish` clears the show's `team_id` (it arrives personal, with
   its direct members only) and a membership's `invited_by` when that user isn't on the
-  target. The CLI's verify compares the D1 show row and memberships as given, so a team
-  show (or a cleared `invited_by`) reports a difference there.
+  target (`importedShow` / `importedMembership` in `show-transfer.ts`); the CLI's verify
+  applies the same two to the source before comparing.
 - **Raw, below the op engine.** Rows are read as stored (`SELECT rowid AS __rowid, *`) and
   written back with the same rowid; every table `sqlite_master` lists except `sqlite_*` and
   names starting with `_` (`_cf_*`, `__drizzle_migrations`, our `_transfer_staging`). A new

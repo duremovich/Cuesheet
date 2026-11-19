@@ -6,10 +6,9 @@ import { index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlit
 
 const now = sql`(unixepoch() * 1000)`;
 
-// Foreign keys on columns added to an existing table (ALTER TABLE ADD) carry no ON DELETE
-// action: drizzle-kit drops it from the generated ADD COLUMN, so the schema doesn't claim
-// one. They are NO ACTION, and the code deletes or clears dependents itself (a team is
-// deleted together with its invites; users are never deleted).
+// drizzle-kit drops ON DELETE from the `ALTER TABLE … ADD` it generates for SQLite: a
+// foreign key with an action on a column added to an existing table needs the clause
+// appended to the generated SQL by hand (0006 did, for the three below).
 
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
@@ -91,7 +90,7 @@ export const shows = sqliteTable(
     /** A show template (R27): listed separately; "New from template" clones it. */
     isTemplate: integer("is_template", { mode: "boolean" }).notNull().default(false),
     /** The team the show belongs to (null: personal). A team with shows can't be deleted. */
-    teamId: text("team_id").references(() => teams.id),
+    teamId: text("team_id").references(() => teams.id, { onDelete: "restrict" }),
     invitePolicy: text("invite_policy", { enum: INVITE_POLICIES }).notNull().default("editors"),
   },
   (t) => [index("shows_team_idx").on(t.teamId)],
@@ -108,8 +107,8 @@ export const memberships = sqliteTable(
       .references(() => users.id, { onDelete: "cascade" }),
     role: text("role", { enum: ["owner", "editor", "commenter", "viewer"] }).notNull(),
     createdAt: integer("created_at").notNull().default(now),
-    /** Who added them (null: the creator, or rows from before teams). */
-    invitedBy: text("invited_by").references(() => users.id),
+    /** Who added them (null: the creator, rows from before teams, or a deleted user). */
+    invitedBy: text("invited_by").references(() => users.id, { onDelete: "set null" }),
   },
   (t) => [
     primaryKey({ columns: [t.showId, t.userId] }),
@@ -140,7 +139,7 @@ export const invites = sqliteTable("invites", {
   showId: text("show_id"),
   role: text("role", { enum: ["editor", "commenter", "viewer"] }),
   /** signup: or the team it joins, with `teamRole` (never both a show and a team). */
-  teamId: text("team_id").references(() => teams.id),
+  teamId: text("team_id").references(() => teams.id, { onDelete: "cascade" }),
   teamRole: text("team_role", { enum: TEAM_ROLES }),
   /** Revoked by its inviter or a manager (kept, not deleted, so the list can say so). */
   revokedAt: integer("revoked_at"),

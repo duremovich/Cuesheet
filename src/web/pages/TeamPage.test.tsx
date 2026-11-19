@@ -6,6 +6,7 @@ import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   InvitePolicy,
+  PendingInviteDTO,
   ShowSummaryDTO,
   TeamDTO,
   TeamMemberDTO,
@@ -38,7 +39,7 @@ function member(
 
 async function mount(
   myRole: TeamRole,
-  opts: { policy?: InvitePolicy; shows?: ShowSummaryDTO[] } = {},
+  opts: { policy?: InvitePolicy; shows?: ShowSummaryDTO[]; invites?: PendingInviteDTO[] } = {},
 ) {
   const team: TeamDTO = {
     id: "team-1",
@@ -62,7 +63,7 @@ async function mount(
   vi.spyOn(api, "getTeam").mockResolvedValue({ team });
   vi.spyOn(api, "teamMembers").mockResolvedValue({ members });
   vi.spyOn(api, "teamShows").mockResolvedValue({ shows: opts.shows ?? [] });
-  vi.spyOn(api, "teamInvites").mockResolvedValue({ invites: [] });
+  vi.spyOn(api, "teamInvites").mockResolvedValue({ invites: opts.invites ?? [] });
   vi.spyOn(api, "people").mockResolvedValue({ people: [] });
   const r = render(
     <AuthProvider>
@@ -128,6 +129,34 @@ describe("team page", () => {
     const { container } = await mount("editor", { policy: "owner" });
     expect(container.querySelector('form[aria-label="Add people"]')).toBeNull();
     expect(byLabel(container, "Role for Mine")).toBeNull();
+  });
+
+  it("an editor's own invite: Revoke always, Reissue only while they may still invite it", async () => {
+    const invite: PendingInviteDTO = {
+      id: "inv-1",
+      email: "new@test.local",
+      role: "editor",
+      invitedBy: { id: "u-me", name: "Me" },
+      createdAt: 0,
+      expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+      expired: false,
+    };
+    const reissue = (root: HTMLElement) => byLabel(root, "Reissue the invite for new@test.local");
+    const revoke = (root: HTMLElement) => byLabel(root, "Revoke the invite for new@test.local");
+    const open = await mount("editor", { invites: [invite] });
+    expect(reissue(open.container)).not.toBeNull();
+    open.unmount();
+    const closed = await mount("editor", { invites: [invite], policy: "owner" });
+    expect(reissue(closed.container)).toBeNull();
+    expect(revoke(closed.container)).not.toBeNull();
+    closed.unmount();
+    const demoted = await mount("commenter", { invites: [invite] });
+    expect(reissue(demoted.container)).toBeNull();
+    expect(revoke(demoted.container)).not.toBeNull();
+    demoted.unmount();
+    // Admins manage every invite, whatever the policy.
+    const admin = await mount("admin", { invites: [invite], policy: "owner" });
+    expect(reissue(admin.container)).not.toBeNull();
   });
 
   it("the owner hands the team over after an in-row confirm", async () => {

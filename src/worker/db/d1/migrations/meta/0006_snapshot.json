@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "8222b5c1-542c-42d4-8ab3-81f4589a71a0",
+  "id": "a472d63f-e09e-4579-91b8-333706563a7d",
   "prevId": "98b54894-b9b2-4188-a255-326aa61970e2",
   "tables": {
     "invites": {
@@ -126,7 +126,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
@@ -220,7 +220,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },
@@ -585,7 +585,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "restrict",
           "onUpdate": "no action"
         }
       },

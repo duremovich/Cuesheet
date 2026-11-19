@@ -3,9 +3,10 @@
 // personal), the members with their details (invited by, joined, last active), adding
 // people and the pending invites, who may add people (owner), and leaving the show.
 //
-// Controls follow the API's rules (src/shared/roles.ts): the owner manages every direct
-// member, an editor allowed to invite manages the people they added; nobody grants above
-// their own role. People who are here through the show's team ("via <team>") are managed
+// Controls follow the API's rules (src/shared/roles.ts): the owner and the owner/admins of
+// the show's team manage every direct member and revoke any pending invite (only the
+// owner, or the invite's sender while they could still send it, reissues), an editor
+// allowed to invite manages the people they added; nobody grants above their own show role. People who are here through the show's team ("via <team>") are managed
 // in the team. Every confirmation is in-row (ConfirmStrip), never a native dialog.
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
@@ -79,20 +80,17 @@ export function MembersSection({
   const [links, setLinks] = useState<Record<string, string>>({});
   const [confirm, setConfirm] = useState<Confirm>(null);
   const isOwner = ws.role === "owner";
-  const mayInvite = ws.role === "owner" || ws.role === "editor";
 
-  // Pending invites: the owner's list has everyone's, an editor's their own.
+  // Pending invites: the owner's list has everyone's, anyone else's their own (also after
+  // they were demoted or the policy changed, so they can still revoke them).
   const loadInvites = useCallback(() => {
-    if (!mayInvite) {
-      setInvites([]);
-      return;
-    }
     api
       .showInvites(ws.showId)
       .then((r) => setInvites(r.invites))
       .catch(() => undefined);
-  }, [ws.showId, mayInvite]);
-  useEffect(loadInvites, [loadInvites]);
+  }, [ws.showId]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a role change (live) can add or drop invites to show
+  useEffect(loadInvites, [loadInvites, ws.role]);
 
   const refresh = () => {
     onMembersChanged();
@@ -163,10 +161,14 @@ export function MembersSection({
               m.source === "direct" &&
               !!m.directRole &&
               !!info &&
-              canManageShowMember({ id: ws.userId, role: ws.role }, policy, {
-                role: m.directRole,
-                invitedBy: m.invitedBy?.id ?? null,
-              });
+              canManageShowMember(
+                { id: ws.userId, role: ws.role, teamRole: mine?.teamRole },
+                policy,
+                {
+                  role: m.directRole,
+                  invitedBy: m.invitedBy?.id ?? null,
+                },
+              );
             return (
               <li key={m.userId} data-source={m.source}>
                 <span className={wsStyles.memberName}>
@@ -270,6 +272,15 @@ export function MembersSection({
       )}
       <PendingInvites
         invites={invites}
+        // Anyone who sees an invite may revoke it (the owner and the team's owner/admins see
+        // them all). Reissue: the owner, or the sender while they could still send it; a
+        // team admin can't mint links past an owner-only policy.
+        canReissue={(inv) =>
+          isOwner ||
+          (inv.invitedBy?.id === ws.userId &&
+            canInviteToShow(ws.role, policy) &&
+            canGrant(ws.role, inv.role))
+        }
         links={links}
         onReissued={(made) => setLinks((l) => ({ ...l, [made.id]: made.path }))}
         onChanged={loadInvites}

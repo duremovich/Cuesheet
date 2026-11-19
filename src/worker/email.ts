@@ -24,8 +24,18 @@ export interface EmailMessage {
 
 type EmailEnv = { RESEND_API_KEY?: string; EMAIL_FROM?: string; APP_ORIGIN?: string };
 
-/** Send one email. True when Resend accepted it; false without a key or on any failure. */
-export async function sendEmail(env: object, message: EmailMessage): Promise<boolean> {
+/** How long a send may take before it counts as failed (it never holds a request longer). */
+export const EMAIL_TIMEOUT_MS = 5000;
+
+/**
+ * Send one email. True when Resend accepted it; false without a key or on any failure,
+ * a timeout (`timeoutMs`, default EMAIL_TIMEOUT_MS) included.
+ */
+export async function sendEmail(
+  env: object,
+  message: EmailMessage,
+  opts: { timeoutMs?: number } = {},
+): Promise<boolean> {
   const vars = env as EmailEnv;
   const key = vars.RESEND_API_KEY;
   if (!key) return false;
@@ -33,6 +43,7 @@ export async function sendEmail(env: object, message: EmailMessage): Promise<boo
     const res = await fetch(RESEND_URL, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(opts.timeoutMs ?? EMAIL_TIMEOUT_MS),
       body: JSON.stringify({
         from: vars.EMAIL_FROM || DEFAULT_EMAIL_FROM,
         to: message.to,
@@ -49,7 +60,7 @@ export async function sendEmail(env: object, message: EmailMessage): Promise<boo
     logError(`email: Resend answered ${res.status}`, detail);
     return false;
   } catch (e) {
-    logError("email: Resend unreachable", e);
+    logError("email: Resend unreachable or too slow", e);
     return false;
   }
 }
