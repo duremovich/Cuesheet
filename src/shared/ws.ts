@@ -21,7 +21,6 @@ export interface OpsMessage {
   ops: AnyResolvedOp[];
 }
 
-/** Sent to a client right after it connects. */
 /** Someone connected to the show (one entry per member or share link). */
 export interface PresenceUser {
   /** User id, or `share:<linkId>` for a share link's visitors. */
@@ -30,26 +29,37 @@ export interface PresenceUser {
   name: string;
   /** Viewers and share links. */
   readOnly: boolean;
+  /**
+   * Open connections: a member's tabs and devices; for a share link, how many visitors
+   * (each one counts as a guest in `people`).
+   */
+  connections: number;
 }
 
-export interface HelloMessage {
-  type: "hello";
-  showId: string;
+/** Who's here (R22). Share links' visitors get the counts but never `users`. */
+export interface PresenceCounts {
+  /**
+   * People here: each signed-in account once, however many tabs it has open; each share
+   * link connection as one guest (visitors can't be told apart).
+   */
+  people: number;
+  /** Open connections (tabs, devices, share visitors). */
   clients: number;
-  /** How many of `clients` are read-only (viewers and share links). */
+  /** How many of `people` are read-only (viewers and share links' guests). */
   readOnly?: number;
   /** Who is connected (not sent to share links' visitors). */
   users?: PresenceUser[];
+}
+
+/** Sent to a client right after it connects. */
+export interface HelloMessage extends PresenceCounts {
+  type: "hello";
+  showId: string;
 }
 
 /** Broadcast to every client whenever someone joins or leaves (or a role changes). */
-export interface PresenceMessage {
+export interface PresenceMessage extends PresenceCounts {
   type: "presence";
-  clients: number;
-  /** How many of `clients` are read-only (viewers and share links). */
-  readOnly?: number;
-  /** Who is connected (not sent to share links' visitors). */
-  users?: PresenceUser[];
 }
 
 export interface PongMessage {
@@ -105,6 +115,12 @@ export type ClientMessage = PingMessage;
  */
 export const PING_FRAME = JSON.stringify({ type: "ping" } satisfies PingMessage);
 export const PONG_FRAME = JSON.stringify({ type: "pong" } satisfies PongMessage);
+
+/**
+ * How often an open page sends PING_FRAME. The ShowDO reads each socket's last heartbeat
+ * (`getWebSocketAutoResponseTimestamp`) to drop connections whose page is gone.
+ */
+export const HEARTBEAT_MS = 25_000;
 
 export function parseServerMessage(data: unknown): ServerMessage | null {
   if (typeof data !== "string") return null;

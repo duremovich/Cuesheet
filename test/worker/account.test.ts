@@ -456,10 +456,11 @@ describe("invites and members", () => {
     expect(await mine.next(isType("presence"))).toEqual({
       type: "presence",
       clients: 2,
+      people: 2,
       readOnly: 1,
       users: [
-        { id: me, name: "Admin", readOnly: false },
-        { id: viewer.id, name: "Watcher", readOnly: true },
+        { id: me, name: "Admin", readOnly: false, connections: 1 },
+        { id: viewer.id, name: "Watcher", readOnly: true, connections: 1 },
       ],
     });
     // A share link's visitor: listed as a guest; it sees counts, never names.
@@ -472,6 +473,7 @@ describe("invites and members", () => {
       (m): m is ServerMessage => m.type === "presence" && m.clients === 3,
     );
     expect(seen).toMatchObject({
+      people: 3,
       readOnly: 2,
       users: [
         { id: me },

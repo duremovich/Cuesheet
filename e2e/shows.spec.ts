@@ -13,7 +13,7 @@ test("sign in, create a show, and see live presence from two browsers", async ({
   await expect(page.getByTestId("cue-list")).toContainText("No cues yet.");
   const presence = page.getByTestId("presence");
   await expect(presence).toHaveAttribute("data-status", "connected");
-  await expect(page.getByTestId("presence-count")).toHaveText("1 client");
+  await expect(page.getByTestId("presence-count")).toHaveText("1 online");
 
   // The show is in the list.
   await page.getByRole("link", { name: "Cuesheet" }).click();
@@ -21,20 +21,22 @@ test("sign in, create a show, and see live presence from two browsers", async ({
   await page.getByRole("link", { name }).click();
   await waitForShowReady(page);
   // The count comes from the server's presence broadcast; the old socket's close may
-  // land after the new one's hello (briefly "2 clients"), so wait for the settled value.
-  await expect(page.getByTestId("presence-count")).toHaveText("1 client");
+  // land after the new one's hello (briefly 2 connections), so wait for the settled value.
+  await expect(presence).toHaveAttribute("data-clients", "1");
 
   // A second browser context (separate cookies) on the same show.
   const bob = await browser.newContext();
   const page2 = await bob.newPage();
   await login(page2);
   await openShow(page2, showId);
-  await expect(page2.getByTestId("presence-count")).toHaveText("2 clients");
-  await expect(page.getByTestId("presence-count")).toHaveText("2 clients");
+  // Two connections, but one account (both sign in as the admin): one person.
+  await expect(page2.getByTestId("presence")).toHaveAttribute("data-clients", "2");
+  await expect(presence).toHaveAttribute("data-clients", "2");
+  await expect(page.getByTestId("presence-count")).toHaveText("1 online");
 
   // Closing the second one drops the count back.
   await bob.close();
-  await expect(page.getByTestId("presence-count")).toHaveText("1 client");
+  await expect(presence).toHaveAttribute("data-clients", "1");
   await alice.close();
 });
 
@@ -47,12 +49,12 @@ test("signing out in one browser leaves the same user's other browsers live", as
   const phone = await (await browser.newContext()).newPage();
   await login(phone);
   await openShow(phone, showId);
-  await expect(laptop.getByTestId("presence-count")).toHaveText("2 clients");
+  await expect(laptop.getByTestId("presence")).toHaveAttribute("data-clients", "2");
 
   // The phone signs out: only its own socket is revoked.
   await phone.getByRole("button", { name: "Sign out" }).click();
   await expect(phone).toHaveURL(/\/login/);
-  await expect(laptop.getByTestId("presence-count")).toHaveText("1 client");
+  await expect(laptop.getByTestId("presence")).toHaveAttribute("data-clients", "1");
   await expect(laptop.getByTestId("presence")).toHaveAttribute("data-status", "connected");
   await laptop.context().close();
   await phone.context().close();

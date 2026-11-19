@@ -1,7 +1,10 @@
 // One WebSocket per open show page. Reconnects with backoff after network drops; stops for
 // good if the server refuses the upgrade (signed out, not a member, show gone, bad origin).
+// Closes on pagehide (reload, navigation) and reconnects if the page comes back from the
+// back/forward cache.
 import { useEffect, useRef, useState } from "react";
 import {
+  HEARTBEAT_MS,
   PING_FRAME,
   type PresenceUser,
   parseServerMessage,
@@ -13,14 +16,16 @@ export type SocketStatus = "connecting" | "connected" | "disconnected" | "unauth
 
 export interface ShowSocketState {
   status: SocketStatus;
+  /** People here: an account once however many tabs it has; each share visitor a guest. */
+  people: number;
+  /** Open connections (tabs, devices, share visitors). */
   clients: number;
-  /** How many of `clients` are read-only (viewers, share links). */
+  /** How many of `people` are read-only (viewers, share links' guests). */
   readOnly?: number;
   /** Who is connected (members see names; share visitors don't get this). */
   users?: PresenceUser[];
 }
 
-const HEARTBEAT_MS = 25_000;
 const MAX_BACKOFF_MS = 10_000;
 const REFUSED = new Set([401, 403, 404]);
 
@@ -46,7 +51,11 @@ export function useShowSocket(
   showId: string,
   onMessage?: (msg: ServerMessage) => void,
 ): ShowSocketState {
-  const [state, setState] = useState<ShowSocketState>({ status: "connecting", clients: 0 });
+  const [state, setState] = useState<ShowSocketState>({
+    status: "connecting",
+    people: 0,
+    clients: 0,
+  });
   const onMessageRef = useRef(onMessage);
   onMessageRef.current = onMessage;
 
@@ -56,11 +65,14 @@ export function useShowSocket(
     let attempt = 0;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let heartbeat: ReturnType<typeof setInterval> | undefined;
+    /** The page is going away or sits in the back/forward cache: no reconnecting. */
+    let hidden = false;
 
     const connect = () => {
       setState((s) => ({ ...s, status: "connecting" }));
       let opened = false;
-      ws = new WebSocket(showSocketUrl(showId));
+      const sock = new WebSocket(showSocketUrl(showId));
+      ws = sock;
       ws.onopen = () => {
         opened = true;
         heartbeat = setInterval(() => {
@@ -74,7 +86,7 @@ export function useShowSocket(
           // Access was taken away (removed from the show, signed out): terminal.
           stopped = true;
           clearInterval(heartbeat);
-          setState({ status: "unauthorized", clients: 0 });
+          setState({ status: "unauthorized", people: 0, clients: 0 });
           ws?.close(1000, "revoked");
           return;
         }
@@ -82,6 +94,7 @@ export function useShowSocket(
           attempt = 0;
           setState({
             status: "connected",
+            people: msg.people,
             clients: msg.clients,
             readOnly: msg.readOnly ?? 0,
             users: msg.users ?? [],
@@ -89,22 +102,45 @@ export function useShowSocket(
         }
       };
       ws.onclose = async () => {
+        // A socket closed on pagehide may report in only after pageshow opened a new one.
+        if (sock !== ws) return;
         clearInterval(heartbeat);
-        if (stopped) return;
+        if (stopped || hidden) return;
         if (!opened && (await upgradeWasRefused(showId))) {
-          if (!stopped) setState({ status: "unauthorized", clients: 0 });
+          if (!stopped) setState({ status: "unauthorized", people: 0, clients: 0 });
           return; // terminal: retrying can't help
         }
-        if (stopped) return;
-        setState({ status: "disconnected", clients: 0 });
+        if (stopped || hidden) return;
+        setState({ status: "disconnected", people: 0, clients: 0 });
         const delay = Math.min(MAX_BACKOFF_MS, 500 * 2 ** attempt++);
         retryTimer = setTimeout(connect, delay);
       };
     };
 
+    // A reload or navigation doesn't run React cleanup: close the socket ourselves, so the
+    // server hears a close now instead of keeping a ghost connection until it notices the
+    // page is gone (the ShowDO also drops sockets whose heartbeat stopped). A page restored
+    // from the back/forward cache reconnects.
+    const onPageHide = () => {
+      hidden = true;
+      clearTimeout(retryTimer);
+      clearInterval(heartbeat);
+      ws?.close(1000, "page hidden");
+    };
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (!e.persisted || !hidden || stopped) return;
+      hidden = false;
+      attempt = 0;
+      connect();
+    };
+    window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("pageshow", onPageShow);
+
     connect();
     return () => {
       stopped = true;
+      window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener("pageshow", onPageShow);
       clearTimeout(retryTimer);
       clearInterval(heartbeat);
       ws?.close(1000, "leaving show");

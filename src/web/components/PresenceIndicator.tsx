@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { PresenceUser } from "../../shared/ws";
 import type { ShowSocketState } from "../lib/useShowSocket";
 import styles from "./PresenceIndicator.module.css";
 
@@ -28,15 +29,29 @@ export function EyeIcon() {
   );
 }
 
+/** How a presence entry reads: a share link's visitors as guests, a member by name. */
+function entryName(u: PresenceUser): string {
+  if (u.id.startsWith("share:") && u.connections > 1) return `${u.connections} guests (read-only)`;
+  return u.name;
+}
+
+/** A member with several tabs or devices open: "3 tabs" (share visitors are guests). */
+function tabsNote(u: PresenceUser): string | null {
+  return !u.id.startsWith("share:") && u.connections > 1 ? `${u.connections} tabs` : null;
+}
+
 /**
- * Connection status and who's here (R22): client count, and how many of them are read-only
- * (viewers and share links, with an eye). Hovering the count names who's connected;
- * clicking it lists them (share visitors as "Guest (read-only)"). `self`: you are
- * read-only here (viewer, share page), shown as "Read-only"; `bare`: just the status
- * (share pages show no counts or names).
+ * Connection status and who's here (R22): how many people are online (an account once,
+ * however many tabs; each share visitor a guest; "online", not "people", which is the
+ * show's contact-sheet tab), and how many of them are read-only (viewers and share links,
+ * with an eye). Hovering the count names who's here; clicking it lists them, a line a
+ * person, with a quiet "· 3 tabs" for someone connected more than once (share visitors as
+ * guests). `self`: you are read-only here (viewer, share page), shown as "Read-only";
+ * `bare`: just the status (share pages show no counts or names).
  */
 export function PresenceIndicator({
   status,
+  people,
   clients,
   readOnly = 0,
   users = [],
@@ -54,14 +69,22 @@ export function PresenceIndicator({
     document.addEventListener("pointerdown", onDown);
     return () => document.removeEventListener("pointerdown", onDown);
   }, [open]);
-  const names = users.map((u) => (u.readOnly ? `${u.name} (read-only)` : u.name)).join(", ");
-  const countText = `${clients} ${clients === 1 ? "client" : "clients"}`;
+  const names = users
+    .map((u) => {
+      const name =
+        u.readOnly && !u.id.startsWith("share:") ? `${u.name} (read-only)` : entryName(u);
+      const tabs = tabsNote(u);
+      return tabs ? `${name} (${tabs})` : name;
+    })
+    .join(", ");
+  const countText = `${people} online`;
   return (
     <div
       ref={wrap}
       className={styles.presence}
       data-testid="presence"
       data-status={status}
+      data-people={people}
       data-clients={clients}
       data-read-only={readOnly}
     >
@@ -103,15 +126,23 @@ export function PresenceIndicator({
           // biome-ignore lint/a11y/noRedundantRoles: list-style none drops the implicit role in Safari
           role="list"
         >
-          {users.map((u) => (
-            <li key={u.id} data-read-only={u.readOnly || undefined}>
-              {u.readOnly && <EyeIcon />}
-              {u.name}
-              {u.readOnly && !u.id.startsWith("share:") ? (
-                <span className={styles.count}> read-only</span>
-              ) : null}
-            </li>
-          ))}
+          {users.map((u) => {
+            const tabs = tabsNote(u);
+            return (
+              <li key={u.id} data-read-only={u.readOnly || undefined}>
+                {u.readOnly && <EyeIcon />}
+                {entryName(u)}
+                {u.readOnly && !u.id.startsWith("share:") ? (
+                  <span className={styles.count}> read-only</span>
+                ) : null}
+                {tabs ? (
+                  <span className={styles.count} data-testid="presence-tabs">
+                    {` · ${tabs}`}
+                  </span>
+                ) : null}
+              </li>
+            );
+          })}
         </ul>
       )}
       {status === "connected" && !bare && readOnly > 0 && (

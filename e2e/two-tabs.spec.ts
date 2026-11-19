@@ -254,7 +254,7 @@ test("Cues in one tab, Notes in another: both edit, each sees the other's change
   // Closing one tab: the other keeps working, alone.
   await b.close();
   await expect(presence(a)).toHaveAttribute("data-clients", "1");
-  await expect(a.getByTestId("presence-count")).toHaveText("1 client");
+  await expect(a.getByTestId("presence-count")).toHaveText("1 online");
   const desc2 = uniqueName("after B closed");
   await typeIntoCell(a, cellOf(rowByCue(a, "14.25"), "description"), desc2);
   await expect

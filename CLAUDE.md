@@ -264,10 +264,23 @@ Before finishing any task: `pnpm check && pnpm e2e`.
   gives access). `GET /api/shows/:id` adds `teamId`/`teamName`/`invitePolicy` for members
   only: a share link's viewer gets the show without them. **Presence** (R22): the DO keeps each socket's name
   (`X-Cuesheet-Name`, URI-encoded, refreshed by `notifyName` on a rename; share visitors "Guest (read-only)") and sends
-  `hello`/`presence` with `{clients, readOnly, users: [{id, name, readOnly}]}` (one entry
-  per user or share link; members by name, guests last). Share visitors get the counts
-  without `users`. The pill keeps the count; hovering names people, clicking lists them
-  (`presence-list`). Show settings → Members
+  `hello`/`presence` with `{people, clients, readOnly, users: [{id, name, readOnly,
+  connections}]}` (`PresenceCounts` in `shared/ws.ts`; one entry per user or share link;
+  members by name, guests last). **The count is people, not connections:** an account
+  counts once however many tabs it has open, each share-link connection as one guest
+  (visitors can't be told apart); `readOnly` counts read-only people; `clients` is the
+  open connections (`data-clients` on `presence`, for tests). Share visitors get the
+  counts without `users`. The pill reads "N online" (not "people": that's the contact-sheet
+  tab); hovering names people, clicking lists them (`presence-list`), one line a person,
+  "Name · 3 tabs" when connected more than once, "3 guests (read-only)" for a link's
+  visitors. **Ghosts:** a page that goes away without its close reaching the DO (seen in
+  production after reloads) would linger as an open socket. The client closes its socket
+  on `pagehide` (reconnects on a bfcache `pageshow`), and the DO drops sockets whose last
+  heartbeat (`getWebSocketAutoResponseTimestamp`, else `connectedAt` in the attachment) is
+  older than `PRESENCE_STALE_MS` (90 s: hidden tabs' timers run about once a minute),
+  closing them with 4008 whenever presence is computed and in a one-off alarm sweep each
+  new connection schedules (storage key `presence:sweepAt`; no interval, hibernation
+  stays). Show settings → Members
   (`show/ShareSettingsMembers.tsx`) has the role descriptions, the show's team (move it in
   or back to Personal; the confirm counts who gains access), the members with their
   details ("via <team>" rows link to the team instead of offering controls), "Make owner"
@@ -345,7 +358,7 @@ for a second trace, but `failOnFlakyTests` still fails the run.
   does *not* happen within a window (no reconnect after "No access"); say so in a comment.
 - **Wait on state attributes, not timing.** The app exposes them: `data-store-status`
   (`loading`/`ready`/`error`) on `show-workspace` (use `waitForShowReady` / `openShow`),
-  `data-status` / `data-clients` on `presence`, `data-scroll-offset` on `grid-scroll`
+  `data-status` / `data-clients` (connections) / `data-people` on `presence`, `data-scroll-offset` on `grid-scroll`
   (the offset the grid last laid out: after setting `scrollTop`, wait for it to match
   before measuring rows or the stuck header). Missing one? Add it to the component
   rather than guessing a delay. Presence counts come from server broadcasts that can
@@ -689,7 +702,7 @@ views" below).
   editor's overlay (from migrated M1c widths) gives way for columns they size in the view.
 - **Several tabs, one browser** (same user). Every tab has its own store, `clientId`
   (`newId()` per `ShowStoreImpl`, never stored, so a tab only treats its own batches as
-  echoes), socket (presence counts each tab) and grid undo stack (undo replays that tab's
+  echoes), socket (one connection each; presence counts the person once) and grid undo stack (undo replays that tab's
   edits and skips a cell changed since). What tabs share is localStorage: drafts are keyed
   by view, so tabs on different tables/views never touch each other's; tabs on the **same**
   view share one draft live (`drafts.ts` re-reads a key another tab wrote or removed, via

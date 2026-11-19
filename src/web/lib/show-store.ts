@@ -369,7 +369,11 @@ export class ShowStoreImpl implements ShowStore {
 // ---- React ----
 
 const StoreContext = createContext<ShowStoreImpl | null>(null);
-const SocketContext = createContext<ShowSocketState>({ status: "connecting", clients: 0 });
+const SocketContext = createContext<ShowSocketState>({
+  status: "connecting",
+  people: 0,
+  clients: 0,
+});
 
 /** Creates the store for a show, loads it, and feeds it from the show's WebSocket. */
 export function ShowStoreProvider({

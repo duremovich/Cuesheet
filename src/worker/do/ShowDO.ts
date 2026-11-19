@@ -30,7 +30,14 @@ import {
   type ScriptRow,
   type ScriptVersionRow,
 } from "../../shared/tables";
-import { PING_FRAME, PONG_FRAME, type PresenceUser, type ServerMessage } from "../../shared/ws";
+import {
+  HEARTBEAT_MS,
+  PING_FRAME,
+  PONG_FRAME,
+  type PresenceCounts,
+  type PresenceUser,
+  type ServerMessage,
+} from "../../shared/ws";
 import migrations from "../db/do/migrations/migrations.js";
 import * as schema from "../db/do/schema";
 import { filterOps, filterSnapshot } from "../share-filter";
@@ -87,6 +94,19 @@ const shareTag = (linkId: string) => `share:${linkId}`;
 
 /** Close code sent to sockets whose user lost access (logout, removed from the show). */
 export const ACCESS_REVOKED_CODE = 4003;
+
+/**
+ * A socket that hasn't sent a heartbeat (HEARTBEAT_MS) for this long, or, before its first,
+ * connected longer ago, belongs to a page that went away without its close reaching us (a
+ * reload or a closed tab; seen in production): presence leaves it out and it is closed.
+ * More than 2.5 heartbeats: browsers throttle a hidden tab's timers to about once a minute,
+ * and a live tab must never be dropped.
+ */
+export const PRESENCE_STALE_MS = Math.max(90_000, HEARTBEAT_MS * 3.6);
+/** Close code for those sockets (a page that is in fact alive just reconnects). */
+export const STALE_SOCKET_CODE = 4008;
+/** Storage key: when the presence sweep the latest connection scheduled is due (epoch ms). */
+const PRESENCE_SWEEP_KEY = "presence:sweepAt";
 
 /**
  * Broadcasts bigger than this (256 KiB of UTF-8) send `{type:"version"}` instead of the
@@ -151,13 +171,11 @@ interface SocketAttachment {
   readOnly?: boolean;
   /** A share link's viewer: receives only what the link's scope allows. */
   share?: ShareScope;
+  /** Epoch ms of the connect: the socket's "last seen" until its first heartbeat. */
+  connectedAt?: number;
 }
 
-interface Presence {
-  clients: number;
-  readOnly: number;
-  users: PresenceUser[];
-}
+type Presence = Required<PresenceCounts>;
 
 export class ShowDO extends DurableObject<Env> {
   private readonly db: DrizzleSqliteDODatabase<typeof schema>;
@@ -248,7 +266,20 @@ export class ShowDO extends DurableObject<Env> {
   override async alarm(): Promise<void> {
     const now = Date.now();
     this.expireShareSockets(now);
+    await this.sweepPresence(now);
     await this.purgeDeletedFiles(now);
+  }
+
+  /**
+   * The alarm's presence sweep: close the sockets whose heartbeat stopped and tell the
+   * others. Each new connection schedules one (`fetch`), so the ghost a reload leaves goes
+   * even when nobody else joins or leaves; it doesn't repeat (no wake-ups while all is well).
+   */
+  private async sweepPresence(now: number): Promise<void> {
+    const due = await this.ctx.storage.get<number>(PRESENCE_SWEEP_KEY);
+    if (due !== undefined && due <= now) await this.ctx.storage.delete(PRESENCE_SWEEP_KEY);
+    const stale = this.closeStale(now);
+    if (stale.length > 0) this.broadcastPresence(stale);
   }
 
   /**
@@ -301,9 +332,11 @@ export class ShowDO extends DurableObject<Env> {
     // More than one batch due (500 at a time) → again soon; else when the next one is due,
     // or when the next share link's sockets expire, whichever comes first (one alarm).
     const purge = due.length >= 500 ? now + 1000 : next;
+    // ... or when a presence sweep is due (still one alarm).
     const share = this.nextShareExpiry();
-    const again = purge === null ? share : share === null ? purge : Math.min(purge, share);
-    if (again !== null) await this.ctx.storage.setAlarm(again);
+    const sweep = (await this.ctx.storage.get<number>(PRESENCE_SWEEP_KEY)) ?? null;
+    const times = [purge, share, sweep].filter((t): t is number => t !== null);
+    if (times.length > 0) await this.ctx.storage.setAlarm(Math.min(...times));
     return due.length;
   }
 
@@ -813,9 +846,12 @@ export class ShowDO extends DurableObject<Env> {
     if (!meta) return new Response("Show not initialised", { status: 404 });
 
     const sessionId = request.headers.get(SESSION_ID_HEADER) ?? undefined;
-    if (share?.expiresAt != null && share.expiresAt <= Date.now()) {
+    const now = Date.now();
+    if (share?.expiresAt != null && share.expiresAt <= now) {
       return new Response("Share link expired", { status: 410 });
     }
+    // Ghosts (pages gone without a close) leave before the newcomer hears who's here.
+    const stale = this.closeStale(now);
     const { 0: client, 1: server } = new WebSocketPair();
     this.ctx.acceptWebSocket(server, sessionId ? [userId, sessionTag(sessionId)] : [userId]);
     // Close this share link's sockets when it expires (one alarm, shared with R2 purges).
@@ -834,15 +870,20 @@ export class ShowDO extends DurableObject<Env> {
       ...(sessionId ? { sessionId } : {}),
       readOnly: !!share || request.headers.get(ROLE_HEADER) === "viewer",
       ...(share ? { share } : {}),
+      connectedAt: now,
     } satisfies SocketAttachment);
 
-    const p = this.presence();
+    const p = this.presence(stale);
     this.send(server, { type: "hello", showId: meta.showId, ...this.presenceFor(server, p) });
     // Lets the client notice changes it missed while disconnected (and refetch).
     this.send(server, { type: "version", version: currentVersion(this.ctx.storage.sql) });
     for (const ws of this.openSockets()) {
-      if (ws !== server) this.send(ws, { type: "presence", ...this.presenceFor(ws, p) });
+      if (ws !== server && !stale.includes(ws)) {
+        this.send(ws, { type: "presence", ...this.presenceFor(ws, p) });
+      }
     }
+    // A connect is often a reload, whose old socket may linger: sweep once it'd be stale.
+    await this.schedulePresenceSweep(now + PRESENCE_STALE_MS + 1000);
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -870,25 +911,29 @@ export class ShowDO extends DurableObject<Env> {
   }
 
   /**
-   * Open sockets (minus `gone`): how many, how many read-only, and who (one entry per user
-   * or share link; read-only if any of their sockets is).
+   * Open sockets (minus `gone`): how many people (an account once, however many tabs; a
+   * share link's visitors one guest each), how many of them are read-only, how many
+   * connections, and who (one entry per user or share link with its connection count;
+   * read-only if any of their sockets is).
    */
   private presence(gone: WebSocket[] = []): Presence {
     const open = this.openSockets().filter((ws) => !gone.includes(ws));
-    let readOnly = 0;
     const users = new Map<string, PresenceUser>();
     for (const ws of open) {
       const att = ws.deserializeAttachment() as SocketAttachment | null;
       if (!att) continue;
-      if (att.readOnly) readOnly++;
       const seen = users.get(att.userId);
-      if (seen) seen.readOnly = seen.readOnly || !!att.readOnly;
-      else
+      if (seen) {
+        seen.connections++;
+        seen.readOnly = seen.readOnly || !!att.readOnly;
+      } else {
         users.set(att.userId, {
           id: att.userId,
           name: att.name ?? "Someone",
           readOnly: !!att.readOnly,
+          connections: 1,
         });
+      }
     }
     // Members by name, then share links' guests (a stable order for the list).
     const guest = (u: PresenceUser) => (u.id.startsWith("share:") ? 1 : 0);
@@ -898,20 +943,55 @@ export class ShowDO extends DurableObject<Env> {
         x.name.localeCompare(y.name) ||
         (x.id < y.id ? -1 : x.id > y.id ? 1 : 0),
     );
-    return { clients: open.length, readOnly, users: list };
+    let people = 0;
+    let readOnly = 0;
+    for (const u of list) {
+      const n = guest(u) ? u.connections : 1;
+      people += n;
+      if (u.readOnly) readOnly += n;
+    }
+    return { people, clients: open.length, readOnly, users: list };
   }
 
   /** Presence as `ws` may see it: share visitors get the counts, never members' names. */
-  private presenceFor(ws: WebSocket, p: Presence): Presence | Omit<Presence, "users"> {
+  private presenceFor(ws: WebSocket, p: Presence): PresenceCounts {
     const att = ws.deserializeAttachment() as SocketAttachment | null;
-    return att?.share ? { clients: p.clients, readOnly: p.readOnly } : p;
+    return att?.share ? { people: p.people, clients: p.clients, readOnly: p.readOnly } : p;
   }
 
   private broadcastPresence(gone: WebSocket[] = []): void {
-    const p = this.presence(gone);
+    const dropped = [...gone, ...this.closeStale(Date.now())];
+    const p = this.presence(dropped);
     for (const ws of this.openSockets()) {
-      if (!gone.includes(ws)) this.send(ws, { type: "presence", ...this.presenceFor(ws, p) });
+      if (!dropped.includes(ws)) this.send(ws, { type: "presence", ...this.presenceFor(ws, p) });
     }
+  }
+
+  /**
+   * Close the open sockets whose page stopped sending heartbeats (PRESENCE_STALE_MS) and
+   * return them. Last seen: the runtime's auto-response to the socket's latest PING_FRAME,
+   * else its connect. (Sockets from before `connectedAt` existed count as fresh.)
+   */
+  private closeStale(now: number): WebSocket[] {
+    const stale = this.openSockets().filter((ws) => {
+      const att = ws.deserializeAttachment() as SocketAttachment | null;
+      const pinged = this.ctx.getWebSocketAutoResponseTimestamp(ws)?.getTime() ?? 0;
+      return now - Math.max(pinged, att?.connectedAt ?? now) > PRESENCE_STALE_MS;
+    });
+    for (const ws of stale) {
+      try {
+        ws.close(STALE_SOCKET_CODE, "no heartbeat");
+      } catch {
+        // already closed
+      }
+    }
+    return stale;
+  }
+
+  /** Have the alarm sweep presence at `at` (the latest connection's wins; `sweepPresence`). */
+  private async schedulePresenceSweep(at: number): Promise<void> {
+    await this.ctx.storage.put(PRESENCE_SWEEP_KEY, at);
+    await this.scheduleAlarm(at);
   }
 
   private openSockets(): WebSocket[] {

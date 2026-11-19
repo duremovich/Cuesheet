@@ -79,7 +79,9 @@ specified in [ux.md](ux.md); the tables in [data-model.md](data-model.md).
 ### Collaboration
 
 - **R22 Real-time.** Multiple editors see each other's changes within a second; presence
-  shows who is in the show and which row they have selected; conflicting edits to the same
+  shows who is in the show (counting people, not connections: an account once however
+  many tabs it has open, each share-link visitor as a guest; the list notes "· 3 tabs")
+  and which row they have selected; conflicting edits to the same
   cell resolve last-write-wins with the history showing both.
 - **R23 Roles.** Per show: editor, commenter (read everything, add and edit own notes),
   viewer. Share a view by link, optionally read-only without login for SM/director.

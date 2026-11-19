@@ -85,6 +85,8 @@ test("share a view: read-only, live, row details, revoke → 410", async ({ brow
   // The owner's presence names the visitor as a guest (the visitor sees no names).
   await owner.keyboard.press("Escape");
   await expect(owner.getByTestId("presence")).toHaveAttribute("data-clients", "2");
+  // The visitor counts as one guest.
+  await expect(owner.getByTestId("presence-count")).toHaveText("2 online");
   await owner.getByRole("button", { name: /who's here/ }).click();
   const list = owner.getByTestId("presence-list");
   await expect(list).toContainText("Guest (read-only)");

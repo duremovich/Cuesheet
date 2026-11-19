@@ -272,7 +272,7 @@ test("two browsers: inserts and edits appear live, in place", async ({ browser }
   const b = await newPage(browser);
   await goToCue(b, showId, "14.20");
   await goToCue(a, showId, "14.20");
-  await expect(b.getByTestId("presence-count")).toHaveText("2 clients");
+  await expect(b.getByTestId("presence")).toHaveAttribute("data-clients", "2");
 
   // A inserts below 14.20 and numbers it.
   await cellOf(rowByCue(a, "14.20"), "number").click();
